@@ -1,5 +1,9 @@
+import { mkdtemp, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
-import { runCli } from "../src/cli.js";
+import { isDirectRun, runCli } from "../src/cli.js";
 
 function createIo() {
   const stdout: string[] = [];
@@ -47,5 +51,16 @@ describe("cli", () => {
     expect(stdout).toEqual([]);
     expect(stderr.join("\n")).toContain("Unknown command: nope");
     expect(stderr.join("\n")).toContain("Run `uncommitted --help`.");
+  });
+
+  it("detects direct runs through symlinked bin entrypoints", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "uncommitted-cli-"));
+    const realEntrypoint = join(directory, "cli.js");
+    const linkedEntrypoint = join(directory, "uncommitted");
+
+    await writeFile(realEntrypoint, "");
+    await symlink(realEntrypoint, linkedEntrypoint);
+
+    expect(isDirectRun(linkedEntrypoint, pathToFileURL(realEntrypoint).href)).toBe(true);
   });
 });

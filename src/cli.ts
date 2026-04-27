@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
+import { realpathSync } from "node:fs";
 import process from "node:process";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { commands, isKnownCommand } from "./commands.js";
 
 export type CliIo = {
@@ -50,10 +51,18 @@ export async function runCli(args: string[], io: CliIo = defaultIo): Promise<num
   return 1;
 }
 
-function isDirectRun(): boolean {
-  const entrypoint = process.argv[1];
+export function isDirectRun(
+  entrypoint: string | undefined = process.argv[1],
+  moduleUrl: string = import.meta.url
+): boolean {
+  if (!entrypoint) {
+    return false;
+  }
 
-  return Boolean(entrypoint && import.meta.url === pathToFileURL(entrypoint).href);
+  return (
+    pathToFileURL(realpathSync.native(entrypoint)).href ===
+    pathToFileURL(realpathSync.native(fileURLToPath(moduleUrl))).href
+  );
 }
 
 if (isDirectRun()) {
