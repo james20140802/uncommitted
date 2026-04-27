@@ -1,0 +1,24 @@
+{
+  "name": "uncommitted",
+  "version": "0.1.0",
+  "description": "Local-first CLI for generating AI coworker diary drafts from Git activity and manual notes.",
+  "type": "module",
+  "bin": {
+    "uncommitted": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "tsc -p tsconfig.build.json && node dist/cli.js",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "packageManager": "pnpm@10.10.0",
+  "devDependencies": {
+    "@types/node": "^22.15.3",
+    "typescript": "^5.8.3",
+    "vitest": "^3.1.2"
+  }
+}
