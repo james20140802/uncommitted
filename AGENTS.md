@@ -41,6 +41,12 @@ Allowed read-only GitHub commands: `gh issue view <number>`, `gh issue list`, `g
 
 These require explicit user approval: `gh issue create`, `gh issue edit`, `gh issue close`, `gh pr create`, `gh pr merge`, `git push`.
 
+Template rules:
+- When creating GitHub issues, follow `.github/ISSUE_TEMPLATE/feature.yml` or `.github/ISSUE_TEMPLATE/bug.yml` and include goal, scope, out-of-scope, acceptance criteria, and implementation notes.
+- When creating PRs with `gh pr create`, use `.github/pull_request_template.md` as the body template, for example `gh pr create --template .github/pull_request_template.md`.
+- Do not use ad hoc `--body` text unless the user explicitly asks for a custom PR body; `--body` bypasses the PR template.
+- Fill the PR template's related issue section with `Closes #<issue-number>` when the PR should close an issue on merge.
+
 Branch and commit rules:
 - The user normally creates branches, commits, pushes, and PRs.
 - Codex may do those actions only when explicitly asked.
