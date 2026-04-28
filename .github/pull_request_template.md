@@ -2,13 +2,9 @@
 
 <!-- What user or project outcome does this PR create? -->
 
-## Scope
+## Related Issue
 
-<!-- What is included in this PR? -->
-
-## Out Of Scope
-
-<!-- What related work is intentionally left out? -->
+<!-- Link the issue this PR addresses, for example: Closes #123. -->
 
 ## Acceptance Criteria
 
