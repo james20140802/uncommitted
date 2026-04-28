@@ -1,0 +1,82 @@
+name: Bug report
+description: Report a reproducible defect with expected behavior.
+title: "fix: "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: What should be fixed, and what outcome should users get?
+      placeholder: Describe the corrected behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: observed-behavior
+    attributes:
+      label: Observed behavior
+      description: What happened instead?
+      placeholder: Describe the current broken behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: expected-behavior
+    attributes:
+      label: Expected behavior
+      description: What should have happened?
+      placeholder: Describe the intended behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: How can someone reproduce the issue?
+      value: |
+        1. Run:
+        2. Observe:
+        3. Expected:
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: What should be included in the fix?
+      placeholder: List the concrete work that belongs in this issue.
+    validations:
+      required: true
+  - type: textarea
+    id: out-of-scope
+    attributes:
+      label: Out of scope
+      description: What should not be included in the fix?
+      placeholder: List related work that should wait for another issue.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance-criteria
+    attributes:
+      label: Acceptance criteria
+      description: What must be true before this bug is fixed?
+      value: |
+        - [ ]
+        - [ ]
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include relevant OS, Node.js, pnpm, or CLI details.
+      placeholder: macOS version, Node.js version, pnpm version, command used.
+    validations:
+      required: false
+  - type: textarea
+    id: implementation-notes
+    attributes:
+      label: Implementation notes
+      description: Add technical context, suspected cause, constraints, or suggested approach.
+      placeholder: Note any relevant files, commands, edge cases, or decisions.
+    validations:
+      required: false

@@ -1,0 +1,47 @@
+name: Feature request
+description: Plan a scoped feature or enhancement.
+title: "feat: "
+labels: ["feature"]
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: What user or project outcome should this feature create?
+      placeholder: Describe the intended outcome.
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: What should be included in this change?
+      placeholder: List the concrete work that belongs in this issue.
+    validations:
+      required: true
+  - type: textarea
+    id: out-of-scope
+    attributes:
+      label: Out of scope
+      description: What should not be included in this change?
+      placeholder: List related work that should wait for another issue.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance-criteria
+    attributes:
+      label: Acceptance criteria
+      description: What must be true before this issue is complete?
+      value: |
+        - [ ]
+        - [ ]
+    validations:
+      required: true
+  - type: textarea
+    id: implementation-notes
+    attributes:
+      label: Implementation notes
+      description: Add technical context, constraints, dependencies, or suggested approach.
+      placeholder: Note any relevant files, commands, edge cases, or decisions.
+    validations:
+      required: false
