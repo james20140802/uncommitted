@@ -42,6 +42,19 @@ describe("cli", () => {
     expect(stderr.join("\n")).toContain("Command not implemented yet: note");
   });
 
+  it("routes project add to the project registration handler", async () => {
+    const { io, stdout, stderr } = createIo();
+    const directory = await mkdtemp(join(tmpdir(), "uncommitted-cli-project-add-"));
+
+    const exitCode = await runCli(["project", "add", directory], io, {
+      homeDir: join(directory, "home")
+    });
+
+    expect(exitCode).toBe(2);
+    expect(stdout).toEqual([]);
+    expect(stderr.join("\n")).toContain("Not a Git repository");
+  });
+
   it("reports unknown commands", async () => {
     const { io, stdout, stderr } = createIo();
 

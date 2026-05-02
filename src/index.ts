@@ -1,5 +1,5 @@
 export { getHelpText, runCli } from "./cli.js";
-export type { CliIo } from "./cli.js";
+export type { CliIo, CliOptions } from "./cli.js";
 export { commands, isKnownCommand } from "./commands.js";
 export type { Command } from "./commands.js";
 export {
@@ -15,3 +15,11 @@ export type {
   InitCommandResult,
   InitConfig
 } from "./init-command.js";
+export { addProject, ProjectAddError } from "./project-add.js";
+export type {
+  AddProjectOptions,
+  AddProjectResult,
+  ProjectAddErrorCode,
+  ProjectRecord,
+  ProjectsFile
+} from "./project-add.js";
