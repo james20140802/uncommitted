@@ -73,5 +73,5 @@ export async function ensureConfigDirectories(paths: ConfigPaths): Promise<void>
 
 function resolvePath(path: string, homeDir: string): string {
   const expanded = expandHomePath(path, homeDir);
-  return isAbsolute(expanded) ? expanded : resolve(expanded);
+  return isAbsolute(expanded) ? expanded : resolve(homeDir, expanded);
 }

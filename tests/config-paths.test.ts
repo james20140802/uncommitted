@@ -43,6 +43,14 @@ describe("config path utilities", () => {
     ).toBe(join(homeDir, "custom-drafts"));
   });
 
+  it("resolves relative draft roots from the home directory", () => {
+    const homeDir = "/tmp/uncommitted-home";
+
+    expect(
+      resolveConfigPaths({ homeDir, draftRoot: "relative-drafts" }).defaultDraftRoot
+    ).toBe(join(homeDir, "relative-drafts"));
+  });
+
   it("creates required directories recursively", async () => {
     const root = await mkTestRoot();
     const paths = resolveConfigPaths({
