@@ -5,6 +5,7 @@ export type Command = {
 
 export const commands: Command[] = [
   { name: "init", summary: "Initialize Uncommitted config." },
+  { name: "doctor", summary: "Check local environment setup." },
   { name: "project", summary: "Manage registered projects." },
   { name: "note", summary: "Record and list manual notes." },
   { name: "collect", summary: "Collect activity from local sources." },

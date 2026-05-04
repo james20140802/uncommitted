@@ -1,0 +1,353 @@
+import { execFile } from "node:child_process";
+import { constants } from "node:fs";
+import { access, readFile } from "node:fs/promises";
+import process from "node:process";
+import { promisify } from "node:util";
+import { resolveConfigPaths } from "./config-paths.js";
+
+const execFileAsync = promisify(execFile);
+const minimumNodeVersion = "22.13.0";
+
+export type DoctorStatus = "pass" | "warn" | "fail";
+
+export type DoctorCheck = {
+  id: string;
+  label: string;
+  status: DoctorStatus;
+  message: string;
+  detail?: string;
+};
+
+export type DoctorReport = {
+  checks: DoctorCheck[];
+};
+
+export type CommandCheckResult = {
+  ok: boolean;
+  detail: string;
+};
+
+export type DoctorOptions = {
+  homeDir?: string;
+  env?: Record<string, string | undefined>;
+  nodeVersion?: string;
+  checkCommand?: (command: string, args: string[]) => Promise<CommandCheckResult>;
+  checkAccess?: (path: string, mode: number) => Promise<boolean>;
+};
+
+type DoctorConfig = {
+  schemaVersion: 1;
+  draftRoot: string;
+  aiProvider: string;
+};
+
+const aiProviderEnvKeys: Record<string, string | undefined> = {
+  none: undefined,
+  ollama: undefined,
+  openai: "OPENAI_API_KEY",
+  anthropic: "ANTHROPIC_API_KEY",
+  google: "GOOGLE_API_KEY",
+  mistral: "MISTRAL_API_KEY",
+  openrouter: "OPENROUTER_API_KEY"
+};
+
+const directoryLabels: Record<string, string> = {
+  configDir: "Config directory",
+  historyDir: "Format history directory",
+  globalDraftsDir: "Global drafts directory",
+  logsDir: "Logs directory",
+  defaultDraftRoot: "Configured draft root"
+};
+
+const directoryIds: Record<string, string> = {
+  configDir: "directory-config",
+  historyDir: "directory-history",
+  globalDraftsDir: "directory-global-drafts",
+  logsDir: "directory-logs",
+  defaultDraftRoot: "directory-draft-root"
+};
+
+export async function runDoctorCommand(
+  options: DoctorOptions = {}
+): Promise<{ report: DoctorReport; exitCode: number }> {
+  const report = await createDoctorReport(options);
+
+  return {
+    report,
+    exitCode: getDoctorExitCode(report)
+  };
+}
+
+export async function createDoctorReport(
+  options: DoctorOptions = {}
+): Promise<DoctorReport> {
+  const env = options.env ?? process.env;
+  const paths = resolveConfigPaths({ homeDir: options.homeDir });
+  const { config, check } = await readConfig(paths.configFile);
+  const configuredPaths = resolveConfigPaths({
+    homeDir: options.homeDir,
+    draftRoot: config?.draftRoot
+  });
+
+  const checks: DoctorCheck[] = [
+    check,
+    createNodeCheck(options.nodeVersion ?? process.version),
+    await createGitCheck(options.checkCommand ?? defaultCheckCommand),
+    ...(await createDirectoryChecks(
+      configuredPaths,
+      options.checkAccess ?? defaultCheckAccess
+    ))
+  ];
+
+  if (config) {
+    checks.push(createAiApiKeyCheck(config.aiProvider, env));
+  }
+
+  return { checks };
+}
+
+export function getDoctorExitCode(report: DoctorReport): number {
+  return report.checks.some((check) => check.status === "fail") ? 1 : 0;
+}
+
+export function formatDoctorReport(report: DoctorReport): string {
+  const lines = ["Uncommitted Doctor", ""];
+
+  for (const check of report.checks) {
+    lines.push(`[${check.status}] ${check.label}: ${check.message}`);
+
+    if (check.detail) {
+      lines.push(`  ${check.detail}`);
+    }
+  }
+
+  return lines.join("\n");
+}
+
+async function readConfig(
+  configFile: string
+): Promise<{ config?: DoctorConfig; check: DoctorCheck }> {
+  try {
+    const parsed = JSON.parse(await readFile(configFile, "utf8")) as unknown;
+
+    if (!isDoctorConfig(parsed)) {
+      return {
+        check: {
+          id: "config",
+          label: "Global config",
+          status: "fail",
+          message: `Config file is invalid: ${configFile}`
+        }
+      };
+    }
+
+    return {
+      config: parsed,
+      check: {
+        id: "config",
+        label: "Global config",
+        status: "pass",
+        message: "Config file found.",
+        detail: configFile
+      }
+    };
+  } catch (error) {
+    if (isNodeError(error) && error.code === "ENOENT") {
+      return {
+        check: {
+          id: "config",
+          label: "Global config",
+          status: "fail",
+          message: `Config file is missing: ${configFile}`
+        }
+      };
+    }
+
+    return {
+      check: {
+        id: "config",
+        label: "Global config",
+        status: "fail",
+        message: `Config file is invalid: ${configFile}`
+      }
+    };
+  }
+}
+
+function createNodeCheck(nodeVersion: string): DoctorCheck {
+  const normalizedVersion = nodeVersion.replace(/^v/, "");
+
+  if (compareNodeVersions(normalizedVersion, minimumNodeVersion) < 0) {
+    return {
+      id: "node",
+      label: "Node.js",
+      status: "fail",
+      message: `Node.js v${minimumNodeVersion} or newer is required.`,
+      detail: `Current version: ${nodeVersion}`
+    };
+  }
+
+  return {
+    id: "node",
+    label: "Node.js",
+    status: "pass",
+    message: `Node.js ${nodeVersion} is supported.`
+  };
+}
+
+async function createGitCheck(
+  checkCommand: (command: string, args: string[]) => Promise<CommandCheckResult>
+): Promise<DoctorCheck> {
+  const result = await checkCommand("git", ["--version"]);
+
+  if (!result.ok) {
+    return {
+      id: "git",
+      label: "Git",
+      status: "fail",
+      message: "Git is not installed or not available on PATH.",
+      detail: result.detail
+    };
+  }
+
+  return {
+    id: "git",
+    label: "Git",
+    status: "pass",
+    message: "Git is available.",
+    detail: result.detail
+  };
+}
+
+async function createDirectoryChecks(
+  paths: ReturnType<typeof resolveConfigPaths>,
+  checkAccess: (path: string, mode: number) => Promise<boolean>
+): Promise<DoctorCheck[]> {
+  const pathEntries = [
+    ["configDir", paths.configDir],
+    ["historyDir", paths.historyDir],
+    ["globalDraftsDir", paths.globalDraftsDir],
+    ["logsDir", paths.logsDir],
+    ["defaultDraftRoot", paths.defaultDraftRoot]
+  ] as const;
+
+  return await Promise.all(
+    pathEntries.map(async ([key, path]) => {
+      const writable = await checkAccess(path, constants.W_OK);
+
+      if (!writable) {
+        return {
+          id: directoryIds[key],
+          label: directoryLabels[key],
+          status: "fail",
+          message: `Directory is not writable: ${path}`
+        };
+      }
+
+      return {
+        id: directoryIds[key],
+        label: directoryLabels[key],
+        status: "pass",
+        message: `Directory is writable: ${path}`
+      };
+    })
+  );
+}
+
+function createAiApiKeyCheck(
+  aiProvider: string,
+  env: Record<string, string | undefined>
+): DoctorCheck {
+  const normalizedProvider = aiProvider.trim().toLowerCase();
+  const envKey = aiProviderEnvKeys[normalizedProvider];
+
+  if (!envKey) {
+    return {
+      id: "ai-api-key",
+      label: "AI API key",
+      status: "pass",
+      message: `No API key required for provider: ${normalizedProvider}.`
+    };
+  }
+
+  if (!env[envKey]) {
+    return {
+      id: "ai-api-key",
+      label: "AI API key",
+      status: "warn",
+      message: `${envKey} is not set.`
+    };
+  }
+
+  return {
+    id: "ai-api-key",
+    label: "AI API key",
+    status: "pass",
+    message: `${envKey} is set.`
+  };
+}
+
+async function defaultCheckCommand(
+  command: string,
+  args: string[]
+): Promise<CommandCheckResult> {
+  try {
+    const { stdout } = await execFileAsync(command, args);
+
+    return { ok: true, detail: stdout.trim() };
+  } catch (error) {
+    return {
+      ok: false,
+      detail: error instanceof Error ? error.message : `${command} failed.`
+    };
+  }
+}
+
+async function defaultCheckAccess(path: string, mode: number): Promise<boolean> {
+  try {
+    await access(path, mode);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function compareNodeVersions(a: string, b: string): number {
+  const aParts = parseVersionParts(a);
+  const bParts = parseVersionParts(b);
+
+  for (let index = 0; index < 3; index += 1) {
+    if (aParts[index] > bParts[index]) {
+      return 1;
+    }
+
+    if (aParts[index] < bParts[index]) {
+      return -1;
+    }
+  }
+
+  return 0;
+}
+
+function parseVersionParts(version: string): [number, number, number] {
+  const [major = "0", minor = "0", patch = "0"] = version.split(".");
+
+  return [Number(major) || 0, Number(minor) || 0, Number(patch) || 0];
+}
+
+function isDoctorConfig(value: unknown): value is DoctorConfig {
+  return (
+    isRecord(value) &&
+    value.schemaVersion === 1 &&
+    typeof value.draftRoot === "string" &&
+    typeof value.aiProvider === "string"
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isNodeError(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && "code" in error;
+}

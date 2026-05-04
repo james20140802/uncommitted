@@ -59,6 +59,20 @@ describe("cli", () => {
     expect(stderr.join("\n")).toContain("Not a Git repository");
   });
 
+  it("routes doctor to the environment report handler", async () => {
+    const { io, stdout, stderr } = createIo();
+    const directory = await mkdtemp(join(tmpdir(), "uncommitted-cli-doctor-"));
+
+    const exitCode = await runCli(["doctor"], io, {
+      homeDir: join(directory, "home")
+    });
+
+    expect(exitCode).toBe(1);
+    expect(stderr).toEqual([]);
+    expect(stdout.join("\n")).toContain("Uncommitted Doctor");
+    expect(stdout.join("\n")).toContain("[fail] Global config");
+  });
+
   it("returns config exit code when project add path is missing", async () => {
     const { io, stdout, stderr } = createIo();
     const directory = await mkdtemp(join(tmpdir(), "uncommitted-cli-project-add-"));

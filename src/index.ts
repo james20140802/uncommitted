@@ -3,6 +3,19 @@ export type { CliIo, CliOptions } from "./cli.js";
 export { commands, isKnownCommand } from "./commands.js";
 export type { Command } from "./commands.js";
 export {
+  createDoctorReport,
+  formatDoctorReport,
+  getDoctorExitCode,
+  runDoctorCommand
+} from "./doctor-command.js";
+export type {
+  CommandCheckResult,
+  DoctorCheck,
+  DoctorOptions,
+  DoctorReport,
+  DoctorStatus
+} from "./doctor-command.js";
+export {
   ensureConfigDirectories,
   expandHomePath,
   resolveConfigPaths
