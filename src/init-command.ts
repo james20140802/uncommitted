@@ -34,10 +34,19 @@ export type InitCommandResult = {
 const defaultAnswers = {
   draftRoot: "~/Uncommitted/drafts",
   scheduleTime: "23:30",
-  aiProvider: "openai",
+  aiProvider: "none",
   persona: "wry coworker",
   roastLevel: "2"
 };
+const supportedAiProviders = [
+  "none",
+  "openai",
+  "anthropic",
+  "google",
+  "ollama",
+  "mistral",
+  "openrouter"
+] as const;
 
 export async function runInitCommand(
   args: string[],
@@ -45,6 +54,8 @@ export async function runInitCommand(
 ): Promise<InitCommandResult> {
   const force = parseInitArgs(args);
   const answers = await resolveAnswers(options.answers);
+  const scheduleTime = parseScheduleTime(answers.scheduleTime);
+  const aiProvider = parseAiProvider(answers.aiProvider);
   const roastLevel = parseRoastLevel(answers.roastLevel);
   const paths = resolveConfigPaths({
     homeDir: options.homeDir,
@@ -60,8 +71,8 @@ export async function runInitCommand(
   const config: InitConfig = {
     schemaVersion: 1,
     draftRoot: paths.defaultDraftRoot,
-    scheduleTime: answers.scheduleTime,
-    aiProvider: answers.aiProvider,
+    scheduleTime,
+    aiProvider,
     persona: answers.persona,
     roastLevel
   };
@@ -105,7 +116,11 @@ async function resolveAnswers(answers: InitAnswers = {}): Promise<Required<InitA
     return {
       draftRoot: await ask(readline, "Draft root", defaultAnswers.draftRoot),
       scheduleTime: await ask(readline, "Schedule time", defaultAnswers.scheduleTime),
-      aiProvider: await ask(readline, "AI provider", defaultAnswers.aiProvider),
+      aiProvider: await ask(
+        readline,
+        "AI provider, or none to decide later",
+        defaultAnswers.aiProvider
+      ),
       persona: await ask(readline, "Persona", defaultAnswers.persona),
       roastLevel: await ask(readline, "Roast level 0-5", defaultAnswers.roastLevel)
     };
@@ -131,6 +146,28 @@ function parseRoastLevel(value: string): number {
   }
 
   return parsed;
+}
+
+function parseScheduleTime(value: string): string {
+  const normalized = value.trim();
+
+  if (!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(normalized)) {
+    throw new Error("Schedule time must use 24-hour HH:mm format.");
+  }
+
+  return normalized;
+}
+
+function parseAiProvider(value: string): string {
+  const normalized = value.trim().toLowerCase();
+
+  if (!supportedAiProviders.includes(normalized as (typeof supportedAiProviders)[number])) {
+    throw new Error(
+      `AI provider must be one of: ${supportedAiProviders.join(", ")}.`
+    );
+  }
+
+  return normalized;
 }
 
 async function pathExists(path: string): Promise<boolean> {

@@ -95,6 +95,81 @@ describe("init command", () => {
     expect(JSON.parse(await readFile(formatHistoryFile, "utf8"))).toEqual(existingFormats);
   });
 
+  it("normalizes supported AI providers", async () => {
+    const homeDir = await mkTestHome("provider-normalize");
+
+    await runInitCommand([], {
+      homeDir,
+      answers: {
+        aiProvider: " Anthropic "
+      }
+    });
+
+    const config = JSON.parse(
+      await readFile(join(homeDir, ".uncommitted", "config.json"), "utf8")
+    ) as { aiProvider: string };
+    expect(config.aiProvider).toBe("anthropic");
+  });
+
+  it("supports deciding the AI provider later", async () => {
+    const homeDir = await mkTestHome("provider-none");
+
+    await runInitCommand([], { homeDir });
+
+    const config = JSON.parse(
+      await readFile(join(homeDir, ".uncommitted", "config.json"), "utf8")
+    ) as { aiProvider: string };
+    expect(config.aiProvider).toBe("none");
+  });
+
+  it("supports Mistral and OpenRouter providers", async () => {
+    const mistralHome = await mkTestHome("provider-mistral");
+    const openrouterHome = await mkTestHome("provider-openrouter");
+
+    await runInitCommand([], {
+      homeDir: mistralHome,
+      answers: { aiProvider: "mistral" }
+    });
+    await runInitCommand([], {
+      homeDir: openrouterHome,
+      answers: { aiProvider: "OpenRouter" }
+    });
+
+    const mistralConfig = JSON.parse(
+      await readFile(join(mistralHome, ".uncommitted", "config.json"), "utf8")
+    ) as { aiProvider: string };
+    const openrouterConfig = JSON.parse(
+      await readFile(join(openrouterHome, ".uncommitted", "config.json"), "utf8")
+    ) as { aiProvider: string };
+
+    expect(mistralConfig.aiProvider).toBe("mistral");
+    expect(openrouterConfig.aiProvider).toBe("openrouter");
+  });
+
+  it("rejects unsupported AI providers", async () => {
+    const homeDir = await mkTestHome("provider");
+
+    await expect(
+      runInitCommand([], {
+        homeDir,
+        answers: { aiProvider: "adlkfjldkajf" }
+      })
+    ).rejects.toThrow(
+      "AI provider must be one of: none, openai, anthropic, google, ollama, mistral, openrouter."
+    );
+  });
+
+  it("rejects schedule times outside 24-hour HH:mm format", async () => {
+    const homeDir = await mkTestHome("schedule");
+
+    await expect(
+      runInitCommand([], {
+        homeDir,
+        answers: { scheduleTime: "25:00" }
+      })
+    ).rejects.toThrow("Schedule time must use 24-hour HH:mm format.");
+  });
+
   it("rejects roast levels outside the MVP range", async () => {
     const homeDir = await mkTestHome("roast");
 
