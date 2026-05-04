@@ -66,6 +66,35 @@ describe("init command", () => {
     expect(config.roastLevel).toBe(5);
   });
 
+  it("preserves existing registry and format history when forced", async () => {
+    const homeDir = await mkTestHome("force-preserves");
+    const configDir = join(homeDir, ".uncommitted");
+    const historyDir = join(configDir, "history");
+    const projectsFile = join(configDir, "projects.json");
+    const formatHistoryFile = join(historyDir, "formats.json");
+    const existingProjects = {
+      schemaVersion: 1,
+      projects: [{ id: "project-1", root: "/repo" }]
+    };
+    const existingFormats = {
+      schemaVersion: 1,
+      formats: [{ id: "format-1" }]
+    };
+
+    await mkdir(historyDir, { recursive: true });
+    await writeFile(join(configDir, "config.json"), "{\"existing\":true}\n");
+    await writeFile(projectsFile, `${JSON.stringify(existingProjects)}\n`);
+    await writeFile(formatHistoryFile, `${JSON.stringify(existingFormats)}\n`);
+
+    await runInitCommand(["--force"], {
+      homeDir,
+      answers: { roastLevel: "4" }
+    });
+
+    expect(JSON.parse(await readFile(projectsFile, "utf8"))).toEqual(existingProjects);
+    expect(JSON.parse(await readFile(formatHistoryFile, "utf8"))).toEqual(existingFormats);
+  });
+
   it("rejects roast levels outside the MVP range", async () => {
     const homeDir = await mkTestHome("roast");
 

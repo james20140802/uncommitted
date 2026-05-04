@@ -67,8 +67,8 @@ export async function runInitCommand(
   };
 
   await writeJson(paths.configFile, config);
-  await writeJson(paths.projectsFile, { schemaVersion: 1, projects: [] });
-  await writeJson(paths.formatHistoryFile, { schemaVersion: 1, formats: [] });
+  await writeJsonIfMissing(paths.projectsFile, { schemaVersion: 1, projects: [] });
+  await writeJsonIfMissing(paths.formatHistoryFile, { schemaVersion: 1, formats: [] });
 
   return { created: true, config };
 }
@@ -144,4 +144,12 @@ async function pathExists(path: string): Promise<boolean> {
 
 async function writeJson(path: string, value: unknown): Promise<void> {
   await writeFile(path, `${JSON.stringify(value, null, 2)}\n`);
+}
+
+async function writeJsonIfMissing(path: string, value: unknown): Promise<void> {
+  if (await pathExists(path)) {
+    return;
+  }
+
+  await writeJson(path, value);
 }
