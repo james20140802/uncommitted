@@ -5,10 +5,16 @@ import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { commands, isKnownCommand } from "./commands.js";
 import { runInitCommand } from "./init-command.js";
+import { addProject, ProjectAddError } from "./project-add.js";
 
 export type CliIo = {
   stdout: (message: string) => void;
   stderr: (message: string) => void;
+};
+
+export type CliOptions = {
+  cwd?: string;
+  homeDir?: string;
 };
 
 const defaultIo: CliIo = {
@@ -33,7 +39,11 @@ Options:
 `;
 }
 
-export async function runCli(args: string[], io: CliIo = defaultIo): Promise<number> {
+export async function runCli(
+  args: string[],
+  io: CliIo = defaultIo,
+  options: CliOptions = {}
+): Promise<number> {
   const normalizedArgs = args[0] === "--" ? args.slice(1) : args;
   const [command, ...commandArgs] = normalizedArgs;
 
@@ -59,8 +69,40 @@ export async function runCli(args: string[], io: CliIo = defaultIo): Promise<num
     }
   }
 
+  const [subcommand, value] = commandArgs;
+
+  if (command === "project" && subcommand === "add") {
+    return await runProjectAdd(value, io, options);
+  }
+
   io.stderr(`Command not implemented yet: ${command}`);
   return 1;
+}
+
+async function runProjectAdd(
+  path: string | undefined,
+  io: CliIo,
+  options: CliOptions
+): Promise<number> {
+  try {
+    const result = await addProject(path ?? ".", options);
+
+    if (result.status === "already-registered") {
+      io.stdout(`Project already registered: ${result.project.id}`);
+    } else {
+      io.stdout(`Project registered: ${result.project.id}`);
+    }
+
+    io.stdout(result.project.root);
+    return 0;
+  } catch (error) {
+    if (error instanceof ProjectAddError) {
+      io.stderr(error.message);
+      return 2;
+    }
+
+    throw error;
+  }
 }
 
 export function isDirectRun(
