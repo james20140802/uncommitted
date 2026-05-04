@@ -67,7 +67,7 @@ describe("cli", () => {
       homeDir: join(directory, "home")
     });
 
-    expect(exitCode).toBe(1);
+    expect(exitCode).toBe(2);
     expect(stderr).toEqual([]);
     expect(stdout.join("\n")).toContain("Uncommitted Doctor");
     expect(stdout.join("\n")).toContain("[fail] Global config");

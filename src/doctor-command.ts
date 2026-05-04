@@ -16,6 +16,7 @@ export type DoctorCheck = {
   status: DoctorStatus;
   message: string;
   detail?: string;
+  exitCode?: number;
 };
 
 export type DoctorReport = {
@@ -107,7 +108,13 @@ export async function createDoctorReport(
 }
 
 export function getDoctorExitCode(report: DoctorReport): number {
-  return report.checks.some((check) => check.status === "fail") ? 1 : 0;
+  const failedCheck = report.checks.find((check) => check.status === "fail");
+
+  if (!failedCheck) {
+    return 0;
+  }
+
+  return failedCheck.exitCode ?? 1;
 }
 
 export function formatDoctorReport(report: DoctorReport): string {
@@ -136,7 +143,8 @@ async function readConfig(
           id: "config",
           label: "Global config",
           status: "fail",
-          message: `Config file is invalid: ${configFile}`
+          message: `Config file is invalid: ${configFile}`,
+          exitCode: 2
         }
       };
     }
@@ -158,7 +166,8 @@ async function readConfig(
           id: "config",
           label: "Global config",
           status: "fail",
-          message: `Config file is missing: ${configFile}`
+          message: `Config file is missing: ${configFile}`,
+          exitCode: 2
         }
       };
     }
@@ -168,7 +177,8 @@ async function readConfig(
         id: "config",
         label: "Global config",
         status: "fail",
-        message: `Config file is invalid: ${configFile}`
+        message: `Config file is invalid: ${configFile}`,
+        exitCode: 2
       }
     };
   }

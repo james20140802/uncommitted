@@ -35,7 +35,7 @@ describe("doctor command", () => {
     expect(formatDoctorReport(report)).toContain("[pass] Git");
   });
 
-  it("reports missing config as a blocking failure", async () => {
+  it("reports missing config as a config error", async () => {
     const homeDir = await mkdtemp(join(tmpdir(), "uncommitted-doctor-missing-config-"));
 
     const report = await createDoctorReport({
@@ -52,7 +52,7 @@ describe("doctor command", () => {
         message: expect.stringContaining("Config file is missing")
       })
     );
-    expect(getDoctorExitCode(report)).toBe(1);
+    expect(getDoctorExitCode(report)).toBe(2);
   });
 
   it("reports missing Git as a blocking failure", async () => {
