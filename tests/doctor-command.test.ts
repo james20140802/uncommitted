@@ -98,6 +98,29 @@ describe("doctor command", () => {
     expect(getDoctorExitCode(report)).toBe(0);
   });
 
+  it("fails when the configured AI provider is unsupported", async () => {
+    const homeDir = await createHomeWithConfig({
+      aiProvider: "typo-provider",
+      draftRoot: "~/Uncommitted/drafts"
+    });
+
+    const report = await createDoctorReport({
+      homeDir,
+      env: {},
+      nodeVersion: "v22.13.0",
+      checkCommand: async () => ({ ok: true, detail: "git version 2.49.0" })
+    });
+
+    expect(report.checks).toContainEqual(
+      expect.objectContaining({
+        id: "ai-api-key",
+        status: "fail",
+        message: "Unsupported AI provider: typo-provider."
+      })
+    );
+    expect(getDoctorExitCode(report)).toBe(2);
+  });
+
   it("fails when a required directory is not writable", async () => {
     const homeDir = await createHomeWithConfig();
     const blockedDirectory = join(homeDir, ".uncommitted", "logs");

@@ -269,6 +269,21 @@ function createAiApiKeyCheck(
   env: Record<string, string | undefined>
 ): DoctorCheck {
   const normalizedProvider = aiProvider.trim().toLowerCase();
+  const providerIsSupported = Object.prototype.hasOwnProperty.call(
+    aiProviderEnvKeys,
+    normalizedProvider
+  );
+
+  if (!providerIsSupported) {
+    return {
+      id: "ai-api-key",
+      label: "AI API key",
+      status: "fail",
+      message: `Unsupported AI provider: ${normalizedProvider}.`,
+      exitCode: 2
+    };
+  }
+
   const envKey = aiProviderEnvKeys[normalizedProvider];
 
   if (!envKey) {
