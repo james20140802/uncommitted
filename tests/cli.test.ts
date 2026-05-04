@@ -35,11 +35,11 @@ describe("cli", () => {
   it("routes known commands to placeholder handlers", async () => {
     const { io, stdout, stderr } = createIo();
 
-    const exitCode = await runCli(["init"], io);
+    const exitCode = await runCli(["note"], io);
 
     expect(exitCode).toBe(1);
     expect(stdout).toEqual([]);
-    expect(stderr.join("\n")).toContain("Command not implemented yet: init");
+    expect(stderr.join("\n")).toContain("Command not implemented yet: note");
   });
 
   it("reports unknown commands", async () => {

@@ -8,3 +8,10 @@ export {
   resolveConfigPaths
 } from "./config-paths.js";
 export type { ConfigPathOptions, ConfigPaths } from "./config-paths.js";
+export { runInitCommand } from "./init-command.js";
+export type {
+  InitAnswers,
+  InitCommandOptions,
+  InitCommandResult,
+  InitConfig
+} from "./init-command.js";

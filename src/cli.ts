@@ -4,6 +4,7 @@ import { realpathSync } from "node:fs";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { commands, isKnownCommand } from "./commands.js";
+import { runInitCommand } from "./init-command.js";
 
 export type CliIo = {
   stdout: (message: string) => void;
@@ -34,7 +35,7 @@ Options:
 
 export async function runCli(args: string[], io: CliIo = defaultIo): Promise<number> {
   const normalizedArgs = args[0] === "--" ? args.slice(1) : args;
-  const [command] = normalizedArgs;
+  const [command, ...commandArgs] = normalizedArgs;
 
   if (!command || command === "--help" || command === "-h") {
     io.stdout(getHelpText());
@@ -45,6 +46,17 @@ export async function runCli(args: string[], io: CliIo = defaultIo): Promise<num
     io.stderr(`Unknown command: ${command}`);
     io.stderr("Run `uncommitted --help`.");
     return 1;
+  }
+
+  if (command === "init") {
+    try {
+      await runInitCommand(commandArgs);
+      io.stdout("Initialized Uncommitted config.");
+      return 0;
+    } catch (error) {
+      io.stderr(error instanceof Error ? error.message : "Init failed.");
+      return 1;
+    }
   }
 
   io.stderr(`Command not implemented yet: ${command}`);
