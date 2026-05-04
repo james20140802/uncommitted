@@ -4,6 +4,7 @@ import { realpathSync } from "node:fs";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { commands, isKnownCommand } from "./commands.js";
+import { formatDoctorReport, runDoctorCommand } from "./doctor-command.js";
 import { runInitCommand } from "./init-command.js";
 import { addProject, ProjectAddError } from "./project-add.js";
 
@@ -67,6 +68,12 @@ export async function runCli(
       io.stderr(error instanceof Error ? error.message : "Init failed.");
       return 1;
     }
+  }
+
+  if (command === "doctor") {
+    const result = await runDoctorCommand(options);
+    io.stdout(formatDoctorReport(result.report));
+    return result.exitCode;
   }
 
   const [subcommand, value] = commandArgs;
