@@ -1,9 +1,13 @@
-import { mkdtemp, symlink, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 import { isDirectRun, runCli } from "../src/cli.js";
+
+const execFileAsync = promisify(execFile);
 
 function createIo() {
   const stdout: string[] = [];
@@ -53,6 +57,36 @@ describe("cli", () => {
     expect(exitCode).toBe(2);
     expect(stdout).toEqual([]);
     expect(stderr.join("\n")).toContain("Not a Git repository");
+  });
+
+  it("returns config exit code when project add path is missing", async () => {
+    const { io, stdout, stderr } = createIo();
+    const directory = await mkdtemp(join(tmpdir(), "uncommitted-cli-project-add-"));
+
+    const exitCode = await runCli(["project", "add", join(directory, "missing")], io, {
+      homeDir: join(directory, "home")
+    });
+
+    expect(exitCode).toBe(2);
+    expect(stdout).toEqual([]);
+    expect(stderr.join("\n")).toContain("Path does not exist");
+  });
+
+  it("returns config exit code when project add finds invalid projects file", async () => {
+    const { io, stdout, stderr } = createIo();
+    const directory = await mkdtemp(join(tmpdir(), "uncommitted-cli-project-add-"));
+    const repoDir = join(directory, "repo");
+    const homeDir = join(directory, "home");
+
+    await execFileAsync("git", ["init", repoDir]);
+    await mkdir(join(homeDir, ".uncommitted"), { recursive: true });
+    await writeFile(join(homeDir, ".uncommitted", "projects.json"), "nope", "utf8");
+
+    const exitCode = await runCli(["project", "add", repoDir], io, { homeDir });
+
+    expect(exitCode).toBe(2);
+    expect(stdout).toEqual([]);
+    expect(stderr.join("\n")).toContain("Invalid projects file");
   });
 
   it("reports unknown commands", async () => {

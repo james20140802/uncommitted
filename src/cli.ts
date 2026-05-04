@@ -98,7 +98,7 @@ async function runProjectAdd(
   } catch (error) {
     if (error instanceof ProjectAddError) {
       io.stderr(error.message);
-      return error.code === "not-git-repository" ? 2 : 1;
+      return 2;
     }
 
     throw error;
