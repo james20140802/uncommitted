@@ -6,6 +6,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { commands, isKnownCommand } from "./commands.js";
 import { formatDoctorReport, runDoctorCommand } from "./doctor-command.js";
 import { runInitCommand } from "./init-command.js";
+import { NoteCommandError, recordManualNote } from "./note-command.js";
 import { addProject, ProjectAddError } from "./project-add.js";
 
 export type CliIo = {
@@ -16,6 +17,7 @@ export type CliIo = {
 export type CliOptions = {
   cwd?: string;
   homeDir?: string;
+  now?: () => string;
 };
 
 const defaultIo: CliIo = {
@@ -82,8 +84,37 @@ export async function runCli(
     return await runProjectAdd(value, io, options);
   }
 
+  if (command === "note") {
+    return await runNote(commandArgs, io, options);
+  }
+
   io.stderr(`Command not implemented yet: ${command}`);
   return 1;
+}
+
+async function runNote(
+  args: string[],
+  io: CliIo,
+  options: CliOptions
+): Promise<number> {
+  if (args[0] === "list") {
+    io.stderr("Command not implemented yet: note list");
+    return 1;
+  }
+
+  try {
+    const result = await recordManualNote(args, options);
+
+    io.stdout(`Note saved for ${result.event.date}.`);
+    return 0;
+  } catch (error) {
+    if (error instanceof NoteCommandError) {
+      io.stderr(error.message);
+      return error.code === "empty-note" ? 1 : 2;
+    }
+
+    throw error;
+  }
 }
 
 async function runProjectAdd(

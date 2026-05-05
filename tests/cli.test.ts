@@ -1,11 +1,12 @@
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 import { isDirectRun, runCli } from "../src/cli.js";
+import { addProject } from "../src/project-add.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -39,11 +40,51 @@ describe("cli", () => {
   it("routes known commands to placeholder handlers", async () => {
     const { io, stdout, stderr } = createIo();
 
-    const exitCode = await runCli(["note"], io);
+    const exitCode = await runCli(["collect"], io);
 
     expect(exitCode).toBe(1);
     expect(stdout).toEqual([]);
-    expect(stderr.join("\n")).toContain("Command not implemented yet: note");
+    expect(stderr.join("\n")).toContain("Command not implemented yet: collect");
+  });
+
+  it("routes note to the manual note handler", async () => {
+    const { io, stdout, stderr } = createIo();
+    const directory = await mkdtemp(join(tmpdir(), "uncommitted-cli-note-"));
+
+    const exitCode = await runCli(["note", "remember this"], io, {
+      homeDir: join(directory, "home"),
+      cwd: directory
+    });
+
+    expect(exitCode).toBe(2);
+    expect(stdout).toEqual([]);
+    expect(stderr.join("\n")).toContain("Run inside a registered project.");
+  });
+
+  it("does not save note list as a manual note", async () => {
+    const { io, stdout, stderr } = createIo();
+    const directory = await mkdtemp(join(tmpdir(), "uncommitted-cli-note-list-"));
+    const repoDir = join(directory, "repo");
+    const homeDir = join(directory, "home");
+
+    await execFileAsync("git", ["init", repoDir]);
+    await addProject(repoDir, {
+      homeDir,
+      now: () => "2026-05-06T00:00:00.000Z"
+    });
+
+    const exitCode = await runCli(["note", "list"], io, {
+      cwd: repoDir,
+      homeDir,
+      now: () => "2026-05-06T10:15:30.000Z"
+    });
+
+    await expect(
+      access(join(repoDir, ".uncommitted", "events", "manual", "2026-05-06.jsonl"))
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    expect(exitCode).toBe(1);
+    expect(stdout).toEqual([]);
+    expect(stderr.join("\n")).toContain("Command not implemented yet: note list");
   });
 
   it("routes project add to the project registration handler", async () => {
