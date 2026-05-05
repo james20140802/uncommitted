@@ -31,7 +31,7 @@ describe("Git activity collector", () => {
     await git(repoDir, ["add", "app.ts", "notes.md"]);
     await commit(
       repoDir,
-      "safe work by dev@example.com in /Users/someone/secret https://github.com/acme/private",
+      "safe work by dev@example.com in /Users/someone/secret and /workspace/app https://github.com/acme/private",
       "2026-05-05T10:00:00Z"
     );
 
@@ -83,7 +83,7 @@ describe("Git activity collector", () => {
       shortHash: expect.stringMatching(/^[0-9a-f]{7,}$/),
       authorName: "Fixture Dev",
       subject:
-        "safe work by [redacted-email] in [redacted-path] [redacted-url]",
+        "safe work by [redacted-email] in [redacted-path] and [redacted-path] [redacted-url]",
       stats: {
         filesChanged: 2,
         insertions: 2,
@@ -99,6 +99,7 @@ describe("Git activity collector", () => {
     const serialized = JSON.stringify(activity);
     expect(serialized).not.toContain(repoDir);
     expect(serialized).not.toContain("dev@example.com");
+    expect(serialized).not.toContain("/workspace/app");
     expect(serialized).not.toContain("github.com/acme/private");
     expect(serialized).not.toContain("git@github.com");
     expect(serialized).not.toContain("const target = 2");

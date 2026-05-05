@@ -347,7 +347,7 @@ function redactSensitiveText(value: string): string {
       "[redacted-url]"
     )
     .replace(
-      /(^|\s)\/(?:Users|home|private|tmp|var|Volumes)\/\S+/g,
+      /(^|[\s(["'])\/[^\s)"']+/g,
       "$1[redacted-path]"
     );
 }
