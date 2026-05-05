@@ -39,11 +39,25 @@ describe("cli", () => {
   it("routes known commands to placeholder handlers", async () => {
     const { io, stdout, stderr } = createIo();
 
-    const exitCode = await runCli(["note"], io);
+    const exitCode = await runCli(["collect"], io);
 
     expect(exitCode).toBe(1);
     expect(stdout).toEqual([]);
-    expect(stderr.join("\n")).toContain("Command not implemented yet: note");
+    expect(stderr.join("\n")).toContain("Command not implemented yet: collect");
+  });
+
+  it("routes note to the manual note handler", async () => {
+    const { io, stdout, stderr } = createIo();
+    const directory = await mkdtemp(join(tmpdir(), "uncommitted-cli-note-"));
+
+    const exitCode = await runCli(["note", "remember this"], io, {
+      homeDir: join(directory, "home"),
+      cwd: directory
+    });
+
+    expect(exitCode).toBe(2);
+    expect(stdout).toEqual([]);
+    expect(stderr.join("\n")).toContain("Run inside a registered project.");
   });
 
   it("routes project add to the project registration handler", async () => {
