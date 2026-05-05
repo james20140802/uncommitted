@@ -97,6 +97,11 @@ async function runNote(
   io: CliIo,
   options: CliOptions
 ): Promise<number> {
+  if (args[0] === "list") {
+    io.stderr("Command not implemented yet: note list");
+    return 1;
+  }
+
   try {
     const result = await recordManualNote(args, options);
 
