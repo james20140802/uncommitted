@@ -130,6 +130,25 @@ describe("Git activity collector", () => {
     ]);
   });
 
+  it("keeps arrows in added file names", async () => {
+    const repoDir = await initGitRepo("arrow-file-repo");
+
+    await writeFile(join(repoDir, "base.txt"), "base\n", "utf8");
+    await git(repoDir, ["add", "base.txt"]);
+    await commit(repoDir, "base commit", "2026-05-05T10:00:00Z");
+    await writeFile(join(repoDir, "a -> b.txt"), "dirty\n", "utf8");
+    await git(repoDir, ["add", "a -> b.txt"]);
+
+    const activity = await collectGitActivity({
+      projectRoot: repoDir,
+      targetDate: "2026-05-06"
+    });
+
+    expect(activity.dirty.files).toEqual([
+      { path: "a -> b.txt", status: "added" }
+    ]);
+  });
+
   it("fails with collection errors for missing or non-Git roots", async () => {
     const plainDir = await createTempRoot("plain-dir");
     const missingDir = join(plainDir, "missing");

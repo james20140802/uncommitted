@@ -216,12 +216,68 @@ async function collectDirtyStatus(
 function parseDirtyStatusLine(line: string): DirtyFileSummary {
   const statusCode = line.slice(0, 2);
   const rawPath = line.slice(3);
-  const path = rawPath.includes(" -> ") ? rawPath.split(" -> ").at(-1) ?? rawPath : rawPath;
+  const status = mapDirtyStatus(statusCode);
+  const path = extractCurrentDirtyPath(rawPath, status);
 
   return {
     path,
-    status: mapDirtyStatus(statusCode)
+    status
   };
+}
+
+function extractCurrentDirtyPath(rawPath: string, status: DirtyFileStatus): string {
+  if (status !== "renamed" && status !== "copied") {
+    return unquoteGitPath(rawPath);
+  }
+
+  const separatorIndex = findRenameSeparator(rawPath);
+  const currentPath =
+    separatorIndex === -1 ? rawPath : rawPath.slice(separatorIndex + " -> ".length);
+
+  return unquoteGitPath(currentPath);
+}
+
+function findRenameSeparator(rawPath: string): number {
+  let inQuote = false;
+  let escaped = false;
+  let separatorIndex = -1;
+
+  for (let index = 0; index < rawPath.length; index += 1) {
+    const char = rawPath[index];
+
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+
+    if (char === "\\") {
+      escaped = true;
+      continue;
+    }
+
+    if (char === "\"") {
+      inQuote = !inQuote;
+      continue;
+    }
+
+    if (!inQuote && rawPath.startsWith(" -> ", index)) {
+      separatorIndex = index;
+    }
+  }
+
+  return separatorIndex;
+}
+
+function unquoteGitPath(path: string): string {
+  if (!path.startsWith("\"") || !path.endsWith("\"")) {
+    return path;
+  }
+
+  try {
+    return JSON.parse(path) as string;
+  } catch {
+    return path;
+  }
 }
 
 function mapDirtyStatus(statusCode: string): DirtyFileStatus {
