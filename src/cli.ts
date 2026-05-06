@@ -3,6 +3,10 @@
 import { realpathSync } from "node:fs";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import {
+  collectGitForRegisteredProjects,
+  CollectGitCommandError
+} from "./collect-git-command.js";
 import { commands, isKnownCommand } from "./commands.js";
 import { formatDoctorReport, runDoctorCommand } from "./doctor-command.js";
 import { runInitCommand } from "./init-command.js";
@@ -88,8 +92,50 @@ export async function runCli(
     return await runNote(commandArgs, io, options);
   }
 
+  if (command === "collect") {
+    return await runCollect(commandArgs, io, options);
+  }
+
   io.stderr(`Command not implemented yet: ${command}`);
   return 1;
+}
+
+async function runCollect(
+  args: string[],
+  io: CliIo,
+  options: CliOptions
+): Promise<number> {
+  if (args.length !== 1 || args[0] !== "git") {
+    io.stderr("Usage: uncommitted collect git");
+    return 1;
+  }
+
+  try {
+    const result = await collectGitForRegisteredProjects(options);
+
+    if (result.successes.length > 0) {
+      io.stdout(`Collected Git activity for ${formatProjectCount(result.successes.length)}.`);
+
+      for (const success of result.successes) {
+        io.stdout(
+          `${success.projectId}: ${success.activity.totals.commits} commits, ${success.activity.dirty.files.length} dirty files.`
+        );
+      }
+    }
+
+    for (const failure of result.failures) {
+      io.stderr(`Failed to collect ${failure.projectId}: ${failure.message}`);
+    }
+
+    return result.failures.length > 0 ? 3 : 0;
+  } catch (error) {
+    if (error instanceof CollectGitCommandError) {
+      io.stderr(error.message);
+      return 3;
+    }
+
+    throw error;
+  }
 }
 
 async function runNote(
@@ -115,6 +161,10 @@ async function runNote(
 
     throw error;
   }
+}
+
+function formatProjectCount(count: number): string {
+  return `${count} ${count === 1 ? "project" : "projects"}`;
 }
 
 async function runProjectAdd(
