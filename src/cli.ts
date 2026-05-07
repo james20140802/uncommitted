@@ -131,7 +131,7 @@ async function runCollect(
   } catch (error) {
     if (error instanceof CollectGitCommandError) {
       io.stderr(error.message);
-      return 3;
+      return error.code === "invalid-projects-file" ? 2 : 3;
     }
 
     throw error;

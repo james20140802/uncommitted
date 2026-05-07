@@ -120,6 +120,24 @@ describe("cli", () => {
     );
   });
 
+  it("returns config exit code when collect git finds invalid projects file", async () => {
+    const { io, stdout, stderr } = createIo();
+    const directory = await mkdtemp(join(tmpdir(), "uncommitted-cli-collect-invalid-"));
+    const homeDir = join(directory, "home");
+
+    await mkdir(join(homeDir, ".uncommitted"), { recursive: true });
+    await writeFile(join(homeDir, ".uncommitted", "projects.json"), "nope", "utf8");
+
+    const exitCode = await runCli(["collect", "git"], io, {
+      homeDir,
+      now: () => "2026-05-06T13:30:00.000Z"
+    });
+
+    expect(exitCode).toBe(2);
+    expect(stdout).toEqual([]);
+    expect(stderr.join("\n")).toContain("Invalid projects file.");
+  });
+
   it("preserves successful collect output when another project fails", async () => {
     const { io, stdout, stderr } = createIo();
     const directory = await mkdtemp(join(tmpdir(), "uncommitted-cli-collect-partial-"));
