@@ -149,6 +149,11 @@ async function runNote(
   options: CliOptions
 ): Promise<number> {
   if (args[0] === "list") {
+    if (args.length !== 1) {
+      io.stderr("Usage: uncommitted note list");
+      return 1;
+    }
+
     return await runNoteList(io, options);
   }
 

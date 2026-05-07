@@ -279,6 +279,16 @@ describe("cli", () => {
     ]);
   });
 
+  it("rejects note list with extra arguments", async () => {
+    const { io, stdout, stderr } = createIo();
+
+    const exitCode = await runCli(["note", "list", "fix", "tests"], io);
+
+    expect(exitCode).toBe(1);
+    expect(stdout).toEqual([]);
+    expect(stderr).toEqual(["Usage: uncommitted note list"]);
+  });
+
   it("routes project add to the project registration handler", async () => {
     const { io, stdout, stderr } = createIo();
     const directory = await mkdtemp(join(tmpdir(), "uncommitted-cli-project-add-"));
