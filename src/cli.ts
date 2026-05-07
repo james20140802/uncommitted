@@ -10,7 +10,12 @@ import {
 import { commands, isKnownCommand } from "./commands.js";
 import { formatDoctorReport, runDoctorCommand } from "./doctor-command.js";
 import { runInitCommand } from "./init-command.js";
-import { NoteCommandError, recordManualNote } from "./note-command.js";
+import {
+  listManualNotes,
+  type ManualNoteEvent,
+  NoteCommandError,
+  recordManualNote
+} from "./note-command.js";
 import { addProject, ProjectAddError } from "./project-add.js";
 
 export type CliIo = {
@@ -144,8 +149,12 @@ async function runNote(
   options: CliOptions
 ): Promise<number> {
   if (args[0] === "list") {
-    io.stderr("Command not implemented yet: note list");
-    return 1;
+    if (args.length !== 1) {
+      io.stderr("Usage: uncommitted note list");
+      return 1;
+    }
+
+    return await runNoteList(io, options);
   }
 
   try {
@@ -161,6 +170,41 @@ async function runNote(
 
     throw error;
   }
+}
+
+async function runNoteList(
+  io: CliIo,
+  options: CliOptions
+): Promise<number> {
+  try {
+    const result = await listManualNotes(options);
+
+    if (result.notes.length === 0) {
+      io.stdout("No manual notes found.");
+      return 0;
+    }
+
+    io.stdout("Manual notes (newest first):");
+
+    for (const note of result.notes) {
+      io.stdout(formatManualNote(note));
+    }
+
+    return 0;
+  } catch (error) {
+    if (error instanceof NoteCommandError) {
+      io.stderr(error.message);
+      return error.code === "malformed-note-data" ? 1 : 2;
+    }
+
+    throw error;
+  }
+}
+
+function formatManualNote(note: ManualNoteEvent): string {
+  const displayTimestamp = note.timestamp.replace("T", " ").slice(0, 16);
+
+  return `${displayTimestamp} ${note.text}`;
 }
 
 function formatProjectCount(count: number): string {

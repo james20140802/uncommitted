@@ -1,12 +1,16 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, realpath } from "node:fs/promises";
+import { mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 import { addProject } from "../src/project-add.js";
-import { NoteCommandError, recordManualNote } from "../src/note-command.js";
+import {
+  listManualNotes,
+  NoteCommandError,
+  recordManualNote
+} from "../src/note-command.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -66,6 +70,96 @@ describe("note command", () => {
       code: "project-not-registered",
       message: "Run inside a registered project."
     });
+  });
+
+  it("lists recent manual notes newest first with a small default limit", async () => {
+    const { homeDir, repoDir } = await createRegisteredProject("note-list-success");
+    const nestedDir = join(repoDir, "packages", "cli");
+    await mkdir(nestedDir, { recursive: true });
+
+    for (let index = 0; index < 11; index += 1) {
+      const minute = String(index).padStart(2, "0");
+
+      await recordManualNote([`note ${index}`], {
+        cwd: repoDir,
+        homeDir,
+        now: () => `2026-05-06T10:${minute}:00.000Z`,
+        createId: () => `note-${index}`
+      });
+    }
+
+    const result = await listManualNotes({
+      cwd: nestedDir,
+      homeDir
+    });
+
+    expect(result.limit).toBe(10);
+    expect(result.notes).toHaveLength(10);
+    expect(result.notes.map((note) => note.text)).toEqual([
+      "note 10",
+      "note 9",
+      "note 8",
+      "note 7",
+      "note 6",
+      "note 5",
+      "note 4",
+      "note 3",
+      "note 2",
+      "note 1"
+    ]);
+  });
+
+  it("treats missing manual note files as an empty list", async () => {
+    const { homeDir, repoDir } = await createRegisteredProject("note-list-empty");
+
+    await expect(
+      listManualNotes({
+        cwd: repoDir,
+        homeDir
+      })
+    ).resolves.toEqual({
+      notes: [],
+      limit: 10
+    });
+  });
+
+  it("fails clearly outside a registered project when listing notes", async () => {
+    const root = await createTempRoot("note-list-unregistered");
+    const repoDir = await initGitRepo(join(root, "repo"));
+
+    await expect(
+      listManualNotes({
+        cwd: repoDir,
+        homeDir: join(root, "home")
+      })
+    ).rejects.toMatchObject({
+      code: "project-not-registered",
+      message: "Run inside a registered project."
+    });
+  });
+
+  it("reports malformed stored manual note data without private paths", async () => {
+    const { homeDir, repoDir } = await createRegisteredProject("note-list-malformed");
+    const eventsDir = join(repoDir, ".uncommitted", "events", "manual");
+    await mkdir(eventsDir, { recursive: true });
+    await writeFile(join(eventsDir, "2026-05-06.jsonl"), "{nope}\n", "utf8");
+
+    await expect(
+      listManualNotes({
+        cwd: repoDir,
+        homeDir
+      })
+    ).rejects.toMatchObject({
+      code: "malformed-note-data",
+      message: "Stored manual notes are malformed. Fix or remove the invalid note data."
+    });
+
+    await expect(
+      listManualNotes({
+        cwd: repoDir,
+        homeDir
+      })
+    ).rejects.not.toThrow(repoDir);
   });
 
   it("uses a typed note command error", async () => {

@@ -234,9 +234,59 @@ describe("cli", () => {
     await expect(
       access(join(repoDir, ".uncommitted", "events", "manual", "2026-05-06.jsonl"))
     ).rejects.toMatchObject({ code: "ENOENT" });
+    expect(exitCode).toBe(0);
+    expect(stdout).toEqual(["No manual notes found."]);
+    expect(stderr).toEqual([]);
+  });
+
+  it("prints manual notes newest first", async () => {
+    const { io, stdout, stderr } = createIo();
+    const directory = await mkdtemp(join(tmpdir(), "uncommitted-cli-note-list-output-"));
+    const repoDir = join(directory, "repo");
+    const homeDir = join(directory, "home");
+
+    await execFileAsync("git", ["init", repoDir]);
+    await addProject(repoDir, {
+      homeDir,
+      now: () => "2026-05-06T00:00:00.000Z"
+    });
+
+    await runCli(["note", "older note"], io, {
+      cwd: repoDir,
+      homeDir,
+      now: () => "2026-05-06T10:15:30.000Z"
+    });
+    await runCli(["note", "newer note"], io, {
+      cwd: repoDir,
+      homeDir,
+      now: () => "2026-05-06T11:00:00.000Z"
+    });
+
+    stdout.length = 0;
+    stderr.length = 0;
+
+    const exitCode = await runCli(["note", "list"], io, {
+      cwd: repoDir,
+      homeDir
+    });
+
+    expect(exitCode).toBe(0);
+    expect(stderr).toEqual([]);
+    expect(stdout).toEqual([
+      "Manual notes (newest first):",
+      "2026-05-06 11:00 newer note",
+      "2026-05-06 10:15 older note"
+    ]);
+  });
+
+  it("rejects note list with extra arguments", async () => {
+    const { io, stdout, stderr } = createIo();
+
+    const exitCode = await runCli(["note", "list", "fix", "tests"], io);
+
     expect(exitCode).toBe(1);
     expect(stdout).toEqual([]);
-    expect(stderr.join("\n")).toContain("Command not implemented yet: note list");
+    expect(stderr).toEqual(["Usage: uncommitted note list"]);
   });
 
   it("routes project add to the project registration handler", async () => {

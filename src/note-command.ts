@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, realpath, appendFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, realpath, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import process from "node:process";
 import { promisify } from "node:util";
@@ -12,7 +12,8 @@ const execFileAsync = promisify(execFile);
 export type NoteCommandErrorCode =
   | "empty-note"
   | "project-not-registered"
-  | "invalid-projects-file";
+  | "invalid-projects-file"
+  | "malformed-note-data";
 
 export class NoteCommandError extends Error {
   constructor(
@@ -41,10 +42,23 @@ export type RecordManualNoteOptions = {
   createId?: () => string;
 };
 
+export type ListManualNotesOptions = {
+  cwd?: string;
+  homeDir?: string;
+  limit?: number;
+};
+
 export type RecordManualNoteResult = {
   event: ManualNoteEvent;
   eventFile: string;
 };
+
+export type ListManualNotesResult = {
+  notes: ManualNoteEvent[];
+  limit: number;
+};
+
+const DEFAULT_NOTE_LIST_LIMIT = 10;
 
 export async function recordManualNote(
   args: string[],
@@ -80,8 +94,29 @@ export async function recordManualNote(
   return { event, eventFile };
 }
 
+export async function listManualNotes(
+  options: ListManualNotesOptions = {}
+): Promise<ListManualNotesResult> {
+  const project = await resolveCurrentProject(options);
+  const limit = options.limit ?? DEFAULT_NOTE_LIST_LIMIT;
+  const eventsDir = join(project.root, ".uncommitted", "events", "manual");
+  const eventFiles = await readManualNoteEventFiles(eventsDir);
+  const notes: ManualNoteEvent[] = [];
+
+  for (const eventFile of eventFiles) {
+    notes.push(...(await readManualNoteEvents(join(eventsDir, eventFile))));
+  }
+
+  notes.sort(compareManualNoteEventsNewestFirst);
+
+  return {
+    notes: notes.slice(0, limit),
+    limit
+  };
+}
+
 async function resolveCurrentProject(
-  options: RecordManualNoteOptions
+  options: Pick<RecordManualNoteOptions, "cwd" | "homeDir">
 ): Promise<ProjectRecord> {
   const cwd = options.cwd ?? process.cwd();
   const gitRoot = await findGitRoot(cwd);
@@ -99,6 +134,76 @@ async function resolveCurrentProject(
   }
 
   return project;
+}
+
+async function readManualNoteEventFiles(eventsDir: string): Promise<string[]> {
+  try {
+    const entries = await readdir(eventsDir);
+
+    return entries
+      .filter((entry) => entry.endsWith(".jsonl"))
+      .sort((left, right) => right.localeCompare(left));
+  } catch (error) {
+    if (isNodeError(error) && error.code === "ENOENT") {
+      return [];
+    }
+
+    throw new NoteCommandError(
+      "Could not read manual notes.",
+      "malformed-note-data"
+    );
+  }
+}
+
+async function readManualNoteEvents(eventFile: string): Promise<ManualNoteEvent[]> {
+  let content: string;
+
+  try {
+    content = await readFile(eventFile, "utf8");
+  } catch {
+    throw new NoteCommandError(
+      "Could not read manual notes.",
+      "malformed-note-data"
+    );
+  }
+
+  const notes: ManualNoteEvent[] = [];
+
+  for (const line of content.split("\n")) {
+    if (!line.trim()) {
+      continue;
+    }
+
+    try {
+      const parsed = JSON.parse(line) as unknown;
+
+      if (!isManualNoteEvent(parsed)) {
+        throw new Error("Invalid manual note event.");
+      }
+
+      notes.push(parsed);
+    } catch {
+      throw new NoteCommandError(
+        "Stored manual notes are malformed. Fix or remove the invalid note data.",
+        "malformed-note-data"
+      );
+    }
+  }
+
+  return notes;
+}
+
+function compareManualNoteEventsNewestFirst(
+  left: ManualNoteEvent,
+  right: ManualNoteEvent
+): number {
+  const timestampOrder = right.timestamp.localeCompare(left.timestamp);
+
+  if (timestampOrder !== 0) {
+    return timestampOrder;
+  }
+
+  return left.id.localeCompare(right.id);
 }
 
 async function findGitRoot(path: string): Promise<string> {
@@ -146,6 +251,19 @@ function isProjectsFile(value: unknown): value is ProjectsFile {
   }
 
   return value.projects.every(isProjectRecord);
+}
+
+function isManualNoteEvent(value: unknown): value is ManualNoteEvent {
+  return (
+    isRecord(value) &&
+    value.schemaVersion === 1 &&
+    typeof value.id === "string" &&
+    typeof value.timestamp === "string" &&
+    typeof value.date === "string" &&
+    typeof value.projectId === "string" &&
+    typeof value.text === "string" &&
+    value.source === "manual"
+  );
 }
 
 function isProjectRecord(value: unknown): value is ProjectRecord {
