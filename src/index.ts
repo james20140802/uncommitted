@@ -3,6 +3,18 @@ export type { CliIo, CliOptions } from "./cli.js";
 export { commands, isKnownCommand } from "./commands.js";
 export type { Command } from "./commands.js";
 export {
+  collectGitForRegisteredProjects,
+  CollectGitCommandError
+} from "./collect-git-command.js";
+export type {
+  CollectGitCommandErrorCode,
+  CollectGitCommandOptions,
+  CollectGitCommandResult,
+  CollectGitFailure,
+  CollectGitSuccess,
+  GitActivityEvent
+} from "./collect-git-command.js";
+export {
   createDoctorReport,
   formatDoctorReport,
   getDoctorExitCode,

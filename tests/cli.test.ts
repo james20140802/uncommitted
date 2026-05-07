@@ -1,5 +1,12 @@
 import { execFile } from "node:child_process";
-import { access, mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
+import {
+  access,
+  mkdir,
+  mkdtemp,
+  readFile,
+  symlink,
+  writeFile
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -37,14 +44,159 @@ describe("cli", () => {
     expect(stdout.join("\n")).toContain("generate");
   });
 
-  it("routes known commands to placeholder handlers", async () => {
+  it("routes collect without a source to an actionable message", async () => {
     const { io, stdout, stderr } = createIo();
 
     const exitCode = await runCli(["collect"], io);
 
     expect(exitCode).toBe(1);
     expect(stdout).toEqual([]);
-    expect(stderr.join("\n")).toContain("Command not implemented yet: collect");
+    expect(stderr.join("\n")).toContain("Usage: uncommitted collect git");
+  });
+
+  it("collects today's Git activity for registered projects", async () => {
+    const { io, stdout, stderr } = createIo();
+    const directory = await mkdtemp(join(tmpdir(), "uncommitted-cli-collect-"));
+    const repoDir = join(directory, "repo");
+    const homeDir = join(directory, "home");
+
+    await initGitRepo(repoDir);
+    await writeFile(join(repoDir, "app.ts"), "const today = true;\n", "utf8");
+    await git(repoDir, ["add", "app.ts"]);
+    await commit(repoDir, "collect target", "2026-05-06T10:00:00Z");
+    await addProject(repoDir, {
+      homeDir,
+      now: () => "2026-05-06T00:00:00.000Z"
+    });
+
+    const exitCode = await runCli(["collect", "git"], io, {
+      homeDir,
+      now: () => "2026-05-06T13:30:00.000Z"
+    });
+    const outputFile = join(
+      repoDir,
+      ".uncommitted",
+      "events",
+      "git",
+      "2026-05-06.json"
+    );
+    const output = await readJson(outputFile);
+
+    expect(exitCode).toBe(0);
+    expect(stderr).toEqual([]);
+    expect(stdout.join("\n")).toContain("Collected Git activity for 1 project.");
+    expect(output).toMatchObject({
+      schemaVersion: 1,
+      source: "git",
+      targetDate: "2026-05-06",
+      project: {
+        id: "repo",
+        name: "repo"
+      },
+      activity: {
+        totals: {
+          commits: 1,
+          filesChanged: 1
+        }
+      }
+    });
+    expect(JSON.stringify(output)).not.toContain(repoDir);
+    expect(JSON.stringify(output)).not.toContain("const today = true");
+  });
+
+  it("returns collection exit code for missing or empty project registry", async () => {
+    const { io, stdout, stderr } = createIo();
+    const directory = await mkdtemp(join(tmpdir(), "uncommitted-cli-collect-empty-"));
+
+    const exitCode = await runCli(["collect", "git"], io, {
+      homeDir: join(directory, "home"),
+      now: () => "2026-05-06T13:30:00.000Z"
+    });
+
+    expect(exitCode).toBe(3);
+    expect(stdout).toEqual([]);
+    expect(stderr.join("\n")).toContain(
+      "No registered projects. Run `uncommitted project add .` first."
+    );
+  });
+
+  it("returns config exit code when collect git finds invalid projects file", async () => {
+    const { io, stdout, stderr } = createIo();
+    const directory = await mkdtemp(join(tmpdir(), "uncommitted-cli-collect-invalid-"));
+    const homeDir = join(directory, "home");
+
+    await mkdir(join(homeDir, ".uncommitted"), { recursive: true });
+    await writeFile(join(homeDir, ".uncommitted", "projects.json"), "nope", "utf8");
+
+    const exitCode = await runCli(["collect", "git"], io, {
+      homeDir,
+      now: () => "2026-05-06T13:30:00.000Z"
+    });
+
+    expect(exitCode).toBe(2);
+    expect(stdout).toEqual([]);
+    expect(stderr.join("\n")).toContain("Invalid projects file.");
+  });
+
+  it("preserves successful collect output when another project fails", async () => {
+    const { io, stdout, stderr } = createIo();
+    const directory = await mkdtemp(join(tmpdir(), "uncommitted-cli-collect-partial-"));
+    const repoDir = join(directory, "repo");
+    const homeDir = join(directory, "home");
+
+    await initGitRepo(repoDir);
+    await writeFile(join(repoDir, "app.ts"), "const partial = true;\n", "utf8");
+    await git(repoDir, ["add", "app.ts"]);
+    await commit(repoDir, "partial target", "2026-05-06T10:00:00Z");
+    const registered = await addProject(repoDir, {
+      homeDir,
+      now: () => "2026-05-06T00:00:00.000Z"
+    });
+    await writeFile(
+      join(homeDir, ".uncommitted", "projects.json"),
+      `${JSON.stringify(
+        {
+          schemaVersion: 1,
+          projects: [
+            registered.project,
+            {
+              schemaVersion: 1,
+              id: "missing-repo",
+              name: "missing-repo",
+              root: join(directory, "missing"),
+              gitRoot: join(directory, "missing"),
+              enabled: true,
+              createdAt: "2026-05-06T00:00:00.000Z"
+            }
+          ]
+        },
+        null,
+        2
+      )}\n`,
+      "utf8"
+    );
+
+    const exitCode = await runCli(["collect", "git"], io, {
+      homeDir,
+      now: () => "2026-05-06T13:30:00.000Z"
+    });
+    const output = await readJson(
+      join(repoDir, ".uncommitted", "events", "git", "2026-05-06.json")
+    );
+
+    expect(exitCode).toBe(3);
+    expect(stdout.join("\n")).toContain("Collected Git activity for 1 project.");
+    expect(stderr.join("\n")).toContain("Failed to collect missing-repo");
+    expect(output).toMatchObject({
+      project: {
+        id: "repo"
+      },
+      activity: {
+        totals: {
+          commits: 1
+        }
+      }
+    });
   });
 
   it("routes note to the manual note handler", async () => {
@@ -166,3 +318,37 @@ describe("cli", () => {
     expect(isDirectRun(linkedEntrypoint, pathToFileURL(realEntrypoint).href)).toBe(true);
   });
 });
+
+async function initGitRepo(repoDir: string): Promise<void> {
+  await execFileAsync("git", ["init", repoDir]);
+  await git(repoDir, ["config", "user.name", "Fixture Dev"]);
+  await git(repoDir, ["config", "user.email", "dev@example.com"]);
+}
+
+async function commit(
+  repoDir: string,
+  message: string,
+  date: string
+): Promise<void> {
+  await git(repoDir, ["commit", "-m", message], {
+    GIT_AUTHOR_DATE: date,
+    GIT_COMMITTER_DATE: date
+  });
+}
+
+async function git(
+  repoDir: string,
+  args: string[],
+  env: NodeJS.ProcessEnv = {}
+): Promise<void> {
+  await execFileAsync("git", ["-C", repoDir, ...args], {
+    env: {
+      ...process.env,
+      ...env
+    }
+  });
+}
+
+async function readJson(path: string): Promise<unknown> {
+  return JSON.parse(await readFile(path, "utf8")) as unknown;
+}
