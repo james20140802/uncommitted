@@ -48,3 +48,16 @@ export type {
   ProjectRecord,
   ProjectsFile
 } from "./project-add.js";
+export {
+  listManualNotes,
+  NoteCommandError,
+  recordManualNote
+} from "./note-command.js";
+export type {
+  ListManualNotesOptions,
+  ListManualNotesResult,
+  ManualNoteEvent,
+  NoteCommandErrorCode,
+  RecordManualNoteOptions,
+  RecordManualNoteResult
+} from "./note-command.js";
