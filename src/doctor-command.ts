@@ -44,6 +44,7 @@ type DoctorConfig = {
 
 const aiProviderEnvKeys: Record<string, string | undefined> = {
   none: undefined,
+  mock: undefined,
   ollama: undefined,
   openai: "OPENAI_API_KEY",
   anthropic: "ANTHROPIC_API_KEY",

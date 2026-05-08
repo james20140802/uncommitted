@@ -40,6 +40,7 @@ const defaultAnswers = {
 };
 const supportedAiProviders = [
   "none",
+  "mock",
   "openai",
   "anthropic",
   "google",
