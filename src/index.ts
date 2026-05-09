@@ -78,10 +78,12 @@ export type {
 } from "./ai-provider.js";
 export {
   generateStoryFormatPlan,
-  loadRecentStoryFormatHistory
+  loadRecentStoryFormatHistory,
+  recordStoryFormatHistory
 } from "./story-format-plan.js";
 export type {
   ProjectPersonaHint,
+  RecordStoryFormatHistoryOptions,
   RecentStoryFormat,
   StoryFormatPlan,
   StoryFormatPlanOptions,

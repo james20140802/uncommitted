@@ -22,6 +22,7 @@ import type { ProjectRecord, ProjectsFile } from "./project-add.js";
 import {
   generateStoryFormatPlan,
   loadRecentStoryFormatHistory,
+  recordStoryFormatHistory,
   type StoryFormatPlan
 } from "./story-format-plan.js";
 
@@ -191,6 +192,11 @@ export async function runGenerateCommand(
     path: outputDir,
     updatedAt: generatedAt
   } satisfies LatestDraftPointer);
+  await recordStoryFormatHistory({
+    homeDir: options.homeDir,
+    targetDate,
+    storyFormatPlan
+  });
 
   return {
     targetDate,

@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { resolveConfigPaths } from "./config-paths.js";
 import type { ActivitySummary } from "./activity-summary.js";
 import {
@@ -55,6 +55,13 @@ export type StoryFormatPlanOptions = {
 
 export type LoadRecentStoryFormatHistoryOptions = {
   homeDir?: string;
+  limit?: number;
+};
+
+export type RecordStoryFormatHistoryOptions = {
+  homeDir?: string;
+  targetDate: string;
+  storyFormatPlan: StoryFormatPlan;
   limit?: number;
 };
 
@@ -143,6 +150,42 @@ export async function loadRecentStoryFormatHistory(
       "invalid-config"
     );
   }
+}
+
+export async function recordStoryFormatHistory(
+  options: RecordStoryFormatHistoryOptions
+): Promise<void> {
+  const paths = resolveConfigPaths({ homeDir: options.homeDir });
+  const limit = options.limit ?? 30;
+  const existingFormats = await loadRecentStoryFormatHistory({
+    homeDir: options.homeDir,
+    limit
+  });
+  const nextFormat: RecentStoryFormat = {
+    date: options.targetDate,
+    formatName: options.storyFormatPlan.formatName,
+    voice: options.storyFormatPlan.voice,
+    tone: options.storyFormatPlan.tone
+  };
+  const formats = [nextFormat, ...existingFormats]
+    .filter((format, index, allFormats) => {
+      return (
+        allFormats.findIndex(
+          (candidate) =>
+            candidate.date === format.date &&
+            candidate.formatName === format.formatName &&
+            candidate.voice === format.voice &&
+            candidate.tone === format.tone
+        ) === index
+      );
+    })
+    .slice(0, limit);
+
+  await mkdir(paths.historyDir, { recursive: true });
+  await writeJson(paths.formatHistoryFile, {
+    schemaVersion: 1,
+    formats
+  });
 }
 
 function buildSafeStoryFormatInput(options: {
@@ -344,6 +387,10 @@ function throwInvalidStoryFormatPlan(): never {
     "AI provider returned invalid story format plan.",
     "malformed-response"
   );
+}
+
+async function writeJson(path: string, value: unknown): Promise<void> {
+  await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
