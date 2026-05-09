@@ -84,6 +84,16 @@ export type {
   StoryFormatPlanOptions,
   StoryFormatStructurePart
 } from "./story-format-plan.js";
+export {
+  deriveCaptionText,
+  generateDiaryDraft
+} from "./diary-generator.js";
+export type {
+  DiaryDraft,
+  DiaryDraftMetadata,
+  DiaryGeneratorOptions,
+  DiarySlide
+} from "./diary-generator.js";
 export { runInitCommand } from "./init-command.js";
 export type {
   InitAnswers,
