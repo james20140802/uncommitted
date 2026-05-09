@@ -30,6 +30,20 @@ describe("activity summary", () => {
             { path: "src/activity-summary.ts", status: "modified" },
             { path: "tests/activity-summary.test.ts", status: "untracked" }
           ]
+        }),
+        createGitEvent({
+          targetDate: "2026-05-11",
+          projectId: "old",
+          projectName: "Old Work",
+          commits: [
+            createCommit({
+              subject: "implement unrelated prior day feature",
+              filesChanged: 10,
+              insertions: 300,
+              deletions: 40
+            })
+          ],
+          dirtyFiles: [{ path: "src/old.ts", status: "modified" }]
         })
       ]
     });
@@ -69,6 +83,11 @@ describe("activity summary", () => {
         themes: ["coding", "debugging"]
       })
     ]);
+    expect(summary.projects).not.toContainEqual(
+      expect.objectContaining({
+        projectId: "old"
+      })
+    );
     expect(summary.smallWins).toEqual([
       "implement collect git command",
       "fix flaky collector path handling"
@@ -79,7 +98,9 @@ describe("activity summary", () => {
     expect(summary.possibleJokes).toContain(
       "The working tree kept a few tabs open for tomorrow."
     );
-    expect(JSON.stringify(summary)).not.toContain("const ");
+    const serialized = JSON.stringify(summary);
+    expect(serialized).not.toContain("const ");
+    expect(serialized).not.toContain("prior day");
   });
 
   it("treats quiet days as valid summaries without inventing work", () => {
@@ -179,7 +200,7 @@ describe("activity summary", () => {
             timestamp: "2026-05-12T15:00:00.000Z",
             date: "2026-05-12",
             projectId: "cli",
-            text: "Blocked by unclear edge case. TODO revisit `const token = process.env.SECRET` tomorrow.",
+            text: "Blocked by unclear edge case. TODO revisit const token = process.env.SECRET tomorrow.",
             source: "manual"
           }
         ]
@@ -228,6 +249,7 @@ function createInput(
 
 function createGitEvent(
   options: {
+    targetDate?: string;
     projectId: string;
     projectName: string;
     commits?: ActivitySummaryInput["gitEvents"][number]["activity"]["commits"];
@@ -236,11 +258,12 @@ function createGitEvent(
 ): ActivitySummaryInput["gitEvents"][number] {
   const commits = options.commits ?? [];
   const dirtyFiles = options.dirtyFiles ?? [];
+  const targetDate = options.targetDate ?? "2026-05-12";
 
   return {
     schemaVersion: 1,
     source: "git",
-    targetDate: "2026-05-12",
+    targetDate,
     collectedAt: "2026-05-12T23:00:00.000Z",
     project: {
       id: options.projectId,
@@ -248,7 +271,7 @@ function createGitEvent(
     },
     activity: {
       schemaVersion: 1,
-      targetDate: "2026-05-12",
+      targetDate,
       repository: {
         rootName: `${options.projectId}-repo`
       },

@@ -119,6 +119,11 @@ const privateItemOrder = [
 export function buildActivitySummary(
   input: ActivitySummaryInput
 ): ActivitySummary {
+  const gitEvents = input.gitEvents.filter(
+    (event) =>
+      event.targetDate === input.targetDate &&
+      event.activity.targetDate === input.targetDate
+  );
   const privateItems = new Set<string>();
   const projects = new Map<string, ProjectAccumulator>();
   const subjects: string[] = [];
@@ -137,7 +142,7 @@ export function buildActivitySummary(
   let insertions = 0;
   let deletions = 0;
 
-  for (const event of input.gitEvents) {
+  for (const event of gitEvents) {
     const project = getProject(projects, event.project.id, event.project.name);
     project.repositoryName = event.activity.repository.rootName;
 
@@ -227,7 +232,7 @@ export function buildActivitySummary(
   const allThemes = sortThemes(new Set([...commitThemes, ...manualThemes]));
   const dominantTheme = deriveDominantTheme(activityLevel, allThemes);
   const uncertaintyNotes = buildUncertaintyNotes(input, {
-    gitEventCount: input.gitEvents.length,
+    gitEventCount: gitEvents.length,
     totalCommits,
     manualNoteCount: manualNotes.length,
     themeCount: allThemes.length,
@@ -534,14 +539,9 @@ function sanitizeText(value: string): SanitizedText {
     );
   }
 
-  if (/`[^`]+`/.test(sanitized)) {
+  if (containsRawCodeSnippet(sanitized)) {
     privateItems.add("raw code snippets");
-    sanitized = sanitized.replace(/`[^`]+`/g, "[redacted-code]");
-  }
-
-  if (/\bdiff --git\b/.test(sanitized)) {
-    privateItems.add("raw code snippets");
-    sanitized = sanitized.replace(/\bdiff --git\b[^\n]*/g, "[redacted-code]");
+    sanitized = redactRawCodeSnippets(sanitized);
   }
 
   return {
@@ -554,6 +554,21 @@ function addPrivateItems(target: Set<string>, items: string[]): void {
   for (const item of items) {
     target.add(item);
   }
+}
+
+function containsRawCodeSnippet(value: string): boolean {
+  return redactRawCodeSnippets(value) !== value;
+}
+
+function redactRawCodeSnippets(value: string): string {
+  return value
+    .replace(/\bdiff --git\b[^\n]*/g, "[redacted-code]")
+    .replace(/`[^`]+`/g, "[redacted-code]")
+    .replace(
+      /\b(?:const|let|var)\s+[A-Za-z_$][\w$]*\s*=\s*(?:process\.env\.[A-Z0-9_]+|["'][^"']*["']|[A-Za-z0-9_$.[\]]+)/g,
+      "[redacted-code]"
+    )
+    .replace(/\bprocess\.env\.[A-Z0-9_]+\b/g, "[redacted-code]");
 }
 
 function sortPrivateItems(items: Set<string>): string[] {
