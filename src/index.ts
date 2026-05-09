@@ -94,6 +94,15 @@ export type {
   DiaryGeneratorOptions,
   DiarySlide
 } from "./diary-generator.js";
+export {
+  GenerateCommandError,
+  runGenerateCommand
+} from "./generate-command.js";
+export type {
+  GenerateCommandErrorCode,
+  GenerateCommandOptions,
+  GenerateCommandResult
+} from "./generate-command.js";
 export { runInitCommand } from "./init-command.js";
 export type {
   InitAnswers,
