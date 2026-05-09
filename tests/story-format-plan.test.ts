@@ -80,6 +80,12 @@ describe("story format plan", () => {
     expect(provider.requests[0]?.instructions).toContain("daily_global");
     expect(provider.requests[0]?.instructions).toContain("Roast policy");
     expect(provider.requests[0]?.instructions).toContain("Do not invent work");
+    expect(provider.requests[0]?.instructions).toContain(
+      "Choose a format that supports a felt diary"
+    );
+    expect(provider.requests[0]?.instructions).toContain(
+      "Do not make the plan a report"
+    );
   });
 
   it("builds a quiet-day request without fabricating activity", async () => {

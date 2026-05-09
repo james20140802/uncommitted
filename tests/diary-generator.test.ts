@@ -103,6 +103,12 @@ describe("diary generator", () => {
       "Caption must be copyable as an Instagram caption"
     );
     expect(provider.requests[0]?.instructions).toContain("Do not invent work");
+    expect(provider.requests[0]?.instructions).toContain(
+      "Write like a diary caption about how the work felt"
+    );
+    expect(provider.requests[0]?.instructions).toContain(
+      "Do not write a status report"
+    );
   });
 
   it("generates a quiet-day request without fabricating activity", async () => {
