@@ -215,6 +215,37 @@ describe("AI provider abstraction", () => {
     );
   });
 
+  it("does not fall back to process env when an explicit env map is injected", () => {
+    const previousApiKey = process.env.OPENAI_API_KEY;
+
+    process.env.OPENAI_API_KEY = "sk-machine-secret";
+
+    try {
+      expect(() =>
+        createAiProvider(
+          {
+            provider: "openai",
+            persona: "dry reviewer",
+            roastLevel: 3
+          },
+          { env: {} }
+        )
+      ).toThrow(
+        expect.objectContaining({
+          code: "provider-unavailable",
+          exitCode: 4,
+          message: "OPENAI_API_KEY is not set."
+        })
+      );
+    } finally {
+      if (previousApiKey === undefined) {
+        delete process.env.OPENAI_API_KEY;
+      } else {
+        process.env.OPENAI_API_KEY = previousApiKey;
+      }
+    }
+  });
+
   it("fails clearly for configured providers that do not have adapters yet", () => {
     expect(() =>
       createAiProvider({

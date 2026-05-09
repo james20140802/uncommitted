@@ -259,7 +259,7 @@ export function createAiProvider(
 
   if (isOpenAiCompatibleProviderName(config.provider)) {
     const metadata = openAiCompatibleProviders[config.provider];
-    const apiKey = options.env?.[metadata.envKey] ?? process.env[metadata.envKey];
+    const apiKey = resolveEnvValue(options, metadata.envKey);
 
     if (!apiKey) {
       throw new AiGenerationError(
@@ -287,8 +287,7 @@ function resolveProviderTimeoutMs(options: CreateAiProviderOptions): number {
     return assertPositiveIntegerTimeout(options.timeoutMs);
   }
 
-  const timeoutValue = options.env?.[providerTimeoutEnvKey] ??
-    process.env[providerTimeoutEnvKey];
+  const timeoutValue = resolveEnvValue(options, providerTimeoutEnvKey);
 
   if (timeoutValue === undefined || timeoutValue.trim() === "") {
     return defaultProviderTimeoutMs;
@@ -306,6 +305,13 @@ function assertPositiveIntegerTimeout(value: number): number {
   }
 
   return value;
+}
+
+function resolveEnvValue(
+  options: CreateAiProviderOptions,
+  key: string
+): string | undefined {
+  return options.env === undefined ? process.env[key] : options.env[key];
 }
 
 export async function generateStructured<
