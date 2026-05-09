@@ -86,6 +86,15 @@ describe("story format plan", () => {
     expect(provider.requests[0]?.instructions).toContain(
       "Do not make the plan a report"
     );
+    expect(provider.requests[0]?.instructions).toContain(
+      "Pick or invent a clear genre"
+    );
+    expect(provider.requests[0]?.instructions).toContain(
+      "not the user's diary"
+    );
+    expect(provider.requests[0]?.instructions).toContain(
+      "Do not claim to know the user's private feelings"
+    );
   });
 
   it("builds a quiet-day request without fabricating activity", async () => {

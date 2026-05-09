@@ -111,15 +111,19 @@ describe("init command", () => {
     expect(config.aiProvider).toBe("anthropic");
   });
 
-  it("supports deciding the AI provider later", async () => {
+  it("uses product-aligned defaults while deciding the AI provider later", async () => {
     const homeDir = await mkTestHome("provider-none");
 
     await runInitCommand([], { homeDir });
 
     const config = JSON.parse(
       await readFile(join(homeDir, ".uncommitted", "config.json"), "utf8")
-    ) as { aiProvider: string };
+    ) as { aiProvider: string; persona: string; roastLevel: number };
     expect(config.aiProvider).toBe("none");
+    expect(config.persona).toBe(
+      "project-local AI coworker writing its own off-the-record diary"
+    );
+    expect(config.roastLevel).toBe(2);
   });
 
   it("supports Mistral and OpenRouter providers", async () => {

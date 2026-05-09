@@ -35,7 +35,7 @@ const defaultAnswers = {
   draftRoot: "~/Uncommitted/drafts",
   scheduleTime: "23:30",
   aiProvider: "none",
-  persona: "wry coworker",
+  persona: "project-local AI coworker writing its own off-the-record diary",
   roastLevel: "2"
 };
 const supportedAiProviders = [
