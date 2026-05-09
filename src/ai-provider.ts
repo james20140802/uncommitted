@@ -152,7 +152,8 @@ const providerNames: readonly AiProviderName[] = [
   "mistral",
   "openrouter"
 ];
-const defaultProviderTimeoutMs = 30_000;
+const defaultProviderTimeoutMs = 300_000;
+const providerTimeoutEnvKey = "UNCOMMITTED_AI_TIMEOUT_MS";
 const openAiCompatibleProviders: Record<
   OpenAiCompatibleProviderName,
   OpenAiCompatibleProviderMetadata
@@ -270,7 +271,7 @@ export function createAiProvider(
     return new OpenAiCompatibleProvider({
       apiKey,
       metadata,
-      timeoutMs: options.timeoutMs ?? defaultProviderTimeoutMs,
+      timeoutMs: resolveProviderTimeoutMs(options),
       transport: options.transport ?? defaultFetchTransport
     });
   }
@@ -279,6 +280,32 @@ export function createAiProvider(
     `AI provider is not implemented yet: ${config.provider}.`,
     "provider-unavailable"
   );
+}
+
+function resolveProviderTimeoutMs(options: CreateAiProviderOptions): number {
+  if (options.timeoutMs !== undefined) {
+    return assertPositiveIntegerTimeout(options.timeoutMs);
+  }
+
+  const timeoutValue = options.env?.[providerTimeoutEnvKey] ??
+    process.env[providerTimeoutEnvKey];
+
+  if (timeoutValue === undefined || timeoutValue.trim() === "") {
+    return defaultProviderTimeoutMs;
+  }
+
+  return assertPositiveIntegerTimeout(Number(timeoutValue));
+}
+
+function assertPositiveIntegerTimeout(value: number): number {
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new AiGenerationError(
+      `${providerTimeoutEnvKey} must be a positive integer.`,
+      "invalid-config"
+    );
+  }
+
+  return value;
 }
 
 export async function generateStructured<

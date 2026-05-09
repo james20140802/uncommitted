@@ -260,6 +260,70 @@ describe("AI provider abstraction", () => {
     });
   });
 
+  it("allows long-running provider calls to use an environment timeout override", async () => {
+    const provider = createAiProvider(
+      {
+        provider: "openai",
+        persona: "dry reviewer",
+        roastLevel: 3
+      },
+      {
+        env: {
+          OPENAI_API_KEY: "sk-test-secret",
+          UNCOMMITTED_AI_TIMEOUT_MS: "1"
+        },
+        transport: async (_url, request) => {
+          return await new Promise<AiProviderHttpResponse>((_resolve, reject) => {
+            request.signal?.addEventListener("abort", () => {
+              const error = new Error("aborted");
+              error.name = "AbortError";
+              reject(error);
+            });
+          });
+        }
+      }
+    );
+
+    await expect(
+      generateStructured(
+        provider,
+        createAiGenerationRequest({
+          task: "draft",
+          instructions: "Return JSON.",
+          summary: createQuietSummary()
+        })
+      )
+    ).rejects.toMatchObject({
+      code: "provider-failed",
+      exitCode: 4,
+      message: "AI provider timed out. Try again later."
+    });
+  });
+
+  it("rejects invalid provider timeout overrides", () => {
+    expect(() =>
+      createAiProvider(
+        {
+          provider: "openai",
+          persona: "dry reviewer",
+          roastLevel: 3
+        },
+        {
+          env: {
+            OPENAI_API_KEY: "sk-test-secret",
+            UNCOMMITTED_AI_TIMEOUT_MS: "soon"
+          }
+        }
+      )
+    ).toThrow(
+      expect.objectContaining({
+        code: "invalid-config",
+        exitCode: 4,
+        message: "UNCOMMITTED_AI_TIMEOUT_MS must be a positive integer."
+      })
+    );
+  });
+
   it("fails before downstream generation when provider response content is malformed", async () => {
     const provider = createAiProvider(
       {
