@@ -73,6 +73,17 @@ export type {
   SafeActivitySummary,
   SafeProjectSummary
 } from "./ai-provider.js";
+export {
+  generateStoryFormatPlan,
+  loadRecentStoryFormatHistory
+} from "./story-format-plan.js";
+export type {
+  ProjectPersonaHint,
+  RecentStoryFormat,
+  StoryFormatPlan,
+  StoryFormatPlanOptions,
+  StoryFormatStructurePart
+} from "./story-format-plan.js";
 export { runInitCommand } from "./init-command.js";
 export type {
   InitAnswers,
