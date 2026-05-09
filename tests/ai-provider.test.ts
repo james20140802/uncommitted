@@ -105,12 +105,16 @@ describe("AI provider abstraction", () => {
   it("keeps provider requests on safe summaries and rejects unsafe raw inputs", () => {
     const request = createAiGenerationRequest({
       task: "story-plan",
-      instructions: "Build from safe summaries only.",
+      instructions:
+        "Build from safe summaries only. Authorization: Bearer secret-token-value.",
       summary: {
         ...createQuietSummary(),
         overview:
-          "See dev@example.com, /Users/dev/private, git@github.com:acme/private.git, and `const token = process.env.SECRET`.",
-        highlights: ["diff --git a/secret.ts b/secret.ts"]
+          "See dev@example.com, /Users/dev/private, git@github.com:acme/private.git, OPENAI_API_KEY=sk-live-secret123, and `const token = process.env.SECRET`.",
+        highlights: [
+          "diff --git a/secret.ts b/secret.ts",
+          "Copied provider key sk-proj-secret123 into a local note."
+        ]
       }
     });
 
@@ -121,10 +125,15 @@ describe("AI provider abstraction", () => {
     expect(serialized).not.toContain("const token");
     expect(serialized).not.toContain("process.env.SECRET");
     expect(serialized).not.toContain("diff --git");
+    expect(serialized).not.toContain("OPENAI_API_KEY");
+    expect(serialized).not.toContain("sk-live-secret123");
+    expect(serialized).not.toContain("sk-proj-secret123");
+    expect(serialized).not.toContain("Bearer secret-token-value");
     expect(serialized).toContain("[redacted-email]");
     expect(serialized).toContain("[redacted-path]");
     expect(serialized).toContain("[redacted-url]");
     expect(serialized).toContain("[redacted-code]");
+    expect(serialized).toContain("[redacted-secret]");
 
     expect(() =>
       createAiGenerationRequest({

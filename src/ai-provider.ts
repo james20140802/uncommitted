@@ -491,6 +491,12 @@ function redactSensitiveText(value: string): string {
     .replace(/\bdiff --git\b[^\n]*/g, "[redacted-code]")
     .replace(/`[^`]+`/g, "[redacted-code]")
     .replace(
+      /\b[A-Z][A-Z0-9_]*(?:API[_-]?KEY|TOKEN|SECRET|PASSWORD)\s*=\s*\S+/gi,
+      "[redacted-secret]"
+    )
+    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, "[redacted-secret]")
+    .replace(/\bsk-[A-Za-z0-9_-]{8,}\b/g, "[redacted-secret]")
+    .replace(
       /\b(?:https?|ssh|git):\/\/\S+|git@[\w.-]+:[^\s]+/g,
       "[redacted-url]"
     )
