@@ -155,7 +155,7 @@ describe("init command", () => {
         answers: { aiProvider: "adlkfjldkajf" }
       })
     ).rejects.toThrow(
-      "AI provider must be one of: none, openai, anthropic, google, ollama, mistral, openrouter."
+      "AI provider must be one of: none, mock, openai, anthropic, google, ollama, mistral, openrouter."
     );
   });
 

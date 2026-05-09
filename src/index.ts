@@ -47,6 +47,32 @@ export {
   resolveConfigPaths
 } from "./config-paths.js";
 export type { ConfigPathOptions, ConfigPaths } from "./config-paths.js";
+export {
+  AiGenerationError,
+  createAiGenerationRequest,
+  createAiProvider,
+  generateStructured,
+  loadAiProviderConfig,
+  MockAiProvider
+} from "./ai-provider.js";
+export type {
+  AiGenerationErrorCode,
+  AiGenerationRequestOptions,
+  AiGenerationTask,
+  AiProvider,
+  AiProviderConfig,
+  AiProviderName,
+  AiProviderRawResponse,
+  AiStructuredGenerationRequest,
+  AiStructuredGenerationResponse,
+  JsonObject,
+  JsonPrimitive,
+  JsonValue,
+  LoadAiProviderConfigOptions,
+  MockAiProviderOptions,
+  SafeActivitySummary,
+  SafeProjectSummary
+} from "./ai-provider.js";
 export { runInitCommand } from "./init-command.js";
 export type {
   InitAnswers,
