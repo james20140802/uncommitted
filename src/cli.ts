@@ -128,7 +128,11 @@ async function runGenerate(
   } catch (error) {
     if (error instanceof GenerateCommandError) {
       io.stderr(error.message);
-      return error.code === "invalid-arguments" ? 1 : 2;
+      if (error.code === "invalid-arguments") {
+        return 1;
+      }
+
+      return error.code === "invalid-data" ? 3 : 2;
     }
 
     if (error instanceof AiGenerationError) {

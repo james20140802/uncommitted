@@ -194,6 +194,25 @@ describe("generate command", () => {
       code: "ENOENT"
     });
   });
+
+  it("returns collection exit code for malformed stored Git activity", async () => {
+    const { io, stdout, stderr } = createIo();
+    const fixture = await createRegisteredProjectFixture();
+
+    await writeMalformedGitEvent(fixture.project, "2026-05-12");
+
+    const exitCode = await runCli(["generate", "today"], io, {
+      homeDir: fixture.homeDir,
+      now: () => "2026-05-12T23:30:00.000Z",
+      aiProvider: new TaskAwareProvider()
+    });
+
+    expect(exitCode).toBe(3);
+    expect(stdout).toEqual([]);
+    expect(stderr).toEqual([
+      "Stored Git activity is malformed. Re-run `uncommitted collect git`."
+    ]);
+  });
 });
 
 class TaskAwareProvider implements AiProvider {
@@ -355,6 +374,59 @@ async function writeGitEvent(
   await writeFile(
     join(eventsDir, `${targetDate}.json`),
     `${JSON.stringify(event, null, 2)}\n`,
+    "utf8"
+  );
+}
+
+async function writeMalformedGitEvent(
+  project: ProjectRecord,
+  targetDate: string
+): Promise<void> {
+  const eventsDir = join(project.root, ".uncommitted", "events", "git");
+
+  await mkdir(eventsDir, { recursive: true });
+  await writeFile(
+    join(eventsDir, `${targetDate}.json`),
+    `${JSON.stringify(
+      {
+        schemaVersion: 1,
+        source: "git",
+        targetDate,
+        collectedAt: `${targetDate}T23:00:00.000Z`,
+        project: {
+          id: project.id,
+          name: project.name
+        },
+        activity: {
+          schemaVersion: 1,
+          targetDate,
+          repository: {
+            rootName: project.name
+          },
+          commits: [{}],
+          dirty: {
+            files: [],
+            totals: {
+              modified: 0,
+              added: 0,
+              deleted: 0,
+              renamed: 0,
+              copied: 0,
+              untracked: 0,
+              other: 0
+            }
+          },
+          totals: {
+            commits: 1,
+            filesChanged: 0,
+            insertions: 0,
+            deletions: 0
+          }
+        }
+      },
+      null,
+      2
+    )}\n`,
     "utf8"
   );
 }

@@ -95,6 +95,15 @@ const providerNames: readonly AiProviderName[] = [
   "mistral",
   "openrouter"
 ];
+const dirtyStatuses = new Set([
+  "modified",
+  "added",
+  "deleted",
+  "renamed",
+  "copied",
+  "untracked",
+  "other"
+]);
 
 export async function runGenerateCommand(
   args: string[],
@@ -414,10 +423,62 @@ function isGitActivityEvent(value: unknown): value is GitActivityEvent {
     isRecord(value.activity) &&
     value.activity.schemaVersion === 1 &&
     typeof value.activity.targetDate === "string" &&
+    isRecord(value.activity.repository) &&
+    typeof value.activity.repository.rootName === "string" &&
     Array.isArray(value.activity.commits) &&
+    value.activity.commits.every(isGitActivityCommit) &&
+    isRecord(value.activity.totals) &&
+    isGitActivityStats(value.activity.totals) &&
+    isFiniteNumber(value.activity.totals.commits) &&
     isRecord(value.activity.dirty) &&
-    Array.isArray(value.activity.dirty.files)
+    Array.isArray(value.activity.dirty.files) &&
+    value.activity.dirty.files.every(isDirtyFileSummary) &&
+    isRecord(value.activity.dirty.totals) &&
+    isDirtyStatusTotals(value.activity.dirty.totals)
   );
+}
+
+function isGitActivityCommit(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.hash === "string" &&
+    typeof value.shortHash === "string" &&
+    typeof value.authorName === "string" &&
+    typeof value.authoredAt === "string" &&
+    typeof value.subject === "string" &&
+    isRecord(value.stats) &&
+    isGitActivityStats(value.stats)
+  );
+}
+
+function isGitActivityStats(value: Record<string, unknown>): boolean {
+  return (
+    isFiniteNumber(value.filesChanged) &&
+    isFiniteNumber(value.insertions) &&
+    isFiniteNumber(value.deletions)
+  );
+}
+
+function isDirtyFileSummary(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.path === "string" &&
+    isDirtyStatus(value.status)
+  );
+}
+
+function isDirtyStatusTotals(value: Record<string, unknown>): boolean {
+  return Array.from(dirtyStatuses).every((status) =>
+    isFiniteNumber(value[status])
+  );
+}
+
+function isDirtyStatus(value: unknown): boolean {
+  return typeof value === "string" && dirtyStatuses.has(value);
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
 }
 
 function isManualNoteEvent(value: unknown): value is ManualNoteEvent {
