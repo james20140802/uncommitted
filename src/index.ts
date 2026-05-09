@@ -1,3 +1,17 @@
+export {
+  buildActivitySummary,
+  isActivitySummary
+} from "./activity-summary.js";
+export type {
+  ActivityLevel,
+  ActivityProjectSummary,
+  ActivitySummary,
+  ActivitySummaryInput,
+  ActivityTheme,
+  CommitSignals,
+  ManualContextSummary,
+  UncommittedChangeSummary
+} from "./activity-summary.js";
 export { getHelpText, runCli } from "./cli.js";
 export type { CliIo, CliOptions } from "./cli.js";
 export { commands, isKnownCommand } from "./commands.js";
