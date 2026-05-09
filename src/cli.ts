@@ -7,8 +7,13 @@ import {
   collectGitForRegisteredProjects,
   CollectGitCommandError
 } from "./collect-git-command.js";
+import { AiGenerationError, type AiProvider } from "./ai-provider.js";
 import { commands, isKnownCommand } from "./commands.js";
 import { formatDoctorReport, runDoctorCommand } from "./doctor-command.js";
+import {
+  GenerateCommandError,
+  runGenerateCommand
+} from "./generate-command.js";
 import { runInitCommand } from "./init-command.js";
 import {
   listManualNotes,
@@ -27,6 +32,7 @@ export type CliOptions = {
   cwd?: string;
   homeDir?: string;
   now?: () => string;
+  aiProvider?: AiProvider;
 };
 
 const defaultIo: CliIo = {
@@ -101,8 +107,37 @@ export async function runCli(
     return await runCollect(commandArgs, io, options);
   }
 
+  if (command === "generate") {
+    return await runGenerate(commandArgs, io, options);
+  }
+
   io.stderr(`Command not implemented yet: ${command}`);
   return 1;
+}
+
+async function runGenerate(
+  args: string[],
+  io: CliIo,
+  options: CliOptions
+): Promise<number> {
+  try {
+    const result = await runGenerateCommand(args, options);
+
+    io.stdout(`Generated text draft for ${result.targetDate}.`);
+    return 0;
+  } catch (error) {
+    if (error instanceof GenerateCommandError) {
+      io.stderr(error.message);
+      return error.code === "invalid-arguments" ? 1 : 2;
+    }
+
+    if (error instanceof AiGenerationError) {
+      io.stderr(error.message);
+      return 4;
+    }
+
+    throw error;
+  }
 }
 
 async function runCollect(
