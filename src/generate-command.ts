@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   buildActivitySummary,
@@ -84,6 +84,14 @@ type DraftMetadata = {
   files: string[];
 };
 
+type LatestDraftPointer = {
+  schemaVersion: 1;
+  targetDate: string;
+  revision: string;
+  path: string;
+  updatedAt: string;
+};
+
 const usage = "Usage: uncommitted generate today | uncommitted generate --date YYYY-MM-DD";
 const providerNames: readonly AiProviderName[] = [
   "none",
@@ -123,7 +131,9 @@ export async function runGenerateCommand(
   }
 
   const generatedAt = options.now ? options.now() : new Date().toISOString();
-  const outputDir = join(config.draftRoot, targetDate, "rev-001");
+  const dateDir = join(config.draftRoot, targetDate);
+  const revision = await allocateNextRevision(dateDir);
+  const outputDir = join(dateDir, revision);
   const gitEvents = await readGitActivityEvents(projects, targetDate);
   const manualNotes = await readManualNoteEvents(projects, targetDate);
   const activitySummary = buildActivitySummary({
@@ -174,6 +184,13 @@ export async function runGenerateCommand(
   await writeJson(join(outputDir, "story.json"), draft);
   await writeFile(join(outputDir, "caption.txt"), caption, "utf8");
   await writeJson(join(outputDir, "metadata.json"), metadata);
+  await writeJson(join(dateDir, "latest.json"), {
+    schemaVersion: 1,
+    targetDate,
+    revision,
+    path: outputDir,
+    updatedAt: generatedAt
+  } satisfies LatestDraftPointer);
 
   return {
     targetDate,
@@ -183,6 +200,39 @@ export async function runGenerateCommand(
     draft,
     caption
   };
+}
+
+async function allocateNextRevision(dateDir: string): Promise<string> {
+  let entries: string[];
+
+  try {
+    entries = await readdir(dateDir);
+  } catch (error) {
+    if (isNodeError(error) && error.code === "ENOENT") {
+      return formatRevision(1);
+    }
+
+    throw new GenerateCommandError(
+      "Could not inspect draft revisions.",
+      "invalid-config"
+    );
+  }
+
+  const highestRevision = entries.reduce((highest, entry) => {
+    const match = /^rev-(\d{3})$/.exec(entry);
+
+    if (!match) {
+      return highest;
+    }
+
+    return Math.max(highest, Number(match[1]));
+  }, 0);
+
+  return formatRevision(highestRevision + 1);
+}
+
+function formatRevision(value: number): string {
+  return `rev-${String(value).padStart(3, "0")}`;
 }
 
 function parseGenerateDate(
