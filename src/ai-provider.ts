@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import process from "node:process";
 import { resolveConfigPaths } from "./config-paths.js";
 
 export type JsonPrimitive = string | number | boolean | null;
@@ -90,6 +91,36 @@ export type MockAiProviderOptions = {
 
 export type CreateAiProviderOptions = {
   mockResponseJson?: string;
+  env?: Record<string, string | undefined>;
+  transport?: AiProviderHttpTransport;
+  timeoutMs?: number;
+};
+
+export type AiProviderHttpRequest = {
+  method: "POST";
+  headers: Record<string, string>;
+  body: string;
+  signal?: AbortSignal;
+};
+
+export type AiProviderHttpResponse = {
+  ok: boolean;
+  status: number;
+  json: () => Promise<unknown>;
+};
+
+export type AiProviderHttpTransport = (
+  url: string,
+  request: AiProviderHttpRequest
+) => Promise<AiProviderHttpResponse>;
+
+type OpenAiCompatibleProviderName = "openai" | "openrouter";
+
+type OpenAiCompatibleProviderMetadata = {
+  name: OpenAiCompatibleProviderName;
+  endpoint: string;
+  envKey: string;
+  model: string;
 };
 
 export type AiGenerationErrorCode =
@@ -121,6 +152,24 @@ const providerNames: readonly AiProviderName[] = [
   "mistral",
   "openrouter"
 ];
+const defaultProviderTimeoutMs = 30_000;
+const openAiCompatibleProviders: Record<
+  OpenAiCompatibleProviderName,
+  OpenAiCompatibleProviderMetadata
+> = {
+  openai: {
+    name: "openai",
+    endpoint: "https://api.openai.com/v1/chat/completions",
+    envKey: "OPENAI_API_KEY",
+    model: "gpt-5.5"
+  },
+  openrouter: {
+    name: "openrouter",
+    endpoint: "https://openrouter.ai/api/v1/chat/completions",
+    envKey: "OPENROUTER_API_KEY",
+    model: "openai/gpt-5.5"
+  }
+};
 
 const unsafeInputKeys = new Set([
   "apikey",
@@ -207,8 +256,27 @@ export function createAiProvider(
     });
   }
 
+  if (isOpenAiCompatibleProviderName(config.provider)) {
+    const metadata = openAiCompatibleProviders[config.provider];
+    const apiKey = options.env?.[metadata.envKey] ?? process.env[metadata.envKey];
+
+    if (!apiKey) {
+      throw new AiGenerationError(
+        `${metadata.envKey} is not set.`,
+        "provider-unavailable"
+      );
+    }
+
+    return new OpenAiCompatibleProvider({
+      apiKey,
+      metadata,
+      timeoutMs: options.timeoutMs ?? defaultProviderTimeoutMs,
+      transport: options.transport ?? defaultFetchTransport
+    });
+  }
+
   throw new AiGenerationError(
-    "AI provider is not implemented yet.",
+    `AI provider is not implemented yet: ${config.provider}.`,
     "provider-unavailable"
   );
 }
@@ -268,6 +336,258 @@ export class MockAiProvider implements AiProvider {
       responseJson: JSON.stringify(this.options.response ?? {})
     };
   }
+}
+
+class OpenAiCompatibleProvider implements AiProvider {
+  public readonly name: OpenAiCompatibleProviderName;
+
+  constructor(
+    private readonly options: {
+      apiKey: string;
+      metadata: OpenAiCompatibleProviderMetadata;
+      timeoutMs: number;
+      transport: AiProviderHttpTransport;
+    }
+  ) {
+    this.name = options.metadata.name;
+  }
+
+  async generateStructured(
+    request: AiStructuredGenerationRequest
+  ): Promise<AiProviderRawResponse> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), this.options.timeoutMs);
+
+    try {
+      const response = await this.options.transport(this.options.metadata.endpoint, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${this.options.apiKey}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(createChatCompletionBody(request, this.options.metadata)),
+        signal: controller.signal
+      });
+
+      if (!response.ok) {
+        throwProviderHttpError(response.status);
+      }
+
+      return { responseJson: extractChatCompletionContent(await readResponseJson(response)) };
+    } catch (error) {
+      if (error instanceof AiGenerationError) {
+        throw error;
+      }
+
+      if (isAbortError(error)) {
+        throw new AiGenerationError(
+          "AI provider timed out. Try again later.",
+          "provider-failed"
+        );
+      }
+
+      throw new AiGenerationError(
+        "AI provider failed. Check provider configuration.",
+        "provider-failed"
+      );
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+}
+
+async function defaultFetchTransport(
+  url: string,
+  request: AiProviderHttpRequest
+): Promise<AiProviderHttpResponse> {
+  return await fetch(url, request);
+}
+
+function createChatCompletionBody(
+  request: AiStructuredGenerationRequest,
+  metadata: OpenAiCompatibleProviderMetadata
+): JsonObject {
+  return {
+    model: metadata.model,
+    messages: [
+      {
+        role: "system",
+        content: [
+          request.instructions,
+          "The response_format JSON schema is authoritative.",
+          "Return only one valid JSON object.",
+          "Do not wrap the JSON in Markdown or prose."
+        ].join("\n")
+      },
+      {
+        role: "user",
+        content: JSON.stringify({
+          task: request.task,
+          input: request.input
+        })
+      }
+    ],
+    response_format: createResponseFormat(request.task)
+  };
+}
+
+function createResponseFormat(task: AiGenerationTask): JsonObject {
+  return {
+    type: "json_schema",
+    json_schema:
+      task === "story-plan"
+        ? {
+            name: "uncommitted_story_format_plan",
+            strict: true,
+            schema: createStoryFormatPlanSchema()
+          }
+        : {
+            name: "uncommitted_diary_draft",
+            strict: true,
+            schema: createDiaryDraftSchema()
+          }
+  };
+}
+
+function createStoryFormatPlanSchema(): JsonObject {
+  return {
+    type: "object",
+    additionalProperties: false,
+    required: [
+      "formatName",
+      "voice",
+      "tone",
+      "reason",
+      "structure",
+      "suggestedSlideCount",
+      "captionStyle",
+      "doNotMention"
+    ],
+    properties: {
+      formatName: { type: "string" },
+      voice: { type: "string" },
+      tone: { type: "string" },
+      reason: { type: "string" },
+      structure: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["part", "purpose"],
+          properties: {
+            part: { type: "string" },
+            purpose: { type: "string" }
+          }
+        }
+      },
+      suggestedSlideCount: { type: "integer" },
+      captionStyle: { type: "string" },
+      doNotMention: {
+        type: "array",
+        items: { type: "string" }
+      }
+    }
+  };
+}
+
+function createDiaryDraftSchema(): JsonObject {
+  return {
+    type: "object",
+    additionalProperties: false,
+    required: ["title", "caption", "slides", "hashtags", "altText"],
+    properties: {
+      title: { type: "string" },
+      caption: { type: "string" },
+      slides: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["index", "title", "body", "visualMood"],
+          properties: {
+            index: { type: "integer" },
+            title: { type: "string" },
+            body: { type: "string" },
+            visualMood: { type: "string" }
+          }
+        }
+      },
+      hashtags: {
+        type: "array",
+        items: { type: "string" }
+      },
+      altText: { type: "string" }
+    }
+  };
+}
+
+function extractChatCompletionContent(value: unknown): string {
+  if (
+    !isRecord(value) ||
+    !Array.isArray(value.choices) ||
+    value.choices.length === 0
+  ) {
+    throwInvalidProviderJson();
+  }
+
+  const [choice] = value.choices;
+
+  if (!isRecord(choice) || !isRecord(choice.message)) {
+    throwInvalidProviderJson();
+  }
+
+  const { content } = choice.message;
+
+  if (typeof content !== "string") {
+    throwInvalidProviderJson();
+  }
+
+  return content;
+}
+
+async function readResponseJson(
+  response: AiProviderHttpResponse
+): Promise<unknown> {
+  try {
+    return await response.json();
+  } catch {
+    throwInvalidProviderJson();
+  }
+}
+
+function throwProviderHttpError(status: number): never {
+  if (status === 401 || status === 403) {
+    throw new AiGenerationError(
+      "AI provider authentication failed. Check API key.",
+      "provider-failed"
+    );
+  }
+
+  if (status === 408 || status === 504) {
+    throw new AiGenerationError(
+      "AI provider timed out. Try again later.",
+      "provider-failed"
+    );
+  }
+
+  if (status === 429) {
+    throw new AiGenerationError(
+      "AI provider rate limit exceeded. Try again later.",
+      "provider-failed"
+    );
+  }
+
+  throw new AiGenerationError(
+    "AI provider failed. Check provider configuration.",
+    "provider-failed"
+  );
+}
+
+function throwInvalidProviderJson(): never {
+  throw new AiGenerationError(
+    "AI provider returned invalid JSON.",
+    "malformed-response"
+  );
 }
 
 function sanitizeSafeSummary(summary: SafeActivitySummary): SafeActivitySummary {
@@ -407,6 +727,12 @@ function parseProviderName(value: string): AiProviderName | undefined {
   return providerNames.find((provider) => provider === normalized);
 }
 
+function isOpenAiCompatibleProviderName(
+  value: AiProviderName
+): value is OpenAiCompatibleProviderName {
+  return value === "openai" || value === "openrouter";
+}
+
 function isAiConfigFile(value: unknown): value is {
   schemaVersion: 1;
   aiProvider: string;
@@ -480,6 +806,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isNodeError(error: unknown): error is NodeJS.ErrnoException {
   return error instanceof Error && "code" in error;
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
 }
 
 function containsSensitiveText(value: string): boolean {
