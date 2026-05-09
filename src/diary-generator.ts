@@ -65,7 +65,6 @@ type DiaryDraftProviderData = JsonObject & {
 
 const minSlideCount = 3;
 const maxSlideCount = 8;
-const quietMaxSlideCount = 5;
 const unsafeOutputKeys = new Set([
   "apikey",
   "api_key",
@@ -233,6 +232,7 @@ function buildDiaryInstructions(options: {
     `Create ${options.storyFormatPlan.suggestedSlideCount} slides when possible, while staying within 3-8 slides.`,
     "Caption must be copyable as an Instagram caption, Korean by default, concise, and not report-like.",
     "Each slide must include index, title, body, and visualMood.",
+    "Prefer 3-5 slides for quiet or low activity days; this is guidance, not a hard validation limit.",
     "Do not invent work, commits, bugs, features, shipped changes, or user activity.",
     quietInstruction,
     "Never include raw code, raw diffs, secrets, private paths, emails, private URLs, or private remote URLs.",
@@ -286,7 +286,7 @@ function parseDiaryDraft(options: {
     throwInvalidDiaryDraft();
   }
 
-  assertSlideCountForActivity(draft, options.activitySummary.activityLevel);
+  assertSlideCount(draft);
   assertQuietDayHonesty(draft, options.activitySummary);
 
   return draft;
@@ -374,20 +374,10 @@ function isHashtag(value: unknown): value is string {
   );
 }
 
-function assertSlideCountForActivity(
-  draft: DiaryDraft,
-  activityLevel: ActivityLevel
-): void {
+function assertSlideCount(draft: DiaryDraft): void {
   if (
     draft.slides.length < minSlideCount ||
     draft.slides.length > maxSlideCount
-  ) {
-    throwInvalidDiaryDraft();
-  }
-
-  if (
-    (activityLevel === "none" || activityLevel === "low") &&
-    draft.slides.length > quietMaxSlideCount
   ) {
     throwInvalidDiaryDraft();
   }

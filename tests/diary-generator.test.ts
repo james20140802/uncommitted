@@ -196,6 +196,41 @@ describe("diary generator", () => {
     );
   });
 
+  it("accepts low-activity drafts within the MVP slide range", async () => {
+    const provider = new MockAiProvider({
+      response: createProviderDraft({
+        slides: createSlides(6)
+      })
+    });
+
+    const draft = await generateDiaryDraft({
+      activitySummary: createActivitySummary({
+        activityLevel: "low",
+        commitSignals: {
+          totalCommits: 1,
+          filesChanged: 1,
+          insertions: 12,
+          deletions: 2,
+          subjects: ["adjust caption prompt"],
+          themes: ["coding"]
+        }
+      }),
+      storyFormatPlan: createStoryFormatPlan({ suggestedSlideCount: 6 }),
+      provider,
+      persona: "wry coworker",
+      roastLevel: 2
+    });
+
+    expect(draft.slides).toHaveLength(6);
+    expect(draft.metadata.slideCount).toBe(6);
+    expect(provider.requests[0]?.instructions).toContain(
+      "Prefer 3-5 slides for quiet or low activity days"
+    );
+    expect(provider.requests[0]?.instructions).toContain(
+      "guidance, not a hard validation limit"
+    );
+  });
+
   it("rejects malformed provider output", async () => {
     await expect(
       generateDiaryDraft({
@@ -330,6 +365,15 @@ function baseProviderDraft() {
     altText:
       "AI coworker diary carousel about provider validation work in Uncommitted."
   };
+}
+
+function createSlides(count: number): ReturnType<typeof baseProviderDraft>["slides"] {
+  return Array.from({ length: count }, (_, index) => ({
+    index: index + 1,
+    title: `Slide ${index + 1}`,
+    body: `Low activity draft beat ${index + 1}.`,
+    visualMood: "quiet checklist"
+  }));
 }
 
 function createStoryFormatPlan(
