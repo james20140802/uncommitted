@@ -146,6 +146,118 @@ describe("generate command", () => {
     expect(provider.requests[0]?.input.quiet).toBe(true);
   });
 
+  it("creates a new revision for each generation and preserves earlier drafts", async () => {
+    const { io, stdout, stderr } = createIo();
+    const fixture = await createRegisteredProjectFixture();
+
+    await writeGitEvent(fixture.project, "2026-05-12");
+
+    const firstExitCode = await runCli(["generate", "today"], io, {
+      homeDir: fixture.homeDir,
+      now: () => "2026-05-12T23:30:00.000Z",
+      aiProvider: new TaskAwareProvider({
+        draft: createProviderDraft({ caption: "첫 번째 draft 감정 기록." })
+      })
+    });
+    const secondExitCode = await runCli(["generate", "today"], io, {
+      homeDir: fixture.homeDir,
+      now: () => "2026-05-12T23:45:00.000Z",
+      aiProvider: new TaskAwareProvider({
+        draft: createProviderDraft({ caption: "두 번째 draft 감정 기록." })
+      })
+    });
+    const dateDir = join(fixture.draftRoot, "2026-05-12");
+    const revOneCaption = await readFile(
+      join(dateDir, "rev-001", "caption.txt"),
+      "utf8"
+    );
+    const revTwoCaption = await readFile(
+      join(dateDir, "rev-002", "caption.txt"),
+      "utf8"
+    );
+    const latest = await readJson(join(dateDir, "latest.json"));
+
+    expect(firstExitCode).toBe(0);
+    expect(secondExitCode).toBe(0);
+    expect(stderr).toEqual([]);
+    expect(stdout).toEqual([
+      "Generated text draft for 2026-05-12.",
+      "Generated text draft for 2026-05-12."
+    ]);
+    expect(revOneCaption).toBe("첫 번째 draft 감정 기록.\n\n#Uncommitted #개발일기\n");
+    expect(revTwoCaption).toBe("두 번째 draft 감정 기록.\n\n#Uncommitted #개발일기\n");
+    expect(latest).toEqual({
+      schemaVersion: 1,
+      targetDate: "2026-05-12",
+      revision: "rev-002",
+      path: join(dateDir, "rev-002"),
+      updatedAt: "2026-05-12T23:45:00.000Z"
+    });
+  });
+
+  it("records generated story formats so later drafts can vary genre", async () => {
+    const { io, stderr } = createIo();
+    const fixture = await createRegisteredProjectFixture();
+    const firstProvider = new TaskAwareProvider({
+      plan: createStoryFormatPlan({
+        formatName: "Bug Court Transcript",
+        voice: "tired QA narrator",
+        tone: "deadpan courtroom"
+      })
+    });
+    const secondProvider = new TaskAwareProvider({
+      plan: createStoryFormatPlan({
+        formatName: "Refactor Field Notes",
+        voice: "field researcher",
+        tone: "observant and warm"
+      })
+    });
+
+    await writeGitEvent(fixture.project, "2026-05-12");
+
+    await runCli(["generate", "today"], io, {
+      homeDir: fixture.homeDir,
+      now: () => "2026-05-12T23:30:00.000Z",
+      aiProvider: firstProvider
+    });
+    await runCli(["generate", "today"], io, {
+      homeDir: fixture.homeDir,
+      now: () => "2026-05-12T23:45:00.000Z",
+      aiProvider: secondProvider
+    });
+
+    const formats = await readJson(
+      join(fixture.homeDir, ".uncommitted", "history", "formats.json")
+    );
+
+    expect(stderr).toEqual([]);
+    expect(secondProvider.requests[0]?.input.recentFormats).toEqual([
+      {
+        date: "2026-05-12",
+        formatName: "Bug Court Transcript",
+        voice: "tired QA narrator",
+        tone: "deadpan courtroom"
+      }
+    ]);
+    expect(formats).toMatchObject({
+      schemaVersion: 1,
+      formats: [
+        {
+          date: "2026-05-12",
+          formatName: "Refactor Field Notes",
+          voice: "field researcher",
+          tone: "observant and warm"
+        },
+        {
+          date: "2026-05-12",
+          formatName: "Bug Court Transcript",
+          voice: "tired QA narrator",
+          tone: "deadpan courtroom"
+        }
+      ]
+    });
+  });
+
   it("returns a config error when no projects are registered", async () => {
     const { io, stdout, stderr } = createIo();
     const directory = await mkdtemp(join(tmpdir(), "uncommitted-generate-empty-"));

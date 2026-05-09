@@ -5,11 +5,16 @@ import { describe, expect, it } from "vitest";
 import {
   AiGenerationError,
   createAiGenerationRequest,
+  createAiProvider,
   generateStructured,
   loadAiProviderConfig,
   MockAiProvider
 } from "../src/ai-provider.js";
-import type { SafeActivitySummary } from "../src/ai-provider.js";
+import type {
+  AiProviderHttpRequest,
+  AiProviderHttpResponse,
+  SafeActivitySummary
+} from "../src/ai-provider.js";
 
 describe("AI provider abstraction", () => {
   it("loads provider configuration from the existing MVP config shape", async () => {
@@ -68,6 +73,317 @@ describe("AI provider abstraction", () => {
       }
     });
     expect(provider.requests).toEqual([request]);
+  });
+
+  it("creates an OpenAI provider with environment credentials and safe JSON requests", async () => {
+    const calls: Array<{ url: string; request: AiProviderHttpRequest }> = [];
+    const provider = createAiProvider(
+      {
+        provider: "openai",
+        persona: "dry reviewer",
+        roastLevel: 3
+      },
+      {
+        env: { OPENAI_API_KEY: "sk-test-secret" },
+        transport: createTransport(calls, {
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  title: "OpenAI provider day",
+                  beats: ["Configured", "Generated"]
+                })
+              }
+            }
+          ]
+        })
+      }
+    );
+    const request = createAiGenerationRequest({
+      task: "story-plan",
+      instructions: "Return a compact JSON object.",
+      summary: createQuietSummary()
+    });
+
+    await expect(generateStructured(provider, request)).resolves.toEqual({
+      schemaVersion: 1,
+      provider: "openai",
+      data: {
+        title: "OpenAI provider day",
+        beats: ["Configured", "Generated"]
+      }
+    });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.url).toBe("https://api.openai.com/v1/chat/completions");
+    expect(calls[0]?.request.headers.Authorization).toBe("Bearer sk-test-secret");
+    expect(calls[0]?.request.headers["Content-Type"]).toBe("application/json");
+
+    const body = JSON.parse(calls[0]?.request.body ?? "{}") as {
+      model?: string;
+      messages?: Array<{ role: string; content: string }>;
+      response_format?: {
+        type: string;
+        json_schema?: { name?: string; strict?: boolean; schema?: unknown };
+      };
+    };
+
+    expect(body.model).toBe("gpt-5.5");
+    expect(body.response_format).toMatchObject({
+      type: "json_schema",
+      json_schema: {
+        name: "uncommitted_story_format_plan",
+        strict: true
+      }
+    });
+    expect(body.messages?.map((message) => message.role)).toEqual([
+      "system",
+      "user"
+    ]);
+    expect(JSON.stringify(body)).not.toContain("sk-test-secret");
+  });
+
+  it("creates an OpenRouter provider with provider-specific credentials and endpoint", async () => {
+    const calls: Array<{ url: string; request: AiProviderHttpRequest }> = [];
+    const provider = createAiProvider(
+      {
+        provider: "openrouter",
+        persona: "dry reviewer",
+        roastLevel: 3
+      },
+      {
+        env: { OPENROUTER_API_KEY: "or-test-secret" },
+        transport: createTransport(calls, {
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({ title: "OpenRouter provider day" })
+              }
+            }
+          ]
+        })
+      }
+    );
+
+    await generateStructured(
+      provider,
+      createAiGenerationRequest({
+        task: "draft",
+        instructions: "Return JSON.",
+        summary: createQuietSummary()
+      })
+    );
+
+    expect(provider.name).toBe("openrouter");
+    expect(calls[0]?.url).toBe("https://openrouter.ai/api/v1/chat/completions");
+    expect(calls[0]?.request.headers.Authorization).toBe("Bearer or-test-secret");
+
+    const body = JSON.parse(calls[0]?.request.body ?? "{}") as {
+      model?: string;
+      response_format?: {
+        type: string;
+        json_schema?: { name?: string; strict?: boolean; schema?: unknown };
+      };
+    };
+
+    expect(body.model).toBe("openai/gpt-5.5");
+    expect(body.response_format).toMatchObject({
+      type: "json_schema",
+      json_schema: {
+        name: "uncommitted_diary_draft",
+        strict: true
+      }
+    });
+  });
+
+  it("fails clearly when real provider credentials are missing", () => {
+    expect(() =>
+      createAiProvider(
+        {
+          provider: "openai",
+          persona: "dry reviewer",
+          roastLevel: 3
+        },
+        { env: {} }
+      )
+    ).toThrow(
+      expect.objectContaining({
+        code: "provider-unavailable",
+        exitCode: 4,
+        message: "OPENAI_API_KEY is not set."
+      })
+    );
+  });
+
+  it("does not fall back to process env when an explicit env map is injected", () => {
+    const previousApiKey = process.env.OPENAI_API_KEY;
+
+    process.env.OPENAI_API_KEY = "sk-machine-secret";
+
+    try {
+      expect(() =>
+        createAiProvider(
+          {
+            provider: "openai",
+            persona: "dry reviewer",
+            roastLevel: 3
+          },
+          { env: {} }
+        )
+      ).toThrow(
+        expect.objectContaining({
+          code: "provider-unavailable",
+          exitCode: 4,
+          message: "OPENAI_API_KEY is not set."
+        })
+      );
+    } finally {
+      if (previousApiKey === undefined) {
+        delete process.env.OPENAI_API_KEY;
+      } else {
+        process.env.OPENAI_API_KEY = previousApiKey;
+      }
+    }
+  });
+
+  it("fails clearly for configured providers that do not have adapters yet", () => {
+    expect(() =>
+      createAiProvider({
+        provider: "anthropic",
+        persona: "dry reviewer",
+        roastLevel: 3
+      })
+    ).toThrow(
+      expect.objectContaining({
+        code: "provider-unavailable",
+        exitCode: 4,
+        message: "AI provider is not implemented yet: anthropic."
+      })
+    );
+  });
+
+  it("normalizes OpenAI-compatible HTTP failures without leaking response bodies", async () => {
+    const provider = createAiProvider(
+      {
+        provider: "openai",
+        persona: "dry reviewer",
+        roastLevel: 3
+      },
+      {
+        env: { OPENAI_API_KEY: "sk-test-secret" },
+        transport: createTransport([], { error: "invalid key sk-test-secret" }, 401)
+      }
+    );
+
+    await expect(
+      generateStructured(
+        provider,
+        createAiGenerationRequest({
+          task: "draft",
+          instructions: "Return JSON.",
+          summary: createQuietSummary()
+        })
+      )
+    ).rejects.toMatchObject({
+      code: "provider-failed",
+      exitCode: 4,
+      message: "AI provider authentication failed. Check API key."
+    });
+  });
+
+  it("allows long-running provider calls to use an environment timeout override", async () => {
+    const provider = createAiProvider(
+      {
+        provider: "openai",
+        persona: "dry reviewer",
+        roastLevel: 3
+      },
+      {
+        env: {
+          OPENAI_API_KEY: "sk-test-secret",
+          UNCOMMITTED_AI_TIMEOUT_MS: "1"
+        },
+        transport: async (_url, request) => {
+          return await new Promise<AiProviderHttpResponse>((_resolve, reject) => {
+            request.signal?.addEventListener("abort", () => {
+              const error = new Error("aborted");
+              error.name = "AbortError";
+              reject(error);
+            });
+          });
+        }
+      }
+    );
+
+    await expect(
+      generateStructured(
+        provider,
+        createAiGenerationRequest({
+          task: "draft",
+          instructions: "Return JSON.",
+          summary: createQuietSummary()
+        })
+      )
+    ).rejects.toMatchObject({
+      code: "provider-failed",
+      exitCode: 4,
+      message: "AI provider timed out. Try again later."
+    });
+  });
+
+  it("rejects invalid provider timeout overrides", () => {
+    expect(() =>
+      createAiProvider(
+        {
+          provider: "openai",
+          persona: "dry reviewer",
+          roastLevel: 3
+        },
+        {
+          env: {
+            OPENAI_API_KEY: "sk-test-secret",
+            UNCOMMITTED_AI_TIMEOUT_MS: "soon"
+          }
+        }
+      )
+    ).toThrow(
+      expect.objectContaining({
+        code: "invalid-config",
+        exitCode: 4,
+        message: "UNCOMMITTED_AI_TIMEOUT_MS must be a positive integer."
+      })
+    );
+  });
+
+  it("fails before downstream generation when provider response content is malformed", async () => {
+    const provider = createAiProvider(
+      {
+        provider: "openrouter",
+        persona: "dry reviewer",
+        roastLevel: 3
+      },
+      {
+        env: { OPENROUTER_API_KEY: "or-test-secret" },
+        transport: createTransport([], {
+          choices: [{ message: { content: "not-json" } }]
+        })
+      }
+    );
+
+    await expect(
+      generateStructured(
+        provider,
+        createAiGenerationRequest({
+          task: "story-plan",
+          instructions: "Return JSON.",
+          summary: createQuietSummary()
+        })
+      )
+    ).rejects.toMatchObject({
+      code: "malformed-response",
+      exitCode: 4,
+      message: "AI provider returned invalid JSON."
+    });
   });
 
   it("fails with a short actionable error for malformed provider responses", async () => {
@@ -179,5 +495,24 @@ function createQuietSummary(): SafeActivitySummary {
     overview: "Quiet day with no recorded project activity.",
     highlights: [],
     projectSummaries: []
+  };
+}
+
+function createTransport(
+  calls: Array<{ url: string; request: AiProviderHttpRequest }>,
+  responseBody: unknown,
+  status = 200
+) {
+  return async (
+    url: string,
+    request: AiProviderHttpRequest
+  ): Promise<AiProviderHttpResponse> => {
+    calls.push({ url, request });
+
+    return {
+      ok: status >= 200 && status < 300,
+      status,
+      json: async () => responseBody
+    };
   };
 }

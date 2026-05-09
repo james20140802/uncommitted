@@ -103,6 +103,21 @@ describe("diary generator", () => {
       "Caption must be copyable as an Instagram caption"
     );
     expect(provider.requests[0]?.instructions).toContain("Do not invent work");
+    expect(provider.requests[0]?.instructions).toContain(
+      "Write like the AI coworker is recording how the shared workday felt to it"
+    );
+    expect(provider.requests[0]?.instructions).toContain(
+      "Do not write a status report"
+    );
+    expect(provider.requests[0]?.instructions).toContain(
+      "not the user's diary"
+    );
+    expect(provider.requests[0]?.instructions).toContain(
+      "Make the selected genre visible"
+    );
+    expect(provider.requests[0]?.instructions).toContain(
+      "Do not claim to know the user's inner feelings"
+    );
   });
 
   it("generates a quiet-day request without fabricating activity", async () => {

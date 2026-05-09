@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { resolveConfigPaths } from "./config-paths.js";
 import type { ActivitySummary } from "./activity-summary.js";
 import {
@@ -55,6 +55,13 @@ export type StoryFormatPlanOptions = {
 
 export type LoadRecentStoryFormatHistoryOptions = {
   homeDir?: string;
+  limit?: number;
+};
+
+export type RecordStoryFormatHistoryOptions = {
+  homeDir?: string;
+  targetDate: string;
+  storyFormatPlan: StoryFormatPlan;
   limit?: number;
 };
 
@@ -145,6 +152,42 @@ export async function loadRecentStoryFormatHistory(
   }
 }
 
+export async function recordStoryFormatHistory(
+  options: RecordStoryFormatHistoryOptions
+): Promise<void> {
+  const paths = resolveConfigPaths({ homeDir: options.homeDir });
+  const limit = options.limit ?? 30;
+  const existingFormats = await loadRecentStoryFormatHistory({
+    homeDir: options.homeDir,
+    limit
+  });
+  const nextFormat: RecentStoryFormat = {
+    date: options.targetDate,
+    formatName: options.storyFormatPlan.formatName,
+    voice: options.storyFormatPlan.voice,
+    tone: options.storyFormatPlan.tone
+  };
+  const formats = [nextFormat, ...existingFormats]
+    .filter((format, index, allFormats) => {
+      return (
+        allFormats.findIndex(
+          (candidate) =>
+            candidate.date === format.date &&
+            candidate.formatName === format.formatName &&
+            candidate.voice === format.voice &&
+            candidate.tone === format.tone
+        ) === index
+      );
+    })
+    .slice(0, limit);
+
+  await mkdir(paths.historyDir, { recursive: true });
+  await writeJson(paths.formatHistoryFile, {
+    schemaVersion: 1,
+    formats
+  });
+}
+
 function buildSafeStoryFormatInput(options: {
   activitySummary: ActivitySummary;
   persona: string;
@@ -231,6 +274,13 @@ function buildStoryFormatInstructions(options: {
     "Design a Story Format Plan for an Uncommitted diary draft.",
     `Entry mode is ${options.entryMode}; create one global diary plan across all projects.`,
     "Return structured JSON with formatName, voice, tone, reason, structure, suggestedSlideCount, captionStyle, and doNotMention.",
+    "Pick or invent a clear genre for today's format; make the genre obvious through formatName, voice, and structure.",
+    "This is not the user's diary. It is the AI coworker's own off-the-record account of what it noticed while working alongside the user.",
+    "Choose a format that supports a felt diary, not a project status recap.",
+    "Do not make the plan a report, changelog, sprint update, or metrics summary.",
+    "Do not default to generic coworker essay mode; use a distinct narrative device such as a case file, field note, broadcast, trial, forecast, object monologue, letter, patrol log, or a newly invented equivalent.",
+    "Use concrete work signals only as emotional context: tension, relief, confusion, momentum, fatigue, or tiny satisfaction.",
+    "Do not claim to know the user's private feelings; describe the narrator's observations, suspicions, reactions, and workplace atmosphere.",
     "Do not invent work, commits, bugs, features, or user activity.",
     "For quiet days, acknowledge low or no recorded work and make the format about waiting, observation, or honest quiet.",
     "Avoid near-duplicates of recentFormats when they are provided.",
@@ -341,6 +391,10 @@ function throwInvalidStoryFormatPlan(): never {
     "AI provider returned invalid story format plan.",
     "malformed-response"
   );
+}
+
+async function writeJson(path: string, value: unknown): Promise<void> {
+  await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
