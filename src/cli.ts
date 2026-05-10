@@ -123,6 +123,10 @@ async function runGenerate(
   try {
     const result = await runGenerateCommand(args, options);
 
+    if (result.safetyReport.status === "warning") {
+      io.stderr(`Safety warning: ${result.safetyReport.message}`);
+    }
+
     io.stdout(`Generated text draft for ${result.targetDate}: ${result.outputDir}`);
     return 0;
   } catch (error) {
@@ -132,7 +136,15 @@ async function runGenerate(
         return 1;
       }
 
-      return error.code === "invalid-data" ? 3 : 2;
+      if (error.code === "invalid-data") {
+        return 3;
+      }
+
+      if (error.code === "safety-blocked") {
+        return 6;
+      }
+
+      return 2;
     }
 
     if (error instanceof AiGenerationError) {

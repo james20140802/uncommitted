@@ -97,6 +97,14 @@ describe("generate command", () => {
       activityLevel: "medium",
       formatName: "Implementation Dispatch",
       status: "draft",
+      exportPolicy: "safe",
+      exportReady: true,
+      publishable: true,
+      safety: {
+        status: "safe",
+        message: "Safety check passed.",
+        riskCount: 0
+      },
       exported: false,
       published: false,
       files: [
@@ -117,6 +125,104 @@ describe("generate command", () => {
     expect(JSON.stringify({ activitySummary, story, metadata, safetyReport })).not.toContain(
       fixture.repoDir
     );
+  });
+
+  it("completes warning drafts with a visible safety warning and metadata state", async () => {
+    const { io, stdout, stderr } = createIo();
+    const fixture = await createRegisteredProjectFixture();
+    const provider = new TaskAwareProvider({ model: "fixture@example.com" });
+
+    await writeGitEvent(fixture.project, "2026-05-12");
+
+    const exitCode = await runCli(["generate", "today"], io, {
+      homeDir: fixture.homeDir,
+      now: () => "2026-05-12T23:30:00.000Z",
+      aiProvider: provider
+    });
+    const outputDir = join(fixture.draftRoot, "2026-05-12", "rev-001");
+    const metadata = await readJson(join(outputDir, "metadata.json"));
+    const safetyReport = await readJson(join(outputDir, "safety-report.json"));
+
+    expect(exitCode).toBe(0);
+    expect(stdout).toEqual([`Generated text draft for 2026-05-12: ${outputDir}`]);
+    expect(stderr).toEqual(["Safety warning: Review redactions before export."]);
+    expect(metadata).toMatchObject({
+      exportPolicy: "warning",
+      exportReady: true,
+      publishable: true,
+      safety: {
+        status: "warning",
+        message: "Review redactions before export.",
+        riskCount: 1
+      }
+    });
+    expect(safetyReport).toMatchObject({
+      status: "warning",
+      exportAllowed: true,
+      risks: [
+        {
+          category: "email",
+          severity: "warning",
+          message: "Email address was redacted."
+        }
+      ]
+    });
+  });
+
+  it("blocks unsafe drafts at the CLI boundary while preserving inspectable artifacts", async () => {
+    const { io, stdout, stderr } = createIo();
+    const fixture = await createRegisteredProjectFixture();
+    const provider = new TaskAwareProvider({ model: "TOKEN=abc123" });
+
+    await writeGitEvent(fixture.project, "2026-05-12");
+
+    const exitCode = await runCli(["generate", "today"], io, {
+      homeDir: fixture.homeDir,
+      now: () => "2026-05-12T23:30:00.000Z",
+      aiProvider: provider
+    });
+    const outputDir = join(fixture.draftRoot, "2026-05-12", "rev-001");
+    const activitySummary = await readJson(join(outputDir, "activity-summary.json"));
+    const story = await readJson(join(outputDir, "story.json"));
+    const caption = await readFile(join(outputDir, "caption.txt"), "utf8");
+    const metadata = await readJson(join(outputDir, "metadata.json"));
+    const safetyReport = await readJson(join(outputDir, "safety-report.json"));
+    const latest = await readJson(join(fixture.draftRoot, "latest.json"));
+
+    expect(exitCode).toBe(6);
+    expect(stdout).toEqual([]);
+    expect(stderr).toEqual([
+      "Draft blocked by safety checks. Remove blocked sensitive content."
+    ]);
+    expect(activitySummary).toMatchObject({ targetDate: "2026-05-12" });
+    expect(story).toMatchObject({ title: "Generate Command Day" });
+    expect(caption).toContain("오늘은 generate command를 텍스트 draft까지 연결했다.");
+    expect(metadata).toMatchObject({
+      exportPolicy: "blocked",
+      exportReady: false,
+      publishable: false,
+      safety: {
+        status: "blocked",
+        message: "Remove blocked sensitive content.",
+        riskCount: 1
+      }
+    });
+    expect(safetyReport).toMatchObject({
+      status: "blocked",
+      exportAllowed: false,
+      risks: [
+        {
+          category: "secret",
+          severity: "blocked",
+          message: "Secret or token was redacted."
+        }
+      ]
+    });
+    expect(latest).toMatchObject({
+      targetDate: "2026-05-12",
+      revision: "rev-001",
+      path: outputDir
+    });
   });
 
   it("supports --date and generates an honest quiet-day text draft", async () => {

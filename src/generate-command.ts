@@ -28,7 +28,8 @@ import type { ManualNoteEvent } from "./note-command.js";
 import type { ProjectRecord, ProjectsFile } from "./project-add.js";
 import {
   createSafetyReport,
-  type SafetyReport
+  type SafetyReport,
+  type SafetyStatus
 } from "./safety-report.js";
 import {
   generateStoryFormatPlan,
@@ -41,12 +42,14 @@ export type GenerateCommandErrorCode =
   | "invalid-arguments"
   | "invalid-config"
   | "invalid-data"
-  | "no-projects";
+  | "no-projects"
+  | "safety-blocked";
 
 export class GenerateCommandError extends Error {
   constructor(
     message: string,
-    public readonly code: GenerateCommandErrorCode
+    public readonly code: GenerateCommandErrorCode,
+    public readonly outputDir?: string
   ) {
     super(message);
     this.name = "GenerateCommandError";
@@ -69,6 +72,8 @@ export type GenerateCommandResult = {
   draft: DiaryDraft;
   caption: string;
   safetyReport: SafetyReport;
+  exportPolicy: SafetyStatus;
+  exportReady: boolean;
 };
 
 type GenerateConfig = AiProviderConfig & {
@@ -83,7 +88,7 @@ type GenerateConfigFile = {
   roastLevel: number;
 };
 
-type DraftMetadata = {
+type DraftMetadataBase = {
   schemaVersion: 1;
   version: 1;
   artifactVersion: 1;
@@ -109,6 +114,17 @@ type DraftMetadata = {
   exported: false;
   published: false;
   files: string[];
+};
+
+type DraftMetadata = DraftMetadataBase & {
+  exportPolicy: SafetyStatus;
+  exportReady: boolean;
+  publishable: boolean;
+  safety: {
+    status: SafetyStatus;
+    message: string;
+    riskCount: number;
+  };
 };
 
 const usage = "Usage: uncommitted generate today | uncommitted generate --date YYYY-MM-DD";
@@ -188,7 +204,7 @@ export async function runGenerateCommand(
     roastLevel: config.roastLevel
   });
   const caption = deriveCaptionText(draft);
-  const metadata: DraftMetadata = {
+  const baseMetadata: DraftMetadataBase = {
     schemaVersion: 1,
     version: 1,
     artifactVersion: 1,
@@ -222,8 +238,19 @@ export async function runGenerateCommand(
     ]
   };
   const safetyReport = createSafetyReport(
-    buildDraftSafetyText({ draft, caption, metadata })
+    buildDraftSafetyText({ draft, caption, metadata: baseMetadata })
   );
+  const metadata: DraftMetadata = {
+    ...baseMetadata,
+    exportPolicy: safetyReport.status,
+    exportReady: safetyReport.exportAllowed,
+    publishable: safetyReport.exportAllowed,
+    safety: {
+      status: safetyReport.status,
+      message: safetyReport.message,
+      riskCount: safetyReport.risks.length
+    }
+  };
 
   await runDraftStorageOperation(async () => {
     await writeDraftArtifactJson(draftRevision, "story.json", draft);
@@ -236,6 +263,15 @@ export async function runGenerateCommand(
     );
     await writeLatestDraftPointer(draftRevision, generatedAt);
   });
+
+  if (safetyReport.status === "blocked") {
+    throw new GenerateCommandError(
+      `Draft blocked by safety checks. ${safetyReport.message}`,
+      "safety-blocked",
+      draftRevision.outputDir
+    );
+  }
+
   await recordStoryFormatHistory({
     homeDir: options.homeDir,
     targetDate,
@@ -251,14 +287,16 @@ export async function runGenerateCommand(
     storyFormatPlan,
     draft,
     caption,
-    safetyReport
+    safetyReport,
+    exportPolicy: safetyReport.status,
+    exportReady: safetyReport.exportAllowed
   };
 }
 
 function buildDraftSafetyText(options: {
   draft: DiaryDraft;
   caption: string;
-  metadata: DraftMetadata;
+  metadata: unknown;
 }): string {
   return [
     options.caption,
