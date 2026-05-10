@@ -100,6 +100,20 @@ export type {
   DiarySlide
 } from "./diary-generator.js";
 export {
+  checkDraftSafety,
+  createSafetyReport,
+  isSafetyReport
+} from "./safety-report.js";
+export type {
+  SafetyCheckResult,
+  SafetyRedaction,
+  SafetyReport,
+  SafetyRisk,
+  SafetyRiskCategory,
+  SafetyRiskSeverity,
+  SafetyStatus
+} from "./safety-report.js";
+export {
   GenerateCommandError,
   runGenerateCommand
 } from "./generate-command.js";
