@@ -115,7 +115,7 @@ describe("safety report", () => {
       [
         "DATABASE_URL=postgres://user:password@localhost:5432/app",
         "Do not publish the SQL injection payload: ' OR 1=1 --",
-        "The draft pasted <script>alert('xss')</script >"
+        "The draft pasted <ScRiPt>alert('xss')</script\t\n bar>"
       ].join(" ")
     );
 
@@ -137,7 +137,7 @@ describe("safety report", () => {
     expect(result.redactedText).toContain("[redacted-exploit-detail]");
     expect(result.redactedText).not.toContain("postgres://user:password");
     expect(result.redactedText).not.toContain("' OR 1=1 --");
-    expect(result.redactedText).not.toContain("<script>");
+    expect(result.redactedText).not.toContain("alert('xss')");
   });
 
   it("recognizes private repository remote URLs", () => {

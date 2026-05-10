@@ -46,6 +46,18 @@ type DetectionRule = {
   pattern: RegExp;
 };
 
+type DetectionResult = {
+  value: string;
+  count: number;
+};
+
+const exploitDetailRisk = {
+  category: "exploit-detail",
+  severity: "blocked",
+  replacement: "[redacted-exploit-detail]",
+  message: "Exploit detail was redacted."
+} satisfies Omit<DetectionRule, "pattern">;
+
 const detectionRules: DetectionRule[] = [
   {
     category: "database-credential",
@@ -56,12 +68,9 @@ const detectionRules: DetectionRule[] = [
       /\b(?:DATABASE_URL|DB_URL|DATABASE_PASSWORD|DB_PASSWORD|PGPASSWORD|MYSQL_PWD)\s*=\s*\S+|\b(?:postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?|redis):\/\/[^\s:@/]+:[^\s@/]+@[^\s]+/gi
   },
   {
-    category: "exploit-detail",
-    severity: "blocked",
-    replacement: "[redacted-exploit-detail]",
-    message: "Exploit detail was redacted.",
+    ...exploitDetailRisk,
     pattern:
-      /(?:\b(?:sql injection|xss|ssrf|rce|remote code execution|exploit payload|payload)\b\s*[:-]?\s*)?(?:'\s*or\s*1\s*=\s*1\s*--|<script\b[^>]*>[\s\S]*?<\/script\s*>|curl\s+\S+\s*\|\s*(?:sh|bash)|(?:rm\s+-rf\s+\/))/gi
+      /(?:\b(?:sql injection|xss|ssrf|rce|remote code execution|exploit payload|payload)\b\s*[:-]?\s*)?(?:'\s*or\s*1\s*=\s*1\s*--|curl\s+\S+\s*\|\s*(?:sh|bash)|(?:rm\s+-rf\s+\/))/gi
   },
   {
     category: "secret",
@@ -128,16 +137,14 @@ export function checkDraftSafety(text: string): SafetyCheckResult {
     }
 
     redactedText = result.value;
-    risks.set(rule.category, {
-      category: rule.category,
-      severity: rule.severity,
-      message: rule.message
-    });
-    redactions.set(rule.category, {
-      category: rule.category,
-      replacement: rule.replacement,
-      count: result.count
-    });
+    recordDetection(risks, redactions, rule, result.count);
+  }
+
+  const scriptResult = redactScriptLikeContent(redactedText);
+
+  if (scriptResult.count > 0) {
+    redactedText = scriptResult.value;
+    recordDetection(risks, redactions, exploitDetailRisk, scriptResult.count);
   }
 
   const riskList = Array.from(risks.values());
@@ -176,7 +183,7 @@ export function isSafetyReport(value: unknown): value is SafetyReport {
 function applyRule(
   value: string,
   rule: DetectionRule
-): { value: string; count: number } {
+): DetectionResult {
   let count = 0;
 
   const nextValue = value.replace(rule.pattern, (...args: unknown[]) => {
@@ -190,6 +197,90 @@ function applyRule(
   });
 
   return { value: nextValue, count };
+}
+
+function redactScriptLikeContent(value: string): DetectionResult {
+  const lowerValue = value.toLowerCase();
+  let count = 0;
+  let output = "";
+  let cursor = 0;
+
+  while (cursor < value.length) {
+    const openIndex = findScriptTagStart(lowerValue, cursor);
+
+    if (openIndex === -1) {
+      output += value.slice(cursor);
+      break;
+    }
+
+    output += value.slice(cursor, openIndex);
+
+    const closeStart = lowerValue.indexOf("</script", openIndex + "<script".length);
+
+    if (closeStart === -1) {
+      output += exploitDetailRisk.replacement;
+      count += 1;
+      break;
+    }
+
+    const closeEnd = value.indexOf(">", closeStart + "</script".length);
+
+    if (closeEnd === -1) {
+      output += exploitDetailRisk.replacement;
+      count += 1;
+      break;
+    }
+
+    output += exploitDetailRisk.replacement;
+    count += 1;
+    cursor = closeEnd + 1;
+  }
+
+  return count === 0 ? { value, count } : { value: output, count };
+}
+
+function findScriptTagStart(value: string, startIndex: number): number {
+  let cursor = startIndex;
+
+  while (cursor < value.length) {
+    const openIndex = value.indexOf("<script", cursor);
+
+    if (openIndex === -1) {
+      return -1;
+    }
+
+    if (isHtmlTagNameBoundary(value[openIndex + "<script".length])) {
+      return openIndex;
+    }
+
+    cursor = openIndex + "<script".length;
+  }
+
+  return -1;
+}
+
+function isHtmlTagNameBoundary(value: string | undefined): boolean {
+  return value === undefined || !/[a-z0-9]/i.test(value);
+}
+
+function recordDetection(
+  risks: Map<SafetyRiskCategory, SafetyRisk>,
+  redactions: Map<SafetyRiskCategory, SafetyRedaction>,
+  detection: Omit<DetectionRule, "pattern">,
+  count: number
+): void {
+  risks.set(detection.category, {
+    category: detection.category,
+    severity: detection.severity,
+    message: detection.message
+  });
+
+  const existingRedaction = redactions.get(detection.category);
+  redactions.set(detection.category, {
+    category: detection.category,
+    replacement: detection.replacement,
+    count: (existingRedaction?.count ?? 0) + count
+  });
 }
 
 function deriveStatus(risks: SafetyRisk[]): SafetyStatus {
