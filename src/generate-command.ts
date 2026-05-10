@@ -133,12 +133,6 @@ export async function runGenerateCommand(
   }
 
   const generatedAt = options.now ? options.now() : new Date().toISOString();
-  const draftRevision = await runDraftStorageOperation(() =>
-    createDraftRevision({
-      draftRoot: config.draftRoot,
-      targetDate
-    })
-  );
   const gitEvents = await readGitActivityEvents(projects, targetDate);
   const manualNotes = await readManualNoteEvents(projects, targetDate);
   const activitySummary = buildActivitySummary({
@@ -147,6 +141,12 @@ export async function runGenerateCommand(
     gitEvents,
     manualNotes
   });
+  const draftRevision = await runDraftStorageOperation(() =>
+    createDraftRevision({
+      draftRoot: config.draftRoot,
+      targetDate
+    })
+  );
 
   await runDraftStorageOperation(() =>
     writeDraftArtifactJson(draftRevision, "activity-summary.json", activitySummary)

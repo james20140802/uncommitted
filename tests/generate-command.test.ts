@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -324,6 +324,28 @@ describe("generate command", () => {
     expect(stderr).toEqual([
       "Stored Git activity is malformed. Re-run `uncommitted collect git`."
     ]);
+  });
+
+  it("does not allocate a draft revision when stored activity is malformed", async () => {
+    const { io, stdout, stderr } = createIo();
+    const fixture = await createRegisteredProjectFixture();
+
+    await writeMalformedGitEvent(fixture.project, "2026-05-12");
+
+    const exitCode = await runCli(["generate", "today"], io, {
+      homeDir: fixture.homeDir,
+      now: () => "2026-05-12T23:30:00.000Z",
+      aiProvider: new TaskAwareProvider()
+    });
+
+    expect(exitCode).toBe(3);
+    expect(stdout).toEqual([]);
+    expect(stderr).toEqual([
+      "Stored Git activity is malformed. Re-run `uncommitted collect git`."
+    ]);
+    await expect(readdir(join(fixture.draftRoot, "2026-05-12"))).rejects.toMatchObject({
+      code: "ENOENT"
+    });
   });
 });
 
