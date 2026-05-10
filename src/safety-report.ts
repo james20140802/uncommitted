@@ -78,7 +78,7 @@ const detectionRules: DetectionRule[] = [
     replacement: "[redacted-secret]",
     message: "Secret or token was redacted.",
     pattern:
-      /\b[A-Z][A-Z0-9_]*(?:API[_-]?KEY|ACCESS[_-]?TOKEN|TOKEN|SECRET|PASSWORD|PRIVATE[_-]?KEY)\s*=\s*\S+|\bBearer\s+[A-Za-z0-9._~+/=-]+|\b(?:sk|ghp|github_pat|glpat|xox[baprs])[-_A-Za-z0-9]{8,}/gi
+      /\b(?:[A-Z][A-Z0-9]*[_-])*(?:API[_-]?KEY|ACCESS[_-]?TOKEN|TOKEN|SECRET|PASSWORD|PRIVATE[_-]?KEY)\s*=\s*\S+|\bBearer\s+[A-Za-z0-9._~+/=-]+|\b(?:sk|ghp|github_pat|glpat|xox[baprs])[-_A-Za-z0-9]{8,}/gi
   },
   {
     category: "private-repo-remote",
@@ -116,7 +116,7 @@ const detectionRules: DetectionRule[] = [
     replacement: "[redacted-path]",
     message: "Local absolute path was redacted.",
     pattern:
-      /(^|[\s(["'])(?:\/(?:Users|home|private|var|tmp|Volumes|opt|etc)\/[^\s)"']+|[A-Za-z]:\\[^\s)"']+)/g
+      /(^(?:file:)?|[\s(["'=,:](?:file:)?)(?:\/[A-Za-z0-9._-]+(?:\/[^\s)"']+)+|[A-Za-z]:\\[^\s)"']+)/g
   }
 ];
 

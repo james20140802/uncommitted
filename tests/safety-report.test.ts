@@ -90,7 +90,7 @@ describe("safety report", () => {
 
   it("blocks token-like strings and records secret redactions", () => {
     const result = checkDraftSafety(
-      "The deployment failed with OPENAI_API_KEY=sk-1234567890abcdef and Bearer ghp_abcdefghijklmnopqrstuvwxyz."
+      "The deployment failed with OPENAI_API_KEY=sk-1234567890abcdef, TOKEN=abc123, SECRET=def456, PASSWORD=hunter2, and Bearer ghp_abcdefghijklmnopqrstuvwxyz."
     );
 
     expect(result.report.status).toBe("blocked");
@@ -104,10 +104,38 @@ describe("safety report", () => {
     expect(result.report.redactionsApplied).toContainEqual({
       category: "secret",
       replacement: "[redacted-secret]",
-      count: 2
+      count: 5
     });
     expect(result.redactedText).not.toContain("OPENAI_API_KEY");
+    expect(result.redactedText).not.toContain("TOKEN=abc123");
+    expect(result.redactedText).not.toContain("SECRET=def456");
+    expect(result.redactedText).not.toContain("PASSWORD=hunter2");
     expect(result.redactedText).not.toContain("Bearer ghp_");
+  });
+
+  it("warns and redacts broad Unix and Windows absolute paths", () => {
+    const result = checkDraftSafety(
+      [
+        "Current workspace was cwd=/workspace/uncommitted/src/index.ts.",
+        "Windows path appeared as file:C:\\Users\\chase\\secret\\notes.txt."
+      ].join(" ")
+    );
+
+    expect(result.report.status).toBe("warning");
+    expect(result.report.risks).toContainEqual({
+      category: "local-path",
+      severity: "warning",
+      message: "Local absolute path was redacted."
+    });
+    expect(result.report.redactionsApplied).toContainEqual({
+      category: "local-path",
+      replacement: "[redacted-path]",
+      count: 2
+    });
+    expect(result.redactedText).toContain("cwd=[redacted-path]");
+    expect(result.redactedText).toContain("file:[redacted-path]");
+    expect(result.redactedText).not.toContain("/workspace/uncommitted");
+    expect(result.redactedText).not.toContain("C:\\Users\\chase");
   });
 
   it("blocks database credentials and exploit details where pattern matching is feasible", () => {
