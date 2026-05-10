@@ -61,7 +61,7 @@ const detectionRules: DetectionRule[] = [
     replacement: "[redacted-exploit-detail]",
     message: "Exploit detail was redacted.",
     pattern:
-      /(?:\b(?:sql injection|xss|ssrf|rce|remote code execution|exploit payload|payload)\b\s*[:-]?\s*)?(?:'\s*or\s*1\s*=\s*1\s*--|<script\b[^>]*>[\s\S]*?<\/script>|curl\s+\S+\s*\|\s*(?:sh|bash)|(?:rm\s+-rf\s+\/))/gi
+      /(?:\b(?:sql injection|xss|ssrf|rce|remote code execution|exploit payload|payload)\b\s*[:-]?\s*)?(?:'\s*or\s*1\s*=\s*1\s*--|<script\b[^>]*>[\s\S]*?<\/script\s*>|curl\s+\S+\s*\|\s*(?:sh|bash)|(?:rm\s+-rf\s+\/))/gi
   },
   {
     category: "secret",
