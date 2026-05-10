@@ -24,7 +24,9 @@ export {
 export type {
   CarouselHtmlCard,
   CarouselRenderInput,
-  CarouselRenderInputErrorCode
+  CarouselRenderInputErrorCode,
+  CarouselVisualTreatment,
+  CarouselVisualTreatmentKind
 } from "./carousel-renderer.js";
 export {
   collectGitForRegisteredProjects,

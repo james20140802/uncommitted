@@ -18,11 +18,21 @@ export type CarouselRenderInput = {
   slides: DiarySlide[];
 };
 
+export type CarouselVisualTreatmentKind = "illustration";
+
+export type CarouselVisualTreatment = {
+  kind: CarouselVisualTreatmentKind;
+  assetSlotId: string;
+  prompt: string;
+  altText: string;
+};
+
 export type CarouselHtmlCard = {
   fileName: string;
   slideIndex: number;
   pageNumber: number;
   pageCount: number;
+  visualTreatment: CarouselVisualTreatment;
   html: string;
 };
 
@@ -60,16 +70,19 @@ export function createCarouselHtmlCards(value: unknown): CarouselHtmlCard[] {
 
   return input.slides.map((slide, index) => {
     const pageNumber = index + 1;
+    const visualTreatment = createVisualTreatment(slide, pageNumber);
 
     return {
       fileName: `${String(pageNumber).padStart(2, "0")}.html`,
       slideIndex: slide.index,
       pageNumber,
       pageCount,
+      visualTreatment,
       html: renderCardHtml({
         targetDate: input.targetDate,
         projectMarker: input.projectMarker,
         slide,
+        visualTreatment,
         pageNumber,
         pageCount
       })
@@ -100,6 +113,7 @@ function renderCardHtml(options: {
   targetDate: string;
   projectMarker: string;
   slide: DiarySlide;
+  visualTreatment: CarouselVisualTreatment;
   pageNumber: number;
   pageCount: number;
 }): string {
@@ -107,6 +121,10 @@ function renderCardHtml(options: {
   const body = escapeHtml(options.slide.body.trim());
   const targetDate = escapeHtml(options.targetDate.trim());
   const projectMarker = escapeHtml(options.projectMarker.trim());
+  const visualAssetSlotId = escapeHtml(options.visualTreatment.assetSlotId);
+  const visualKind = escapeHtml(options.visualTreatment.kind);
+  const visualPrompt = escapeHtml(options.visualTreatment.prompt);
+  const visualAltText = escapeHtml(options.visualTreatment.altText);
   const pageIndicator = `${options.pageNumber} / ${options.pageCount}`;
 
   return `<!doctype html>
@@ -162,11 +180,61 @@ function renderCardHtml(options: {
       overflow-wrap: anywhere;
     }
 
+    .visual-stage {
+      position: relative;
+      min-height: 670px;
+      margin: 54px 0 44px;
+      border: 2px solid #d4d4d8;
+      background:
+        linear-gradient(135deg, rgba(15, 118, 110, 0.16), rgba(15, 23, 42, 0) 42%),
+        linear-gradient(315deg, rgba(251, 191, 36, 0.2), rgba(15, 23, 42, 0) 44%),
+        #eef2f7;
+      overflow: hidden;
+    }
+
+    .visual-stage::before,
+    .visual-stage::after {
+      position: absolute;
+      content: "";
+      border: 2px solid rgba(15, 23, 42, 0.18);
+    }
+
+    .visual-stage::before {
+      width: 430px;
+      height: 430px;
+      right: -92px;
+      top: 70px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.42);
+    }
+
+    .visual-stage::after {
+      width: 360px;
+      height: 240px;
+      left: 92px;
+      bottom: 92px;
+      background: rgba(255, 255, 255, 0.58);
+      transform: rotate(-7deg);
+    }
+
+    .visual-placeholder {
+      position: absolute;
+      left: 72px;
+      right: 72px;
+      bottom: 58px;
+      z-index: 1;
+      font-size: 30px;
+      font-weight: 700;
+      line-height: 1.25;
+      color: #334155;
+      overflow-wrap: anywhere;
+    }
+
     .content {
       display: flex;
       flex-direction: column;
       gap: 52px;
-      margin: 96px 0;
+      margin: 0 0 44px;
     }
 
     h1 {
@@ -204,6 +272,15 @@ function renderCardHtml(options: {
       <div class="project-marker">${projectMarker}</div>
       <time datetime="${targetDate}">${targetDate}</time>
     </header>
+    <section
+      class="visual-stage"
+      data-visual-kind="${visualKind}"
+      data-asset-slot-id="${visualAssetSlotId}"
+      data-visual-prompt="${visualPrompt}"
+      aria-label="${visualAltText}"
+    >
+      <div class="visual-placeholder">${visualPrompt}</div>
+    </section>
     <main class="content">
       <h1>${title}</h1>
       <p class="body">${body}</p>
@@ -216,6 +293,20 @@ function renderCardHtml(options: {
 </body>
 </html>
 `;
+}
+
+function createVisualTreatment(
+  slide: DiarySlide,
+  pageNumber: number
+): CarouselVisualTreatment {
+  const prompt = slide.visualMood.trim();
+
+  return {
+    kind: "illustration",
+    assetSlotId: `slide-${String(pageNumber).padStart(2, "0")}-visual`,
+    prompt,
+    altText: `Illustration concept: ${prompt}`
+  };
 }
 
 function deriveProjectMarker(value: Record<string, unknown>): string {

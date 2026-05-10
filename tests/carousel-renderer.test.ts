@@ -24,9 +24,18 @@ describe("carousel renderer", () => {
     expect(cards[0]?.html).toContain("uncommitted");
     expect(cards[0]?.html).toContain("1 / 3");
     expect(cards[0]?.html).toContain("Uncommitted");
+    expect(cards[0]?.visualTreatment).toEqual({
+      kind: "illustration",
+      assetSlotId: "slide-01-visual",
+      prompt: "clean card",
+      altText: "Illustration concept: clean card"
+    });
+    expect(cards[0]?.html).toContain("class=\"visual-stage\"");
+    expect(cards[0]?.html).toContain("data-visual-kind=\"illustration\"");
+    expect(cards[0]?.html).toContain("data-asset-slot-id=\"slide-01-visual\"");
   });
 
-  it("escapes slide content before writing HTML", () => {
+  it("escapes slide and visual treatment content before writing HTML", () => {
     const cards = createCarouselHtmlCards(
       createStoryDraft({
         slides: [
@@ -34,7 +43,7 @@ describe("carousel renderer", () => {
             index: 1,
             title: "Fix <script>",
             body: "Rendered & safe.",
-            visualMood: "plain"
+            visualMood: "terminal <alert> & sparks"
           },
           {
             index: 2,
@@ -54,7 +63,9 @@ describe("carousel renderer", () => {
 
     expect(cards[0]?.html).toContain("Fix &lt;script&gt;");
     expect(cards[0]?.html).toContain("Rendered &amp; safe.");
+    expect(cards[0]?.html).toContain("terminal &lt;alert&gt; &amp; sparks");
     expect(cards[0]?.html).not.toContain("Fix <script>");
+    expect(cards[0]?.html).not.toContain("terminal <alert>");
   });
 
   it("parses the existing story.json slide contract for rendering", () => {
