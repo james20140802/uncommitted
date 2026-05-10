@@ -17,6 +17,18 @@ export type { CliIo, CliOptions } from "./cli.js";
 export { commands, isKnownCommand } from "./commands.js";
 export type { Command } from "./commands.js";
 export {
+  CarouselRenderInputError,
+  createCarouselHtmlCards,
+  parseCarouselRenderInput
+} from "./carousel-renderer.js";
+export type {
+  CarouselHtmlCard,
+  CarouselRenderInput,
+  CarouselRenderInputErrorCode,
+  CarouselVisualTreatment,
+  CarouselVisualTreatmentKind
+} from "./carousel-renderer.js";
+export {
   collectGitForRegisteredProjects,
   CollectGitCommandError
 } from "./collect-git-command.js";
