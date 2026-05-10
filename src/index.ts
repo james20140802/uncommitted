@@ -108,6 +108,22 @@ export type {
   GenerateCommandOptions,
   GenerateCommandResult
 } from "./generate-command.js";
+export {
+  createDraftRevision,
+  DraftStorageError,
+  readLatestDraftPointer,
+  writeDraftArtifactJson,
+  writeDraftArtifactText,
+  writeLatestDraftPointer,
+  writeTextDraftRevision
+} from "./draft-storage.js";
+export type {
+  DraftRevision,
+  DraftStorageErrorCode,
+  LatestDraftPointer,
+  TextDraftRevisionInput,
+  TextDraftWriteResult
+} from "./draft-storage.js";
 export { runInitCommand } from "./init-command.js";
 export type {
   InitAnswers,

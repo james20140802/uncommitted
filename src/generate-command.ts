@@ -1,4 +1,4 @@
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   buildActivitySummary,
@@ -17,6 +17,13 @@ import {
   generateDiaryDraft,
   type DiaryDraft
 } from "./diary-generator.js";
+import {
+  createDraftRevision,
+  DraftStorageError,
+  writeDraftArtifactJson,
+  writeDraftArtifactText,
+  writeLatestDraftPointer
+} from "./draft-storage.js";
 import type { ManualNoteEvent } from "./note-command.js";
 import type { ProjectRecord, ProjectsFile } from "./project-add.js";
 import {
@@ -51,6 +58,8 @@ export type GenerateCommandOptions = {
 export type GenerateCommandResult = {
   targetDate: string;
   outputDir: string;
+  revision: string;
+  latestPointerPath: string;
   activitySummary: ActivitySummary;
   storyFormatPlan: StoryFormatPlan;
   draft: DiaryDraft;
@@ -85,14 +94,6 @@ type DraftMetadata = {
   files: string[];
 };
 
-type LatestDraftPointer = {
-  schemaVersion: 1;
-  targetDate: string;
-  revision: string;
-  path: string;
-  updatedAt: string;
-};
-
 const usage = "Usage: uncommitted generate today | uncommitted generate --date YYYY-MM-DD";
 const providerNames: readonly AiProviderName[] = [
   "none",
@@ -120,7 +121,7 @@ export async function runGenerateCommand(
 ): Promise<GenerateCommandResult> {
   const targetDate = parseGenerateDate(args, options.now);
   const paths = resolveConfigPaths({ homeDir: options.homeDir });
-  const config = await readGenerateConfig(paths.configFile);
+  const config = await readGenerateConfig(paths.configFile, options.homeDir);
   const projectsFile = await readProjectsFile(paths.projectsFile);
   const projects = projectsFile.projects.filter((project) => project.enabled);
 
@@ -132,9 +133,6 @@ export async function runGenerateCommand(
   }
 
   const generatedAt = options.now ? options.now() : new Date().toISOString();
-  const dateDir = join(config.draftRoot, targetDate);
-  const revision = await allocateNextRevision(dateDir);
-  const outputDir = join(dateDir, revision);
   const gitEvents = await readGitActivityEvents(projects, targetDate);
   const manualNotes = await readManualNoteEvents(projects, targetDate);
   const activitySummary = buildActivitySummary({
@@ -143,9 +141,16 @@ export async function runGenerateCommand(
     gitEvents,
     manualNotes
   });
+  const draftRevision = await runDraftStorageOperation(() =>
+    createDraftRevision({
+      draftRoot: config.draftRoot,
+      targetDate
+    })
+  );
 
-  await mkdir(outputDir, { recursive: true });
-  await writeJson(join(outputDir, "activity-summary.json"), activitySummary);
+  await runDraftStorageOperation(() =>
+    writeDraftArtifactJson(draftRevision, "activity-summary.json", activitySummary)
+  );
 
   const provider = options.aiProvider ?? createAiProvider(config);
   const recentFormats = await loadRecentStoryFormatHistory({
@@ -182,16 +187,12 @@ export async function runGenerateCommand(
     files: ["activity-summary.json", "story.json", "caption.txt", "metadata.json"]
   };
 
-  await writeJson(join(outputDir, "story.json"), draft);
-  await writeFile(join(outputDir, "caption.txt"), caption, "utf8");
-  await writeJson(join(outputDir, "metadata.json"), metadata);
-  await writeJson(join(dateDir, "latest.json"), {
-    schemaVersion: 1,
-    targetDate,
-    revision,
-    path: outputDir,
-    updatedAt: generatedAt
-  } satisfies LatestDraftPointer);
+  await runDraftStorageOperation(async () => {
+    await writeDraftArtifactJson(draftRevision, "story.json", draft);
+    await writeDraftArtifactText(draftRevision, "caption.txt", caption);
+    await writeDraftArtifactJson(draftRevision, "metadata.json", metadata);
+    await writeLatestDraftPointer(draftRevision, generatedAt);
+  });
   await recordStoryFormatHistory({
     homeDir: options.homeDir,
     targetDate,
@@ -200,7 +201,9 @@ export async function runGenerateCommand(
 
   return {
     targetDate,
-    outputDir,
+    outputDir: draftRevision.outputDir,
+    revision: draftRevision.revision,
+    latestPointerPath: draftRevision.latestPointerPath,
     activitySummary,
     storyFormatPlan,
     draft,
@@ -208,37 +211,18 @@ export async function runGenerateCommand(
   };
 }
 
-async function allocateNextRevision(dateDir: string): Promise<string> {
-  let entries: string[];
-
+async function runDraftStorageOperation<T>(
+  operation: () => Promise<T>
+): Promise<T> {
   try {
-    entries = await readdir(dateDir);
+    return await operation();
   } catch (error) {
-    if (isNodeError(error) && error.code === "ENOENT") {
-      return formatRevision(1);
+    if (error instanceof DraftStorageError) {
+      throw new GenerateCommandError(error.message, "invalid-config");
     }
 
-    throw new GenerateCommandError(
-      "Could not inspect draft revisions.",
-      "invalid-config"
-    );
+    throw error;
   }
-
-  const highestRevision = entries.reduce((highest, entry) => {
-    const match = /^rev-(\d{3})$/.exec(entry);
-
-    if (!match) {
-      return highest;
-    }
-
-    return Math.max(highest, Number(match[1]));
-  }, 0);
-
-  return formatRevision(highestRevision + 1);
-}
-
-function formatRevision(value: number): string {
-  return `rev-${String(value).padStart(3, "0")}`;
 }
 
 function parseGenerateDate(
@@ -275,7 +259,10 @@ function isValidDateString(value: string): boolean {
   return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
 }
 
-async function readGenerateConfig(path: string): Promise<GenerateConfig> {
+async function readGenerateConfig(
+  path: string,
+  homeDir: string | undefined
+): Promise<GenerateConfig> {
   try {
     const parsed = JSON.parse(await readFile(path, "utf8")) as unknown;
 
@@ -284,7 +271,10 @@ async function readGenerateConfig(path: string): Promise<GenerateConfig> {
     }
 
     return {
-      draftRoot: parsed.draftRoot,
+      draftRoot: resolveConfigPaths({
+        homeDir,
+        draftRoot: parsed.draftRoot
+      }).defaultDraftRoot,
       provider: parsed.aiProvider,
       persona: parsed.persona,
       roastLevel: parsed.roastLevel
@@ -425,10 +415,6 @@ async function readOptionalText(path: string): Promise<string | undefined> {
       "invalid-data"
     );
   }
-}
-
-async function writeJson(path: string, value: unknown): Promise<void> {
-  await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
 function isGenerateConfigFile(value: unknown): value is GenerateConfigFile {
