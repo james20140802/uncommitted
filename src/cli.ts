@@ -123,7 +123,7 @@ async function runGenerate(
   try {
     const result = await runGenerateCommand(args, options);
 
-    io.stdout(`Generated text draft for ${result.targetDate}.`);
+    io.stdout(`Generated text draft for ${result.targetDate}: ${result.outputDir}`);
     return 0;
   } catch (error) {
     if (error instanceof GenerateCommandError) {

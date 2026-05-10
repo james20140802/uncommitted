@@ -68,6 +68,7 @@ export type AiStructuredGenerationResponse<
 
 export interface AiProvider {
   readonly name: AiProviderName;
+  readonly model?: string;
   generateStructured(
     request: AiStructuredGenerationRequest
   ): Promise<AiProviderRawResponse>;
@@ -373,6 +374,7 @@ export class MockAiProvider implements AiProvider {
 
 class OpenAiCompatibleProvider implements AiProvider {
   public readonly name: OpenAiCompatibleProviderName;
+  public readonly model: string;
 
   constructor(
     private readonly options: {
@@ -383,6 +385,7 @@ class OpenAiCompatibleProvider implements AiProvider {
     }
   ) {
     this.name = options.metadata.name;
+    this.model = options.metadata.model;
   }
 
   async generateStructured(
