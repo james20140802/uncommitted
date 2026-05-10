@@ -1,7 +1,11 @@
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-export type DraftStorageErrorCode = "inspect-failed" | "write-failed" | "invalid-pointer";
+export type DraftStorageErrorCode =
+  | "inspect-failed"
+  | "invalid-json"
+  | "invalid-pointer"
+  | "write-failed";
 
 export class DraftStorageError extends Error {
   constructor(
@@ -104,11 +108,25 @@ export async function writeDraftArtifactJson(
   filename: string,
   value: unknown
 ): Promise<void> {
-  await writeDraftArtifactText(
-    revision,
-    filename,
-    `${JSON.stringify(value, null, 2)}\n`
-  );
+  let serialized: string;
+
+  try {
+    const nextSerialized = JSON.stringify(value, null, 2);
+
+    if (nextSerialized === undefined) {
+      throw new Error("JSON artifact is not serializable.");
+    }
+
+    JSON.parse(nextSerialized);
+    serialized = nextSerialized;
+  } catch {
+    throw new DraftStorageError(
+      "Draft artifact JSON is invalid.",
+      "invalid-json"
+    );
+  }
+
+  await writeDraftArtifactText(revision, filename, `${serialized}\n`);
 }
 
 export async function writeDraftArtifactText(

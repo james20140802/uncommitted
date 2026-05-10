@@ -27,6 +27,10 @@ import {
 import type { ManualNoteEvent } from "./note-command.js";
 import type { ProjectRecord, ProjectsFile } from "./project-add.js";
 import {
+  createSafetyReport,
+  type SafetyReport
+} from "./safety-report.js";
+import {
   generateStoryFormatPlan,
   loadRecentStoryFormatHistory,
   recordStoryFormatHistory,
@@ -64,6 +68,7 @@ export type GenerateCommandResult = {
   storyFormatPlan: StoryFormatPlan;
   draft: DiaryDraft;
   caption: string;
+  safetyReport: SafetyReport;
 };
 
 type GenerateConfig = AiProviderConfig & {
@@ -80,17 +85,29 @@ type GenerateConfigFile = {
 
 type DraftMetadata = {
   schemaVersion: 1;
+  version: 1;
   artifactVersion: 1;
+  date: string;
   targetDate: string;
+  createdAt: string;
   generatedAt: string;
   provider: AiProviderName;
+  model?: string;
   activityLevel: ActivitySummary["activityLevel"];
+  formatName: string;
   storyFormat: {
     formatName: string;
     voice: string;
     tone: string;
   };
+  projects: {
+    id: string;
+    name: string;
+  }[];
   projectIds: string[];
+  status: "draft";
+  exported: false;
+  published: false;
   files: string[];
 };
 
@@ -173,24 +190,50 @@ export async function runGenerateCommand(
   const caption = deriveCaptionText(draft);
   const metadata: DraftMetadata = {
     schemaVersion: 1,
+    version: 1,
     artifactVersion: 1,
+    date: targetDate,
     targetDate,
+    createdAt: generatedAt,
     generatedAt,
     provider: provider.name,
+    model: provider.model,
     activityLevel: activitySummary.activityLevel,
+    formatName: storyFormatPlan.formatName,
     storyFormat: {
       formatName: storyFormatPlan.formatName,
       voice: storyFormatPlan.voice,
       tone: storyFormatPlan.tone
     },
+    projects: activitySummary.projects.map((project) => ({
+      id: project.projectId,
+      name: project.projectName
+    })),
     projectIds: activitySummary.projects.map((project) => project.projectId),
-    files: ["activity-summary.json", "story.json", "caption.txt", "metadata.json"]
+    status: "draft",
+    exported: false,
+    published: false,
+    files: [
+      "activity-summary.json",
+      "story.json",
+      "caption.txt",
+      "metadata.json",
+      "safety-report.json"
+    ]
   };
+  const safetyReport = createSafetyReport(
+    buildDraftSafetyText({ draft, caption, metadata })
+  );
 
   await runDraftStorageOperation(async () => {
     await writeDraftArtifactJson(draftRevision, "story.json", draft);
     await writeDraftArtifactText(draftRevision, "caption.txt", caption);
     await writeDraftArtifactJson(draftRevision, "metadata.json", metadata);
+    await writeDraftArtifactJson(
+      draftRevision,
+      "safety-report.json",
+      safetyReport
+    );
     await writeLatestDraftPointer(draftRevision, generatedAt);
   });
   await recordStoryFormatHistory({
@@ -207,8 +250,21 @@ export async function runGenerateCommand(
     activitySummary,
     storyFormatPlan,
     draft,
-    caption
+    caption,
+    safetyReport
   };
+}
+
+function buildDraftSafetyText(options: {
+  draft: DiaryDraft;
+  caption: string;
+  metadata: DraftMetadata;
+}): string {
+  return [
+    options.caption,
+    JSON.stringify(options.draft),
+    JSON.stringify(options.metadata)
+  ].join("\n");
 }
 
 async function runDraftStorageOperation<T>(

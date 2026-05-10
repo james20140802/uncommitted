@@ -50,10 +50,11 @@ describe("generate command", () => {
     const story = await readJson(join(outputDir, "story.json"));
     const caption = await readFile(join(outputDir, "caption.txt"), "utf8");
     const metadata = await readJson(join(outputDir, "metadata.json"));
+    const safetyReport = await readJson(join(outputDir, "safety-report.json"));
 
     expect(exitCode).toBe(0);
     expect(stderr).toEqual([]);
-    expect(stdout).toEqual(["Generated text draft for 2026-05-12."]);
+    expect(stdout).toEqual([`Generated text draft for 2026-05-12: ${outputDir}`]);
     expect(provider.requests.map((request) => request.task)).toEqual([
       "story-plan",
       "draft"
@@ -80,12 +81,40 @@ describe("generate command", () => {
     );
     expect(metadata).toMatchObject({
       schemaVersion: 1,
+      version: 1,
       targetDate: "2026-05-12",
+      date: "2026-05-12",
       artifactVersion: 1,
+      createdAt: "2026-05-12T23:30:00.000Z",
       provider: "mock",
-      files: ["activity-summary.json", "story.json", "caption.txt", "metadata.json"]
+      model: "fixture-model",
+      projects: [
+        {
+          id: fixture.project.id,
+          name: fixture.project.name
+        }
+      ],
+      activityLevel: "medium",
+      formatName: "Implementation Dispatch",
+      status: "draft",
+      exported: false,
+      published: false,
+      files: [
+        "activity-summary.json",
+        "story.json",
+        "caption.txt",
+        "metadata.json",
+        "safety-report.json"
+      ]
     });
-    expect(JSON.stringify({ activitySummary, story, metadata })).not.toContain(
+    expect(safetyReport).toMatchObject({
+      schemaVersion: 1,
+      status: "safe",
+      exportAllowed: true,
+      risks: [],
+      redactionsApplied: []
+    });
+    expect(JSON.stringify({ activitySummary, story, metadata, safetyReport })).not.toContain(
       fixture.repoDir
     );
   });
@@ -132,7 +161,9 @@ describe("generate command", () => {
 
     expect(exitCode).toBe(0);
     expect(stderr).toEqual([]);
-    expect(stdout).toEqual(["Generated text draft for 2026-05-11."]);
+    expect(stdout).toEqual([
+      `Generated text draft for 2026-05-11: ${outputDir}`
+    ]);
     expect(activitySummary).toMatchObject({
       targetDate: "2026-05-11",
       activityLevel: "none",
@@ -181,8 +212,8 @@ describe("generate command", () => {
     expect(secondExitCode).toBe(0);
     expect(stderr).toEqual([]);
     expect(stdout).toEqual([
-      "Generated text draft for 2026-05-12.",
-      "Generated text draft for 2026-05-12."
+      `Generated text draft for 2026-05-12: ${join(dateDir, "rev-001")}`,
+      `Generated text draft for 2026-05-12: ${join(dateDir, "rev-002")}`
     ]);
     expect(revOneCaption).toBe("첫 번째 draft 감정 기록.\n\n#Uncommitted #개발일기\n");
     expect(revTwoCaption).toBe("두 번째 draft 감정 기록.\n\n#Uncommitted #개발일기\n");
@@ -351,6 +382,7 @@ describe("generate command", () => {
 
 class TaskAwareProvider implements AiProvider {
   readonly name = "mock";
+  readonly model?: string;
   readonly requests: AiStructuredGenerationRequest[] = [];
 
   constructor(
@@ -358,8 +390,11 @@ class TaskAwareProvider implements AiProvider {
       plan?: StoryFormatPlan;
       draft?: ReturnType<typeof createProviderDraft>;
       failDraft?: boolean;
+      model?: string;
     } = {}
-  ) {}
+  ) {
+    this.model = options.model ?? "fixture-model";
+  }
 
   async generateStructured(
     request: AiStructuredGenerationRequest

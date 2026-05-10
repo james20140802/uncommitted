@@ -182,6 +182,21 @@ describe("draft storage", () => {
     });
   });
 
+  it("fails with an actionable error when JSON artifact content is invalid", async () => {
+    const draftRoot = await createDraftRoot();
+    const revision = await createDraftRevision({
+      draftRoot,
+      targetDate: "2026-05-20"
+    });
+
+    await expect(
+      writeDraftArtifactJson(revision, "metadata.json", undefined)
+    ).rejects.toMatchObject({
+      code: "invalid-json",
+      message: "Draft artifact JSON is invalid."
+    });
+  });
+
   it("returns a short error for unusable draft roots", async () => {
     const directory = await createDraftRoot();
     const draftRoot = join(directory, "draft-root-file");
