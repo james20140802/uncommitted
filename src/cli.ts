@@ -22,6 +22,7 @@ import {
   recordManualNote
 } from "./note-command.js";
 import { addProject, ProjectAddError } from "./project-add.js";
+import type { ImageAssetProvider } from "./visual-assets.js";
 
 export type CliIo = {
   stdout: (message: string) => void;
@@ -33,6 +34,7 @@ export type CliOptions = {
   homeDir?: string;
   now?: () => string;
   aiProvider?: AiProvider;
+  imageAssetProvider?: ImageAssetProvider;
 };
 
 const defaultIo: CliIo = {
@@ -142,6 +144,10 @@ async function runGenerate(
 
       if (error.code === "safety-blocked") {
         return 6;
+      }
+
+      if (error.code === "visual-generation-failed") {
+        return 5;
       }
 
       return 2;

@@ -14,6 +14,7 @@ import type { GitActivityEvent } from "../src/collect-git-command.js";
 import type { DiaryDraft } from "../src/diary-generator.js";
 import { addProject, type ProjectRecord } from "../src/project-add.js";
 import type { StoryFormatPlan } from "../src/story-format-plan.js";
+import type { ImageAssetProvider } from "../src/visual-assets.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -51,6 +52,7 @@ describe("generate command", () => {
     const caption = await readFile(join(outputDir, "caption.txt"), "utf8");
     const metadata = await readJson(join(outputDir, "metadata.json"));
     const safetyReport = await readJson(join(outputDir, "safety-report.json"));
+    const visualAsset = await readFile(join(outputDir, "visuals", "01.png"));
 
     expect(exitCode).toBe(0);
     expect(stderr).toEqual([]);
@@ -112,9 +114,43 @@ describe("generate command", () => {
         "story.json",
         "caption.txt",
         "metadata.json",
-        "safety-report.json"
+        "safety-report.json",
+        "visuals/01.png",
+        "visuals/02.png",
+        "visuals/03.png"
+      ],
+      visualAssets: [
+        {
+          schemaVersion: 1,
+          slideIndex: 1,
+          assetSlotId: "slide-01-visual",
+          provider: "mock",
+          filePath: join(outputDir, "visuals", "01.png"),
+          fallbackState: "provider-unsupported",
+          promptSummary: "compact terminal summary"
+        },
+        {
+          slideIndex: 2,
+          assetSlotId: "slide-02-visual",
+          fallbackState: "provider-unsupported"
+        },
+        {
+          slideIndex: 3,
+          assetSlotId: "slide-03-visual",
+          fallbackState: "provider-unsupported"
+        }
       ]
     });
+    expect([...visualAsset.subarray(0, 8)]).toEqual([
+      0x89,
+      0x50,
+      0x4e,
+      0x47,
+      0x0d,
+      0x0a,
+      0x1a,
+      0x0a
+    ]);
     expect(safetyReport).toMatchObject({
       schemaVersion: 1,
       status: "safe",
@@ -444,6 +480,42 @@ describe("generate command", () => {
     });
   });
 
+  it("returns a visual-generation error while preserving text draft artifacts", async () => {
+    const { io, stdout, stderr } = createIo();
+    const fixture = await createRegisteredProjectFixture();
+
+    await writeGitEvent(fixture.project, "2026-05-12");
+
+    const exitCode = await runCli(["generate", "today"], io, {
+      homeDir: fixture.homeDir,
+      now: () => "2026-05-12T23:30:00.000Z",
+      aiProvider: new TaskAwareProvider(),
+      imageAssetProvider: new FailingImageAssetProvider()
+    });
+    const outputDir = join(fixture.draftRoot, "2026-05-12", "rev-001");
+
+    expect(exitCode).toBe(5);
+    expect(stdout).toEqual([]);
+    expect(stderr).toEqual([
+      "Visual generation failed. Check image provider configuration."
+    ]);
+    await expect(readJson(join(outputDir, "activity-summary.json"))).resolves.toMatchObject({
+      targetDate: "2026-05-12"
+    });
+    await expect(readJson(join(outputDir, "story.json"))).resolves.toMatchObject({
+      title: "Generate Command Day"
+    });
+    await expect(readFile(join(outputDir, "caption.txt"), "utf8")).resolves.toContain(
+      "오늘은 generate command를 텍스트 draft까지 연결했다."
+    );
+    await expect(readJson(join(outputDir, "safety-report.json"))).resolves.toMatchObject({
+      status: "safe"
+    });
+    await expect(readFile(join(outputDir, "metadata.json"), "utf8")).rejects.toMatchObject({
+      code: "ENOENT"
+    });
+  });
+
   it("returns collection exit code for malformed stored Git activity", async () => {
     const { io, stdout, stderr } = createIo();
     const fixture = await createRegisteredProjectFixture();
@@ -524,6 +596,14 @@ class TaskAwareProvider implements AiProvider {
     }
 
     throw new Error(`Unexpected task: ${request.task}`);
+  }
+}
+
+class FailingImageAssetProvider implements ImageAssetProvider {
+  readonly name = "fixture-image";
+
+  async generateImageAsset(): Promise<never> {
+    throw new Error("image provider unavailable");
   }
 }
 

@@ -138,6 +138,7 @@ export {
   createDraftRevision,
   DraftStorageError,
   readLatestDraftPointer,
+  writeDraftArtifactBinary,
   writeDraftArtifactJson,
   writeDraftArtifactText,
   writeLatestDraftPointer,
@@ -150,6 +151,22 @@ export type {
   TextDraftRevisionInput,
   TextDraftWriteResult
 } from "./draft-storage.js";
+export {
+  createImageAssetProvider,
+  generateCarouselVisualAssets,
+  VisualAssetGenerationError
+} from "./visual-assets.js";
+export type {
+  CreateImageAssetProviderOptions,
+  GenerateCarouselVisualAssetsOptions,
+  ImageAssetProvider,
+  ImageAssetProviderResult,
+  ImageAssetRequest,
+  VisualAssetFallbackState,
+  VisualAssetGenerationErrorCode,
+  VisualAssetGenerationResult,
+  VisualAssetMetadata
+} from "./visual-assets.js";
 export { runInitCommand } from "./init-command.js";
 export type {
   InitAnswers,

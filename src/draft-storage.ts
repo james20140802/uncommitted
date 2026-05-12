@@ -1,5 +1,5 @@
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 export type DraftStorageErrorCode =
   | "inspect-failed"
@@ -136,6 +136,21 @@ export async function writeDraftArtifactText(
 ): Promise<void> {
   try {
     await writeFile(join(revision.outputDir, filename), value, "utf8");
+  } catch {
+    throw new DraftStorageError("Could not write draft files.", "write-failed");
+  }
+}
+
+export async function writeDraftArtifactBinary(
+  revision: DraftRevision,
+  filename: string,
+  value: Uint8Array
+): Promise<void> {
+  const path = join(revision.outputDir, filename);
+
+  try {
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, value);
   } catch {
     throw new DraftStorageError("Could not write draft files.", "write-failed");
   }

@@ -10,6 +10,7 @@ import {
   type AiProviderConfig,
   type AiProviderName
 } from "./ai-provider.js";
+import { createCarouselHtmlCards } from "./carousel-renderer.js";
 import type { GitActivityEvent } from "./collect-git-command.js";
 import { resolveConfigPaths } from "./config-paths.js";
 import {
@@ -37,13 +38,22 @@ import {
   recordStoryFormatHistory,
   type StoryFormatPlan
 } from "./story-format-plan.js";
+import {
+  createImageAssetProvider,
+  generateCarouselVisualAssets,
+  type ImageAssetProvider,
+  VisualAssetGenerationError,
+  type VisualAssetGenerationResult,
+  type VisualAssetMetadata
+} from "./visual-assets.js";
 
 export type GenerateCommandErrorCode =
   | "invalid-arguments"
   | "invalid-config"
   | "invalid-data"
   | "no-projects"
-  | "safety-blocked";
+  | "safety-blocked"
+  | "visual-generation-failed";
 
 export class GenerateCommandError extends Error {
   constructor(
@@ -60,6 +70,7 @@ export type GenerateCommandOptions = {
   homeDir?: string;
   now?: () => string;
   aiProvider?: AiProvider;
+  imageAssetProvider?: ImageAssetProvider;
 };
 
 export type GenerateCommandResult = {
@@ -72,6 +83,7 @@ export type GenerateCommandResult = {
   draft: DiaryDraft;
   caption: string;
   safetyReport: SafetyReport;
+  visualAssets: VisualAssetGenerationResult;
   exportPolicy: SafetyStatus;
   exportReady: boolean;
 };
@@ -120,6 +132,7 @@ type DraftMetadata = DraftMetadataBase & {
   exportPolicy: SafetyStatus;
   exportReady: boolean;
   publishable: boolean;
+  visualAssets: VisualAssetMetadata[];
   safety: {
     status: SafetyStatus;
     message: string;
@@ -147,6 +160,13 @@ const dirtyStatuses = new Set([
   "untracked",
   "other"
 ]);
+const baseDraftFiles = [
+  "activity-summary.json",
+  "story.json",
+  "caption.txt",
+  "metadata.json",
+  "safety-report.json"
+];
 
 export async function runGenerateCommand(
   args: string[],
@@ -186,6 +206,10 @@ export async function runGenerateCommand(
   );
 
   const provider = options.aiProvider ?? createAiProvider(config);
+  const imageAssetProvider = await runVisualAssetGeneration(
+    async () => options.imageAssetProvider ?? createImageAssetProvider(config),
+    draftRevision.outputDir
+  );
   const recentFormats = await loadRecentStoryFormatHistory({
     homeDir: options.homeDir
   });
@@ -229,48 +253,64 @@ export async function runGenerateCommand(
     status: "draft",
     exported: false,
     published: false,
-    files: [
-      "activity-summary.json",
-      "story.json",
-      "caption.txt",
-      "metadata.json",
-      "safety-report.json"
-    ]
+    files: [...baseDraftFiles]
   };
   const safetyReport = createSafetyReport(
     buildDraftSafetyText({ draft, caption, metadata: baseMetadata })
   );
-  const metadata: DraftMetadata = {
-    ...baseMetadata,
-    exportPolicy: safetyReport.status,
-    exportReady: safetyReport.exportAllowed,
-    publishable: safetyReport.exportAllowed,
-    safety: {
-      status: safetyReport.status,
-      message: safetyReport.message,
-      riskCount: safetyReport.risks.length
+  const safetyMetadata = buildDraftMetadata({
+    baseMetadata,
+    safetyReport,
+    visualAssets: {
+      schemaVersion: 1,
+      files: [],
+      assets: []
     }
-  };
+  });
 
   await runDraftStorageOperation(async () => {
     await writeDraftArtifactJson(draftRevision, "story.json", draft);
     await writeDraftArtifactText(draftRevision, "caption.txt", caption);
-    await writeDraftArtifactJson(draftRevision, "metadata.json", metadata);
     await writeDraftArtifactJson(
       draftRevision,
       "safety-report.json",
       safetyReport
     );
-    await writeLatestDraftPointer(draftRevision, generatedAt);
   });
 
   if (safetyReport.status === "blocked") {
+    await runDraftStorageOperation(async () => {
+      await writeDraftArtifactJson(draftRevision, "metadata.json", safetyMetadata);
+      await writeLatestDraftPointer(draftRevision, generatedAt);
+    });
+
     throw new GenerateCommandError(
       `Draft blocked by safety checks. ${safetyReport.message}`,
       "safety-blocked",
       draftRevision.outputDir
     );
   }
+
+  const visualAssets = await runVisualAssetGeneration(
+    () =>
+      generateCarouselVisualAssets({
+        revision: draftRevision,
+        cards: createCarouselHtmlCards(draft),
+        provider: imageAssetProvider,
+        fallbackProviderName: config.provider
+      }),
+    draftRevision.outputDir
+  );
+  const metadata = buildDraftMetadata({
+    baseMetadata,
+    safetyReport,
+    visualAssets
+  });
+
+  await runDraftStorageOperation(async () => {
+    await writeDraftArtifactJson(draftRevision, "metadata.json", metadata);
+    await writeLatestDraftPointer(draftRevision, generatedAt);
+  });
 
   await recordStoryFormatHistory({
     homeDir: options.homeDir,
@@ -288,8 +328,29 @@ export async function runGenerateCommand(
     draft,
     caption,
     safetyReport,
+    visualAssets,
     exportPolicy: safetyReport.status,
     exportReady: safetyReport.exportAllowed
+  };
+}
+
+function buildDraftMetadata(options: {
+  baseMetadata: DraftMetadataBase;
+  safetyReport: SafetyReport;
+  visualAssets: VisualAssetGenerationResult;
+}): DraftMetadata {
+  return {
+    ...options.baseMetadata,
+    files: [...baseDraftFiles, ...options.visualAssets.files],
+    exportPolicy: options.safetyReport.status,
+    exportReady: options.safetyReport.exportAllowed,
+    publishable: options.safetyReport.exportAllowed,
+    visualAssets: options.visualAssets.assets,
+    safety: {
+      status: options.safetyReport.status,
+      message: options.safetyReport.message,
+      riskCount: options.safetyReport.risks.length
+    }
   };
 }
 
@@ -313,6 +374,25 @@ async function runDraftStorageOperation<T>(
   } catch (error) {
     if (error instanceof DraftStorageError) {
       throw new GenerateCommandError(error.message, "invalid-config");
+    }
+
+    throw error;
+  }
+}
+
+async function runVisualAssetGeneration<T>(
+  operation: () => Promise<T>,
+  outputDir: string
+): Promise<T> {
+  try {
+    return await operation();
+  } catch (error) {
+    if (error instanceof VisualAssetGenerationError) {
+      throw new GenerateCommandError(
+        error.message,
+        "visual-generation-failed",
+        outputDir
+      );
     }
 
     throw error;
