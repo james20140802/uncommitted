@@ -128,7 +128,7 @@ describe("visual asset generation", () => {
         slideIndex: 1,
         assetSlotId: "slide-01-visual",
         provider: "mock",
-        filePath: join(revision.outputDir, "visuals", "01.png"),
+        filePath: "visuals/01.png",
         fallbackState: "provider-unsupported"
       },
       {

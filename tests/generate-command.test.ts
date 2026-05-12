@@ -125,7 +125,7 @@ describe("generate command", () => {
           slideIndex: 1,
           assetSlotId: "slide-01-visual",
           provider: "mock",
-          filePath: join(outputDir, "visuals", "01.png"),
+          filePath: "visuals/01.png",
           fallbackState: "provider-unsupported",
           promptSummary: "compact terminal summary"
         },

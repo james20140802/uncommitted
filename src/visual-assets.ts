@@ -1,4 +1,3 @@
-import { join } from "node:path";
 import process from "node:process";
 import type {
   AiProviderConfig,
@@ -155,7 +154,7 @@ export async function generateCarouselVisualAssets(
       assetSlotId: card.visualTreatment.assetSlotId,
       promptSummary: request.promptSummary,
       provider: provider?.name ?? options.fallbackProviderName,
-      filePath: join(options.revision.outputDir, fileName),
+      filePath: fileName,
       fallbackState: provider
         ? "none"
         : deriveFallbackState(options.fallbackProviderName)
