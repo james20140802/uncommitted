@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { isAbsolute, join, normalize } from "node:path";
+import { isAbsolute, normalize, relative, resolve, sep, win32 } from "node:path";
 import { chromium, type Browser } from "playwright";
 import type { DiarySlide } from "./diary-generator.js";
 import {
@@ -269,9 +269,9 @@ async function composeCardHtml(options: {
   }
 
   const image = await readFile(
-    join(
+    resolveDraftArtifactPath(
       options.revision.outputDir,
-      normalizeDraftArtifactPath(options.visualAsset.filePath)
+      options.visualAsset.filePath
     )
   );
   const dataUri = `data:image/png;base64,${image.toString("base64")}`;
@@ -319,14 +319,20 @@ function findVisualAsset(
   );
 }
 
-function normalizeDraftArtifactPath(filePath: string): string {
-  const normalized = normalize(filePath);
+function resolveDraftArtifactPath(outputDir: string, filePath: string): string {
+  const root = resolve(outputDir);
+  const separatorNormalized = filePath.replace(/\\/g, "/");
+  const normalized = normalize(separatorNormalized);
+  const resolved = resolve(root, normalized);
+  const relativePath = relative(root, resolved);
 
   if (
+    filePath.trim().length === 0 ||
     isAbsolute(normalized) ||
-    normalized === ".." ||
-    normalized.startsWith(`..${"/"}`) ||
-    normalized.includes(`${"/"}..${"/"}`)
+    win32.isAbsolute(filePath) ||
+    relativePath === ".." ||
+    relativePath.startsWith(`..${sep}`) ||
+    isAbsolute(relativePath)
   ) {
     throw new CarouselPngRenderError(
       "Could not render carousel PNGs.",
@@ -334,7 +340,7 @@ function normalizeDraftArtifactPath(filePath: string): string {
     );
   }
 
-  return normalized;
+  return resolved;
 }
 
 function assertPng(value: Uint8Array): void {

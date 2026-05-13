@@ -213,6 +213,35 @@ describe("carousel renderer", () => {
       )
     );
   });
+
+  it("rejects backslash traversal in visual asset paths", async () => {
+    const revision = await createTestRevision();
+    const cards = createCarouselHtmlCards(createStoryDraft());
+    const renderer = new RecordingPngRenderer();
+
+    await writeFile(join(revision.outputDir, "..\\secret.png"), fixturePng);
+
+    await expect(
+      renderCarouselPngs({
+        revision,
+        cards: [cards[0]],
+        visualAssets: [
+          {
+            slideIndex: 1,
+            assetSlotId: "slide-01-visual",
+            filePath: "..\\secret.png"
+          }
+        ],
+        renderer
+      })
+    ).rejects.toEqual(
+      new CarouselPngRenderError(
+        "Could not render carousel PNGs.",
+        "render-failed"
+      )
+    );
+    expect(renderer.calls).toHaveLength(0);
+  });
 });
 
 const fixturePng = Buffer.from(
