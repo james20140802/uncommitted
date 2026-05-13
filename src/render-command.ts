@@ -21,7 +21,8 @@ import {
 export type RenderCommandErrorCode =
   | "invalid-arguments"
   | "invalid-config"
-  | "render-failed";
+  | "render-failed"
+  | "safety-blocked";
 
 export class RenderCommandError extends Error {
   constructor(
@@ -204,7 +205,7 @@ function assertDraftIsRenderable(metadata: Record<string, unknown>): void {
   ) {
     throw new RenderCommandError(
       "Draft is blocked by safety checks. Regenerate or edit before rendering.",
-      "render-failed"
+      "safety-blocked"
     );
   }
 }

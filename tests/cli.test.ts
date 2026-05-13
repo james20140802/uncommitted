@@ -401,6 +401,35 @@ describe("cli", () => {
     ).resolves.toContain("\"slides\": []");
   });
 
+  it("returns safety-blocked exit code for blocked latest drafts", async () => {
+    const { io, stdout, stderr } = createIo();
+    const fixture = await createLatestDraftFixture({
+      metadata: {
+        ...createDraftMetadata(),
+        exportPolicy: "blocked",
+        safety: {
+          status: "blocked",
+          message: "Safety blocked.",
+          riskCount: 1
+        }
+      }
+    });
+
+    const exitCode = await runCli(["render", "latest"], io, {
+      homeDir: fixture.homeDir,
+      carouselRenderer: new RecordingPngRenderer()
+    });
+
+    expect(exitCode).toBe(6);
+    expect(stdout).toEqual([]);
+    expect(stderr).toEqual([
+      "Draft is blocked by safety checks. Regenerate or edit before rendering."
+    ]);
+    await expect(
+      access(join(fixture.revision.outputDir, "carousel", "01.png"))
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("returns a rendering error for missing declared visual asset files", async () => {
     const { io, stdout, stderr } = createIo();
     const fixture = await createLatestDraftFixture({ writeVisualAsset: false });

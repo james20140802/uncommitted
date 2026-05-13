@@ -153,6 +153,10 @@ async function runRender(
         return 2;
       }
 
+      if (error.code === "safety-blocked") {
+        return 6;
+      }
+
       return 5;
     }
 
