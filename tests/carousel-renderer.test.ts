@@ -500,7 +500,7 @@ class FailingPngRenderer {
 }
 
 function extractLayoutFit(html: string): string | undefined {
-  return /data-layout-fit="([^"]+)"/.exec(html)?.[1];
+  return /<article\b[^>]*\sdata-layout-fit="([^"]+)"/.exec(html)?.[1];
 }
 
 async function createTestRevision() {
