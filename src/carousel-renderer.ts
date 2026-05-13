@@ -24,7 +24,8 @@ export class CarouselRenderInputError extends Error {
 export class CarouselPngRenderError extends Error {
   constructor(
     message: string,
-    public readonly code: CarouselPngRenderErrorCode
+    public readonly code: CarouselPngRenderErrorCode,
+    public readonly partialResult?: CarouselPngRenderResult
   ) {
     super(message);
     this.name = "CarouselPngRenderError";
@@ -79,10 +80,22 @@ export type CarouselPngMetadata = {
   visualAssetPath?: string;
 };
 
+export type CarouselPngRenderFailure = {
+  schemaVersion: 1;
+  slideIndex: number;
+  assetSlotId: string;
+  sourceHtmlFileName: string;
+  filePath: string;
+  code: CarouselPngRenderErrorCode;
+  message: string;
+};
+
 export type CarouselPngRenderResult = {
   schemaVersion: 1;
+  status: "rendered" | "failed";
   files: string[];
   images: CarouselPngMetadata[];
+  failures?: CarouselPngRenderFailure[];
 };
 
 export type RenderCarouselPngsOptions = {
@@ -97,6 +110,9 @@ const invalidStoryMessage =
 const carouselWidth = 1080;
 const carouselHeight = 1350;
 const pngSignature = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+const renderFailureMessage = "Could not render carousel PNGs.";
+const layoutFits = ["base", "tight", "compact"] as const;
+type CarouselLayoutFit = (typeof layoutFits)[number];
 
 export function parseCarouselRenderInput(value: unknown): CarouselRenderInput {
   if (!isRecord(value)) {
@@ -156,26 +172,64 @@ export async function renderCarouselPngs(
   const shouldCloseRenderer = options.renderer === undefined;
   const files: string[] = [];
   const images: CarouselPngMetadata[] = [];
+  const failures: CarouselPngRenderFailure[] = [];
 
   try {
     for (const [index, card] of options.cards.entries()) {
       const visualAsset = findVisualAsset(card, options.visualAssets ?? []);
-      const html = await composeCardHtml({
-        revision: options.revision,
-        card,
-        visualAsset
-      });
-      const png = await renderer.renderHtmlToPng({
-        html,
-        width: carouselWidth,
-        height: carouselHeight
-      });
-
-      assertPng(png);
-
       const filePath = `carousel/${String(index + 1).padStart(2, "0")}.png`;
+      let png: Uint8Array;
 
-      await writeDraftArtifactBinary(options.revision, filePath, png);
+      try {
+        png = await renderCardWithLayoutFallbacks({
+          revision: options.revision,
+          card,
+          visualAsset,
+          renderer
+        });
+      } catch (error) {
+        const renderError = toCarouselPngRenderError(error, "render-failed");
+
+        failures.push({
+          schemaVersion: 1,
+          slideIndex: card.slideIndex,
+          assetSlotId: card.visualTreatment.assetSlotId,
+          sourceHtmlFileName: card.fileName,
+          filePath,
+          code: renderError.code,
+          message: renderError.message
+        });
+
+        throw withPartialRenderResult(renderError, {
+          status: "failed",
+          files,
+          images,
+          failures
+        });
+      }
+
+      try {
+        await writeDraftArtifactBinary(options.revision, filePath, png);
+      } catch (error) {
+        const renderError = toCarouselPngRenderError(error, "write-failed");
+
+        failures.push({
+          schemaVersion: 1,
+          slideIndex: card.slideIndex,
+          assetSlotId: card.visualTreatment.assetSlotId,
+          sourceHtmlFileName: card.fileName,
+          filePath,
+          code: renderError.code,
+          message: renderError.message
+        });
+
+        throw withPartialRenderResult(renderError, {
+          status: "failed",
+          files,
+          images,
+          failures
+        });
+      }
 
       files.push(filePath);
       images.push({
@@ -192,13 +246,15 @@ export async function renderCarouselPngs(
       throw error;
     }
 
-    if (error instanceof DraftStorageError) {
-      throw new CarouselPngRenderError(error.message, "write-failed");
-    }
-
     throw new CarouselPngRenderError(
-      "Could not render carousel PNGs.",
-      "render-failed"
+      renderFailureMessage,
+      "render-failed",
+      buildCarouselPngRenderResult({
+        status: "failed",
+        files,
+        images,
+        failures
+      })
     );
   } finally {
     if (shouldCloseRenderer) {
@@ -208,9 +264,50 @@ export async function renderCarouselPngs(
 
   return {
     schemaVersion: 1,
+    status: "rendered",
     files,
     images
   };
+}
+
+async function renderCardWithLayoutFallbacks(options: {
+  revision: DraftRevision;
+  card: CarouselHtmlCard;
+  visualAsset?: CarouselPngVisualAsset;
+  renderer: CarouselHtmlToPngRenderer;
+}): Promise<Uint8Array> {
+  const composedHtml = await composeCardHtml({
+    revision: options.revision,
+    card: options.card,
+    visualAsset: options.visualAsset
+  });
+  let lastLayoutError: CarouselPngRenderError | undefined;
+
+  for (const layoutFit of layoutFits) {
+    try {
+      const png = await options.renderer.renderHtmlToPng({
+        html: applyLayoutFit(composedHtml, layoutFit),
+        width: carouselWidth,
+        height: carouselHeight
+      });
+
+      assertPng(png);
+
+      return png;
+    } catch (error) {
+      if (error instanceof CarouselPngRenderError && error.code === "render-failed") {
+        lastLayoutError = error;
+        continue;
+      }
+
+      throw error;
+    }
+  }
+
+  throw (
+    lastLayoutError ??
+    new CarouselPngRenderError(renderFailureMessage, "render-failed")
+  );
 }
 
 class PlaywrightCarouselPngRenderer implements CarouselHtmlToPngRenderer {
@@ -232,6 +329,14 @@ class PlaywrightCarouselPngRenderer implements CarouselHtmlToPngRenderer {
 
     try {
       await page.setContent(options.html, { waitUntil: "load" });
+      const validation = await page.evaluate(validateRenderedCard);
+
+      if (!validation.ok) {
+        throw new CarouselPngRenderError(
+          renderFailureMessage,
+          "render-failed"
+        );
+      }
 
       return await page.screenshot({
         type: "png",
@@ -259,6 +364,65 @@ class PlaywrightCarouselPngRenderer implements CarouselHtmlToPngRenderer {
   }
 }
 
+function validateRenderedCard(): { ok: true } | { ok: false } {
+  function overflowsOwnBox(element: HTMLElement): boolean {
+    return (
+      element.scrollHeight > element.clientHeight + 16 ||
+      element.scrollWidth > element.clientWidth + 16
+    );
+  }
+
+  function overflowsCard(cardRect: DOMRect, childRect: DOMRect): boolean {
+    return (
+      childRect.top < cardRect.top - 2 ||
+      childRect.left < cardRect.left - 2 ||
+      childRect.right > cardRect.right + 2 ||
+      childRect.bottom > cardRect.bottom + 2
+    );
+  }
+
+  const card = document.querySelector<HTMLElement>(".card");
+  const visualStage = document.querySelector<HTMLElement>(".visual-stage");
+  const content = document.querySelector<HTMLElement>(".content");
+  const footer = document.querySelector<HTMLElement>(".footer");
+  const title = document.querySelector<HTMLElement>("h1");
+  const body = document.querySelector<HTMLElement>(".body");
+  const visualImage = document.querySelector<HTMLImageElement>(".visual-asset");
+
+  if (!card || !visualStage || !content || !footer || !title || !body) {
+    return { ok: false };
+  }
+
+  const cardRect = card.getBoundingClientRect();
+  const visualRect = visualStage.getBoundingClientRect();
+  const contentRect = content.getBoundingClientRect();
+  const footerRect = footer.getBoundingClientRect();
+
+  if (
+    overflowsOwnBox(card) ||
+    overflowsOwnBox(title) ||
+    overflowsOwnBox(body) ||
+    overflowsCard(cardRect, visualRect) ||
+    overflowsCard(cardRect, contentRect) ||
+    overflowsCard(cardRect, footerRect) ||
+    visualRect.bottom > contentRect.top - 16 ||
+    contentRect.bottom > footerRect.top - 16
+  ) {
+    return { ok: false };
+  }
+
+  if (
+    visualImage &&
+    (!visualImage.complete ||
+      visualImage.naturalWidth < 1 ||
+      visualImage.naturalHeight < 1)
+  ) {
+    return { ok: false };
+  }
+
+  return { ok: true };
+}
+
 async function composeCardHtml(options: {
   revision: DraftRevision;
   card: CarouselHtmlCard;
@@ -274,6 +438,9 @@ async function composeCardHtml(options: {
       options.visualAsset.filePath
     )
   );
+
+  assertPng(image);
+
   const dataUri = `data:image/png;base64,${image.toString("base64")}`;
   const visualAssetCss = `
     .visual-stage.has-visual-asset {
@@ -306,6 +473,13 @@ async function composeCardHtml(options: {
       '<div class="visual-placeholder">',
       `${imgHtml}\n      <div class="visual-placeholder">`
     );
+}
+
+function applyLayoutFit(html: string, layoutFit: CarouselLayoutFit): string {
+  return html.replace(
+    /data-layout-fit="[^"]+"/,
+    `data-layout-fit="${layoutFit}"`
+  );
 }
 
 function findVisualAsset(
@@ -350,10 +524,48 @@ function assertPng(value: Uint8Array): void {
 
   if (!hasPngSignature) {
     throw new CarouselPngRenderError(
-      "Could not render carousel PNGs.",
+      renderFailureMessage,
       "render-failed"
     );
   }
+}
+
+function toCarouselPngRenderError(
+  error: unknown,
+  draftStorageCode: CarouselPngRenderErrorCode
+): CarouselPngRenderError {
+  if (error instanceof CarouselPngRenderError) {
+    return error;
+  }
+
+  if (error instanceof DraftStorageError) {
+    return new CarouselPngRenderError(error.message, draftStorageCode);
+  }
+
+  return new CarouselPngRenderError(renderFailureMessage, "render-failed");
+}
+
+function withPartialRenderResult(
+  error: CarouselPngRenderError,
+  result: Omit<CarouselPngRenderResult, "schemaVersion">
+): CarouselPngRenderError {
+  return new CarouselPngRenderError(
+    error.message,
+    error.code,
+    buildCarouselPngRenderResult(result)
+  );
+}
+
+function buildCarouselPngRenderResult(
+  result: Omit<CarouselPngRenderResult, "schemaVersion">
+): CarouselPngRenderResult {
+  return {
+    schemaVersion: 1,
+    status: result.status,
+    files: [...result.files],
+    images: [...result.images],
+    ...(result.failures ? { failures: [...result.failures] } : {})
+  };
 }
 
 function parseDiarySlide(value: unknown, index: number): DiarySlide {
@@ -523,6 +735,67 @@ function renderCardHtml(options: {
       overflow-wrap: anywhere;
     }
 
+    .card[data-layout-fit="tight"] {
+      padding: 78px 78px 66px;
+    }
+
+    .card[data-layout-fit="tight"] .visual-stage {
+      min-height: 610px;
+      margin: 44px 0 34px;
+    }
+
+    .card[data-layout-fit="tight"] .content {
+      gap: 38px;
+      margin-bottom: 34px;
+    }
+
+    .card[data-layout-fit="tight"] h1 {
+      font-size: 78px;
+      line-height: 0.96;
+    }
+
+    .card[data-layout-fit="tight"] .body {
+      font-size: 42px;
+      line-height: 1.14;
+    }
+
+    .card[data-layout-fit="compact"] {
+      padding: 66px 72px 58px;
+    }
+
+    .card[data-layout-fit="compact"] .topline,
+    .card[data-layout-fit="compact"] .footer {
+      font-size: 28px;
+    }
+
+    .card[data-layout-fit="compact"] .visual-stage {
+      min-height: 520px;
+      margin: 34px 0 28px;
+    }
+
+    .card[data-layout-fit="compact"] .visual-placeholder {
+      left: 56px;
+      right: 56px;
+      bottom: 46px;
+      font-size: 26px;
+      line-height: 1.16;
+    }
+
+    .card[data-layout-fit="compact"] .content {
+      gap: 28px;
+      margin-bottom: 30px;
+    }
+
+    .card[data-layout-fit="compact"] h1 {
+      font-size: 64px;
+      line-height: 0.94;
+    }
+
+    .card[data-layout-fit="compact"] .body {
+      font-size: 34px;
+      line-height: 1.1;
+    }
+
     .mark {
       font-size: 34px;
       font-weight: 800;
@@ -533,7 +806,7 @@ function renderCardHtml(options: {
 <body>
   <article class="card" aria-label="Uncommitted carousel card ${escapeHtml(
     pageIndicator
-  )}">
+  )}" data-layout-fit="base">
     <header class="topline">
       <div class="project-marker">${projectMarker}</div>
       <time datetime="${targetDate}">${targetDate}</time>

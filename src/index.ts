@@ -26,6 +26,7 @@ export {
 export type {
   CarouselHtmlToPngRenderer,
   CarouselHtmlCard,
+  CarouselPngRenderFailure,
   CarouselPngMetadata,
   CarouselPngRenderErrorCode,
   CarouselPngRenderResult,

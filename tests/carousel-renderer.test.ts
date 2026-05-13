@@ -196,6 +196,94 @@ describe("carousel renderer", () => {
     );
   });
 
+  it("fits long but reasonable slide text with deterministic layout fallbacks", async () => {
+    const revision = await createTestRevision();
+    const cards = createCarouselHtmlCards(
+      createStoryDraft({
+        slides: [
+          {
+            index: 1,
+            title: "Long But Reasonable Render Update",
+            body: [
+              "The renderer keeps a busy workday readable without asking AI to rewrite the slide.",
+              "It tightens line-height first, reduces type next, and only accepts the card when the screenshot pass says the layout still fits."
+            ].join(" "),
+            visualMood: "compact terminal summary"
+          }
+        ],
+        metadata: {
+          targetDate: "2026-05-18",
+          generatedAt: "2026-05-18T23:30:00.000Z",
+          activityLevel: "medium",
+          formatName: "Bug Court Transcript",
+          storyFormatVoice: "tired QA narrator",
+          storyFormatTone: "deadpan",
+          projectIds: ["uncommitted"],
+          entryMode: "daily_global",
+          slideCount: 1
+        }
+      })
+    );
+    const renderer = new LayoutFittingRenderer("compact");
+
+    const result = await renderCarouselPngs({
+      revision,
+      cards,
+      renderer
+    });
+
+    expect(result.status).toBe("rendered");
+    expect(result.files).toEqual(["carousel/01.png"]);
+    expect(renderer.calls.map((call) => extractLayoutFit(call.html))).toEqual([
+      "base",
+      "tight",
+      "compact"
+    ]);
+  });
+
+  it("rejects invalid declared visual assets before screenshot rendering", async () => {
+    const revision = await createTestRevision();
+    const cards = createCarouselHtmlCards(createStoryDraft());
+    const renderer = new RecordingPngRenderer();
+
+    await mkdir(join(revision.outputDir, "visuals"), { recursive: true });
+    await writeFile(join(revision.outputDir, "visuals", "01.png"), "not a png");
+
+    await expect(
+      renderCarouselPngs({
+        revision,
+        cards: [cards[0]],
+        visualAssets: [
+          {
+            slideIndex: 1,
+            assetSlotId: "slide-01-visual",
+            filePath: "visuals/01.png"
+          }
+        ],
+        renderer
+      })
+    ).rejects.toMatchObject({
+      message: "Could not render carousel PNGs.",
+      code: "render-failed",
+      partialResult: {
+        status: "failed",
+        files: [],
+        images: [],
+        failures: [
+          {
+            slideIndex: 1,
+            assetSlotId: "slide-01-visual",
+            sourceHtmlFileName: "01.html",
+            filePath: "carousel/01.png",
+            code: "render-failed",
+            message: "Could not render carousel PNGs."
+          }
+        ]
+      }
+    });
+    expect(renderer.calls).toHaveLength(0);
+  });
+
   it("surfaces screenshot failures as carousel PNG render errors", async () => {
     const revision = await createTestRevision();
     const cards = createCarouselHtmlCards(createStoryDraft());
@@ -206,11 +294,104 @@ describe("carousel renderer", () => {
         cards,
         renderer: new FailingPngRenderer()
       })
-    ).rejects.toEqual(
-      new CarouselPngRenderError(
-        "Could not render carousel PNGs.",
-        "render-failed"
-      )
+    ).rejects.toMatchObject({
+      message: "Could not render carousel PNGs.",
+      code: "render-failed",
+      partialResult: {
+        schemaVersion: 1,
+        status: "failed",
+        files: [],
+        images: [],
+        failures: [
+          {
+            slideIndex: 1,
+            assetSlotId: "slide-01-visual",
+            sourceHtmlFileName: "01.html",
+            filePath: "carousel/01.png",
+            code: "render-failed",
+            message: "Could not render carousel PNGs."
+          }
+        ]
+      }
+    });
+  });
+
+  it("fails severely overflowing slides with partial output details", async () => {
+    const revision = await createTestRevision();
+    const cards = createCarouselHtmlCards(
+      createStoryDraft({
+        slides: [
+          {
+            index: 1,
+            title: "First",
+            body: "This card renders before the later overflow failure.",
+            visualMood: "small card"
+          },
+          {
+            index: 2,
+            title: "Overflow",
+            body: "This body is intentionally too large to fit. ".repeat(80),
+            visualMood: "crowded wall"
+          }
+        ],
+        metadata: {
+          targetDate: "2026-05-18",
+          generatedAt: "2026-05-18T23:30:00.000Z",
+          activityLevel: "medium",
+          formatName: "Bug Court Transcript",
+          storyFormatVoice: "tired QA narrator",
+          storyFormatTone: "deadpan",
+          projectIds: ["uncommitted"],
+          entryMode: "daily_global",
+          slideCount: 2
+        }
+      })
+    );
+    const renderer = new SecondCardOverflowRenderer();
+
+    await writeDraftTextFixtures(revision.outputDir);
+
+    await expect(
+      renderCarouselPngs({
+        revision,
+        cards,
+        renderer
+      })
+    ).rejects.toMatchObject({
+      message: "Could not render carousel PNGs.",
+      code: "render-failed",
+      partialResult: {
+        schemaVersion: 1,
+        status: "failed",
+        files: ["carousel/01.png"],
+        images: [
+          {
+            schemaVersion: 1,
+            slideIndex: 1,
+            assetSlotId: "slide-01-visual",
+            sourceHtmlFileName: "01.html",
+            filePath: "carousel/01.png"
+          }
+        ],
+        failures: [
+          {
+            schemaVersion: 1,
+            slideIndex: 2,
+            assetSlotId: "slide-02-visual",
+            sourceHtmlFileName: "02.html",
+            filePath: "carousel/02.png",
+            code: "render-failed",
+            message: "Could not render carousel PNGs."
+          }
+        ]
+      }
+    });
+    await expect(readFile(join(revision.outputDir, "carousel", "01.png"))).resolves.toBeDefined();
+    await expect(readFile(join(revision.outputDir, "story.json"), "utf8")).resolves.toBe(
+      "{\"schemaVersion\":1}\n"
+    );
+    await expect(readFile(join(revision.outputDir, "caption.txt"), "utf8")).resolves.toBe(
+      "Caption\n"
     );
   });
 
@@ -234,12 +415,25 @@ describe("carousel renderer", () => {
         ],
         renderer
       })
-    ).rejects.toEqual(
-      new CarouselPngRenderError(
-        "Could not render carousel PNGs.",
-        "render-failed"
-      )
-    );
+    ).rejects.toMatchObject({
+      message: "Could not render carousel PNGs.",
+      code: "render-failed",
+      partialResult: {
+        status: "failed",
+        files: [],
+        images: [],
+        failures: [
+          {
+            slideIndex: 1,
+            assetSlotId: "slide-01-visual",
+            sourceHtmlFileName: "01.html",
+            filePath: "carousel/01.png",
+            code: "render-failed",
+            message: "Could not render carousel PNGs."
+          }
+        ]
+      }
+    });
     expect(renderer.calls).toHaveLength(0);
   });
 });
@@ -263,10 +457,50 @@ class RecordingPngRenderer {
   }
 }
 
+class LayoutFittingRenderer {
+  readonly calls: Array<{ html: string; width: number; height: number }> = [];
+
+  constructor(private readonly acceptedFit: string) {}
+
+  async renderHtmlToPng(options: {
+    html: string;
+    width: number;
+    height: number;
+  }): Promise<Uint8Array> {
+    this.calls.push(options);
+
+    if (extractLayoutFit(options.html) !== this.acceptedFit) {
+      throw new CarouselPngRenderError(
+        "Could not render carousel PNGs.",
+        "render-failed"
+      );
+    }
+
+    return fixturePng;
+  }
+}
+
+class SecondCardOverflowRenderer {
+  async renderHtmlToPng(options: { html: string }): Promise<Uint8Array> {
+    if (options.html.includes("aria-label=\"Uncommitted carousel card 2 / 2\"")) {
+      throw new CarouselPngRenderError(
+        "Could not render carousel PNGs.",
+        "render-failed"
+      );
+    }
+
+    return fixturePng;
+  }
+}
+
 class FailingPngRenderer {
   async renderHtmlToPng(): Promise<never> {
     throw new Error("browser failed with internal detail");
   }
+}
+
+function extractLayoutFit(html: string): string | undefined {
+  return /data-layout-fit="([^"]+)"/.exec(html)?.[1];
 }
 
 async function createTestRevision() {
