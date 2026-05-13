@@ -22,6 +22,11 @@ import {
   recordManualNote
 } from "./note-command.js";
 import { addProject, ProjectAddError } from "./project-add.js";
+import {
+  RenderCommandError,
+  runRenderCommand
+} from "./render-command.js";
+import type { CarouselHtmlToPngRenderer } from "./carousel-renderer.js";
 import type { ImageAssetProvider } from "./visual-assets.js";
 
 export type CliIo = {
@@ -35,6 +40,7 @@ export type CliOptions = {
   now?: () => string;
   aiProvider?: AiProvider;
   imageAssetProvider?: ImageAssetProvider;
+  carouselRenderer?: CarouselHtmlToPngRenderer;
 };
 
 const defaultIo: CliIo = {
@@ -113,8 +119,45 @@ export async function runCli(
     return await runGenerate(commandArgs, io, options);
   }
 
+  if (command === "render") {
+    return await runRender(commandArgs, io, options);
+  }
+
   io.stderr(`Command not implemented yet: ${command}`);
   return 1;
+}
+
+async function runRender(
+  args: string[],
+  io: CliIo,
+  options: CliOptions
+): Promise<number> {
+  try {
+    const result = await runRenderCommand(args, {
+      homeDir: options.homeDir,
+      renderer: options.carouselRenderer
+    });
+
+    io.stdout(`Rendered carousel for ${result.targetDate}: ${result.outputDir}`);
+    io.stdout(`Carousel files: ${result.carouselDir}`);
+    return 0;
+  } catch (error) {
+    if (error instanceof RenderCommandError) {
+      io.stderr(error.message);
+
+      if (error.code === "invalid-arguments") {
+        return 1;
+      }
+
+      if (error.code === "invalid-config") {
+        return 2;
+      }
+
+      return 5;
+    }
+
+    throw error;
+  }
 }
 
 async function runGenerate(

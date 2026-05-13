@@ -680,7 +680,7 @@ function renderCardHtml(options: {
     .visual-stage::before {
       width: 430px;
       height: 430px;
-      right: -92px;
+      right: 28px;
       top: 70px;
       border-radius: 999px;
       background: rgba(255, 255, 255, 0.42);

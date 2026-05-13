@@ -144,6 +144,15 @@ export type {
   GenerateCommandResult
 } from "./generate-command.js";
 export {
+  RenderCommandError,
+  runRenderCommand
+} from "./render-command.js";
+export type {
+  RenderCommandErrorCode,
+  RenderCommandOptions,
+  RenderCommandResult
+} from "./render-command.js";
+export {
   createDraftRevision,
   DraftStorageError,
   readLatestDraftPointer,

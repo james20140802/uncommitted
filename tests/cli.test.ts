@@ -12,7 +12,15 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
+import {
+  CarouselPngRenderError,
+  type CarouselHtmlToPngRenderer
+} from "../src/carousel-renderer.js";
 import { isDirectRun, runCli } from "../src/cli.js";
+import {
+  createDraftRevision,
+  writeLatestDraftPointer
+} from "../src/draft-storage.js";
 import { addProject } from "../src/project-add.js";
 
 const execFileAsync = promisify(execFile);
@@ -302,6 +310,128 @@ describe("cli", () => {
     expect(stderr.join("\n")).toContain("Not a Git repository");
   });
 
+  it("renders the latest draft carousel with existing visual assets", async () => {
+    const { io, stdout, stderr } = createIo();
+    const fixture = await createLatestDraftFixture();
+    const renderer = new RecordingPngRenderer();
+
+    const exitCode = await runCli(["render", "latest"], io, {
+      homeDir: fixture.homeDir,
+      carouselRenderer: renderer
+    });
+    const carouselPng = await readFile(
+      join(fixture.revision.outputDir, "carousel", "01.png")
+    );
+    const metadata = await readJson(join(fixture.revision.outputDir, "metadata.json"));
+
+    expect(exitCode).toBe(0);
+    expect(stderr).toEqual([]);
+    expect(stdout).toEqual([
+      `Rendered carousel for ${fixture.revision.targetDate}: ${fixture.revision.outputDir}`,
+      `Carousel files: ${join(fixture.revision.outputDir, "carousel")}`
+    ]);
+    expect(carouselPng).toEqual(pngBytes);
+    expect(renderer.calls).toHaveLength(1);
+    expect(renderer.calls[0]?.html).toContain("class=\"visual-asset\"");
+    expect(renderer.calls[0]?.html).toContain("data:image/png;base64,");
+    expect(metadata).toMatchObject({
+      files: [
+        "activity-summary.json",
+        "story.json",
+        "caption.txt",
+        "metadata.json",
+        "safety-report.json",
+        "visuals/01.png",
+        "carousel/01.png"
+      ],
+      carousel: {
+        schemaVersion: 1,
+        status: "rendered",
+        files: ["carousel/01.png"],
+        images: [
+          {
+            schemaVersion: 1,
+            slideIndex: 1,
+            assetSlotId: "slide-01-visual",
+            sourceHtmlFileName: "01.html",
+            filePath: "carousel/01.png",
+            visualAssetPath: "visuals/01.png"
+          }
+        ]
+      }
+    });
+  });
+
+  it("returns a rendering error when no latest draft exists", async () => {
+    const { io, stdout, stderr } = createIo();
+    const directory = await mkdtemp(join(tmpdir(), "uncommitted-cli-render-missing-"));
+    const homeDir = join(directory, "home");
+    const draftRoot = join(directory, "drafts");
+
+    await writeConfig(homeDir, draftRoot);
+
+    const exitCode = await runCli(["render", "latest"], io, {
+      homeDir,
+      carouselRenderer: new RecordingPngRenderer()
+    });
+
+    expect(exitCode).toBe(5);
+    expect(stdout).toEqual([]);
+    expect(stderr).toEqual([
+      "No latest draft found. Run `uncommitted generate today` first."
+    ]);
+  });
+
+  it("returns a rendering error for invalid latest draft story data", async () => {
+    const { io, stdout, stderr } = createIo();
+    const fixture = await createLatestDraftFixture({
+      story: { schemaVersion: 1, targetDate: "2026-05-18", slides: [] }
+    });
+
+    const exitCode = await runCli(["render", "latest"], io, {
+      homeDir: fixture.homeDir,
+      carouselRenderer: new RecordingPngRenderer()
+    });
+
+    expect(exitCode).toBe(5);
+    expect(stdout).toEqual([]);
+    expect(stderr).toEqual(["Draft story is not renderable. Regenerate the draft."]);
+    await expect(
+      readFile(join(fixture.revision.outputDir, "story.json"), "utf8")
+    ).resolves.toContain("\"slides\": []");
+  });
+
+  it("returns a rendering error for missing declared visual asset files", async () => {
+    const { io, stdout, stderr } = createIo();
+    const fixture = await createLatestDraftFixture({ writeVisualAsset: false });
+
+    const exitCode = await runCli(["render", "latest"], io, {
+      homeDir: fixture.homeDir,
+      carouselRenderer: new RecordingPngRenderer()
+    });
+
+    expect(exitCode).toBe(5);
+    expect(stdout).toEqual([]);
+    expect(stderr).toEqual(["Could not render carousel PNGs."]);
+    await expect(
+      access(join(fixture.revision.outputDir, "carousel", "01.png"))
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("returns rendering exit code when the PNG renderer fails", async () => {
+    const { io, stdout, stderr } = createIo();
+    const fixture = await createLatestDraftFixture();
+
+    const exitCode = await runCli(["render", "latest"], io, {
+      homeDir: fixture.homeDir,
+      carouselRenderer: new FailingPngRenderer()
+    });
+
+    expect(exitCode).toBe(5);
+    expect(stdout).toEqual([]);
+    expect(stderr).toEqual(["Could not render carousel PNGs."]);
+  });
+
   it("routes doctor to the environment report handler", async () => {
     const { io, stdout, stderr } = createIo();
     const directory = await mkdtemp(join(tmpdir(), "uncommitted-cli-doctor-"));
@@ -401,4 +531,140 @@ async function git(
 
 async function readJson(path: string): Promise<unknown> {
   return JSON.parse(await readFile(path, "utf8")) as unknown;
+}
+
+const pngBytes = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=",
+  "base64"
+);
+
+type LatestDraftFixtureOptions = {
+  story?: unknown;
+  metadata?: Record<string, unknown>;
+  writeVisualAsset?: boolean;
+};
+
+async function createLatestDraftFixture(options: LatestDraftFixtureOptions = {}) {
+  const directory = await mkdtemp(join(tmpdir(), "uncommitted-cli-render-"));
+  const homeDir = join(directory, "home");
+  const draftRoot = join(directory, "drafts");
+  const revision = await createDraftRevision({
+    draftRoot,
+    targetDate: "2026-05-18"
+  });
+  const story = options.story ?? createStoryDraft();
+  const metadata = options.metadata ?? createDraftMetadata();
+
+  await writeConfig(homeDir, draftRoot);
+  await writeJson(join(revision.outputDir, "activity-summary.json"), {
+    schemaVersion: 1
+  });
+  await writeJson(join(revision.outputDir, "story.json"), story);
+  await writeFile(join(revision.outputDir, "caption.txt"), "Render latest\n", "utf8");
+  await writeJson(join(revision.outputDir, "safety-report.json"), {
+    schemaVersion: 1,
+    status: "safe"
+  });
+  await writeJson(join(revision.outputDir, "metadata.json"), metadata);
+
+  if (options.writeVisualAsset !== false) {
+    await mkdir(join(revision.outputDir, "visuals"), { recursive: true });
+    await writeFile(join(revision.outputDir, "visuals", "01.png"), pngBytes);
+  }
+
+  await writeLatestDraftPointer(revision, "2026-05-18T23:30:00.000Z");
+
+  return {
+    homeDir,
+    draftRoot,
+    revision
+  };
+}
+
+async function writeConfig(homeDir: string, draftRoot: string): Promise<void> {
+  await mkdir(join(homeDir, ".uncommitted"), { recursive: true });
+  await writeJson(join(homeDir, ".uncommitted", "config.json"), {
+    schemaVersion: 1,
+    draftRoot,
+    scheduleTime: "23:30",
+    aiProvider: "none",
+    persona: "test persona",
+    roastLevel: 2
+  });
+}
+
+async function writeJson(path: string, value: unknown): Promise<void> {
+  await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+}
+
+function createStoryDraft(): Record<string, unknown> {
+  return {
+    schemaVersion: 1,
+    targetDate: "2026-05-18",
+    title: "Render Latest Day",
+    slides: [
+      {
+        index: 1,
+        title: "Latest draft gets rendered",
+        body: "The image was already generated, so render latest should use it.",
+        visualMood: "polished local AI illustration"
+      }
+    ],
+    metadata: {
+      projectIds: ["uncommitted"]
+    }
+  };
+}
+
+function createDraftMetadata(): Record<string, unknown> {
+  return {
+    schemaVersion: 1,
+    version: 1,
+    artifactVersion: 1,
+    targetDate: "2026-05-18",
+    date: "2026-05-18",
+    status: "draft",
+    files: [
+      "activity-summary.json",
+      "story.json",
+      "caption.txt",
+      "metadata.json",
+      "safety-report.json",
+      "visuals/01.png"
+    ],
+    visualAssets: [
+      {
+        schemaVersion: 1,
+        slideIndex: 1,
+        assetSlotId: "slide-01-visual",
+        promptSummary: "polished local AI illustration",
+        provider: "openai",
+        filePath: "visuals/01.png",
+        fallbackState: "none"
+      }
+    ]
+  };
+}
+
+class RecordingPngRenderer implements CarouselHtmlToPngRenderer {
+  readonly calls: { html: string; width: number; height: number }[] = [];
+
+  async renderHtmlToPng(options: {
+    html: string;
+    width: number;
+    height: number;
+  }): Promise<Uint8Array> {
+    this.calls.push(options);
+
+    return pngBytes;
+  }
+}
+
+class FailingPngRenderer implements CarouselHtmlToPngRenderer {
+  async renderHtmlToPng(): Promise<never> {
+    throw new CarouselPngRenderError(
+      "Could not render carousel PNGs.",
+      "render-failed"
+    );
+  }
 }
