@@ -1,9 +1,16 @@
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   CarouselRenderInputError,
+  CarouselPngRenderError,
   createCarouselHtmlCards,
-  parseCarouselRenderInput
+  parseCarouselRenderInput,
+  renderCarouselPngs
 } from "../src/carousel-renderer.js";
+import { createDraftRevision } from "../src/draft-storage.js";
 import type { DiaryDraft } from "../src/diary-generator.js";
 
 describe("carousel renderer", () => {
@@ -117,7 +124,177 @@ describe("carousel renderer", () => {
       )
     );
   });
+
+  it("renders ordered carousel PNG files under the draft revision", async () => {
+    const revision = await createTestRevision();
+    const cards = createCarouselHtmlCards(createStoryDraft());
+    const renderer = new RecordingPngRenderer();
+
+    await writeDraftTextFixtures(revision.outputDir);
+    await mkdir(join(revision.outputDir, "visuals"), { recursive: true });
+    await writeFile(
+      join(revision.outputDir, "visuals", "01.png"),
+      fixturePng,
+      "binary"
+    );
+
+    const result = await renderCarouselPngs({
+      revision,
+      cards,
+      visualAssets: [
+        {
+          slideIndex: 1,
+          assetSlotId: "slide-01-visual",
+          filePath: "visuals/01.png"
+        }
+      ],
+      renderer
+    });
+
+    expect(result.files).toEqual([
+      "carousel/01.png",
+      "carousel/02.png",
+      "carousel/03.png"
+    ]);
+    expect(result.images).toMatchObject([
+      {
+        schemaVersion: 1,
+        slideIndex: 1,
+        assetSlotId: "slide-01-visual",
+        filePath: "carousel/01.png",
+        visualAssetPath: "visuals/01.png"
+      },
+      {
+        slideIndex: 2,
+        assetSlotId: "slide-02-visual",
+        filePath: "carousel/02.png"
+      },
+      {
+        slideIndex: 3,
+        assetSlotId: "slide-03-visual",
+        filePath: "carousel/03.png"
+      }
+    ]);
+    expect(renderer.calls).toHaveLength(3);
+    expect(renderer.calls[0]?.html).toContain("data-asset-slot-id=\"slide-01-visual\"");
+    expect(renderer.calls[0]?.html).toContain("data:image/png;base64,");
+    expect(renderer.calls[0]?.html).toContain("class=\"visual-asset\"");
+
+    const firstPng = await readFile(join(revision.outputDir, "carousel", "01.png"));
+    expect([...firstPng.subarray(0, 8)]).toEqual([
+      0x89,
+      0x50,
+      0x4e,
+      0x47,
+      0x0d,
+      0x0a,
+      0x1a,
+      0x0a
+    ]);
+    await expect(readFile(join(revision.outputDir, "story.json"), "utf8")).resolves.toBe(
+      "{\"schemaVersion\":1}\n"
+    );
+  });
+
+  it("surfaces screenshot failures as carousel PNG render errors", async () => {
+    const revision = await createTestRevision();
+    const cards = createCarouselHtmlCards(createStoryDraft());
+
+    await expect(
+      renderCarouselPngs({
+        revision,
+        cards,
+        renderer: new FailingPngRenderer()
+      })
+    ).rejects.toEqual(
+      new CarouselPngRenderError(
+        "Could not render carousel PNGs.",
+        "render-failed"
+      )
+    );
+  });
+
+  it("rejects backslash traversal in visual asset paths", async () => {
+    const revision = await createTestRevision();
+    const cards = createCarouselHtmlCards(createStoryDraft());
+    const renderer = new RecordingPngRenderer();
+
+    await writeFile(join(revision.outputDir, "..\\secret.png"), fixturePng);
+
+    await expect(
+      renderCarouselPngs({
+        revision,
+        cards: [cards[0]],
+        visualAssets: [
+          {
+            slideIndex: 1,
+            assetSlotId: "slide-01-visual",
+            filePath: "..\\secret.png"
+          }
+        ],
+        renderer
+      })
+    ).rejects.toEqual(
+      new CarouselPngRenderError(
+        "Could not render carousel PNGs.",
+        "render-failed"
+      )
+    );
+    expect(renderer.calls).toHaveLength(0);
+  });
 });
+
+const fixturePng = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=",
+  "base64"
+);
+
+class RecordingPngRenderer {
+  readonly calls: Array<{ html: string; width: number; height: number }> = [];
+
+  async renderHtmlToPng(options: {
+    html: string;
+    width: number;
+    height: number;
+  }): Promise<Uint8Array> {
+    this.calls.push(options);
+
+    return fixturePng;
+  }
+}
+
+class FailingPngRenderer {
+  async renderHtmlToPng(): Promise<never> {
+    throw new Error("browser failed with internal detail");
+  }
+}
+
+async function createTestRevision() {
+  const draftRoot = join(tmpdir(), `uncommitted-carousel-render-${randomUUID()}`);
+
+  await mkdir(draftRoot, { recursive: true });
+
+  return await createDraftRevision({
+    draftRoot,
+    targetDate: "2026-05-18"
+  });
+}
+
+async function writeDraftTextFixtures(outputDir: string): Promise<void> {
+  await writeFile(join(outputDir, "story.json"), "{\"schemaVersion\":1}\n", "utf8");
+  await writeFile(join(outputDir, "caption.txt"), "Caption\n", "utf8");
+  await writeFile(
+    join(outputDir, "activity-summary.json"),
+    "{\"schemaVersion\":1}\n",
+    "utf8"
+  );
+  await writeFile(join(outputDir, "metadata.json"), "{\"schemaVersion\":1}\n", "utf8");
+  await writeFile(
+    join(outputDir, "safety-report.json"),
+    "{\"schemaVersion\":1}\n",
+    "utf8"
+  );
+}
 
 function createStoryDraft(overrides: Partial<DiaryDraft> = {}): DiaryDraft {
   return {

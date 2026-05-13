@@ -1,6 +1,15 @@
+import { readFile } from "node:fs/promises";
+import { isAbsolute, normalize, relative, resolve, sep, win32 } from "node:path";
+import { chromium, type Browser } from "playwright";
 import type { DiarySlide } from "./diary-generator.js";
+import {
+  type DraftRevision,
+  DraftStorageError,
+  writeDraftArtifactBinary
+} from "./draft-storage.js";
 
 export type CarouselRenderInputErrorCode = "invalid-story";
+export type CarouselPngRenderErrorCode = "render-failed" | "write-failed";
 
 export class CarouselRenderInputError extends Error {
   constructor(
@@ -9,6 +18,16 @@ export class CarouselRenderInputError extends Error {
   ) {
     super(message);
     this.name = "CarouselRenderInputError";
+  }
+}
+
+export class CarouselPngRenderError extends Error {
+  constructor(
+    message: string,
+    public readonly code: CarouselPngRenderErrorCode
+  ) {
+    super(message);
+    this.name = "CarouselPngRenderError";
   }
 }
 
@@ -36,8 +55,48 @@ export type CarouselHtmlCard = {
   html: string;
 };
 
+export type CarouselPngVisualAsset = {
+  slideIndex: number;
+  assetSlotId: string;
+  filePath: string;
+};
+
+export type CarouselHtmlToPngRenderer = {
+  renderHtmlToPng(options: {
+    html: string;
+    width: number;
+    height: number;
+  }): Promise<Uint8Array>;
+  close?(): Promise<void>;
+};
+
+export type CarouselPngMetadata = {
+  schemaVersion: 1;
+  slideIndex: number;
+  assetSlotId: string;
+  sourceHtmlFileName: string;
+  filePath: string;
+  visualAssetPath?: string;
+};
+
+export type CarouselPngRenderResult = {
+  schemaVersion: 1;
+  files: string[];
+  images: CarouselPngMetadata[];
+};
+
+export type RenderCarouselPngsOptions = {
+  revision: DraftRevision;
+  cards: CarouselHtmlCard[];
+  visualAssets?: CarouselPngVisualAsset[];
+  renderer?: CarouselHtmlToPngRenderer;
+};
+
 const invalidStoryMessage =
   "story.json must include ordered slides with title and body.";
+const carouselWidth = 1080;
+const carouselHeight = 1350;
+const pngSignature = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 
 export function parseCarouselRenderInput(value: unknown): CarouselRenderInput {
   if (!isRecord(value)) {
@@ -88,6 +147,213 @@ export function createCarouselHtmlCards(value: unknown): CarouselHtmlCard[] {
       })
     };
   });
+}
+
+export async function renderCarouselPngs(
+  options: RenderCarouselPngsOptions
+): Promise<CarouselPngRenderResult> {
+  const renderer = options.renderer ?? new PlaywrightCarouselPngRenderer();
+  const shouldCloseRenderer = options.renderer === undefined;
+  const files: string[] = [];
+  const images: CarouselPngMetadata[] = [];
+
+  try {
+    for (const [index, card] of options.cards.entries()) {
+      const visualAsset = findVisualAsset(card, options.visualAssets ?? []);
+      const html = await composeCardHtml({
+        revision: options.revision,
+        card,
+        visualAsset
+      });
+      const png = await renderer.renderHtmlToPng({
+        html,
+        width: carouselWidth,
+        height: carouselHeight
+      });
+
+      assertPng(png);
+
+      const filePath = `carousel/${String(index + 1).padStart(2, "0")}.png`;
+
+      await writeDraftArtifactBinary(options.revision, filePath, png);
+
+      files.push(filePath);
+      images.push({
+        schemaVersion: 1,
+        slideIndex: card.slideIndex,
+        assetSlotId: card.visualTreatment.assetSlotId,
+        sourceHtmlFileName: card.fileName,
+        filePath,
+        ...(visualAsset ? { visualAssetPath: visualAsset.filePath } : {})
+      });
+    }
+  } catch (error) {
+    if (error instanceof CarouselPngRenderError) {
+      throw error;
+    }
+
+    if (error instanceof DraftStorageError) {
+      throw new CarouselPngRenderError(error.message, "write-failed");
+    }
+
+    throw new CarouselPngRenderError(
+      "Could not render carousel PNGs.",
+      "render-failed"
+    );
+  } finally {
+    if (shouldCloseRenderer) {
+      await renderer.close?.();
+    }
+  }
+
+  return {
+    schemaVersion: 1,
+    files,
+    images
+  };
+}
+
+class PlaywrightCarouselPngRenderer implements CarouselHtmlToPngRenderer {
+  private browser: Browser | undefined;
+
+  async renderHtmlToPng(options: {
+    html: string;
+    width: number;
+    height: number;
+  }): Promise<Uint8Array> {
+    const browser = await this.getBrowser();
+    const page = await browser.newPage({
+      viewport: {
+        width: options.width,
+        height: options.height
+      },
+      deviceScaleFactor: 1
+    });
+
+    try {
+      await page.setContent(options.html, { waitUntil: "load" });
+
+      return await page.screenshot({
+        type: "png",
+        clip: {
+          x: 0,
+          y: 0,
+          width: options.width,
+          height: options.height
+        }
+      });
+    } finally {
+      await page.close();
+    }
+  }
+
+  async close(): Promise<void> {
+    await this.browser?.close();
+    this.browser = undefined;
+  }
+
+  private async getBrowser(): Promise<Browser> {
+    this.browser ??= await chromium.launch({ headless: true });
+
+    return this.browser;
+  }
+}
+
+async function composeCardHtml(options: {
+  revision: DraftRevision;
+  card: CarouselHtmlCard;
+  visualAsset?: CarouselPngVisualAsset;
+}): Promise<string> {
+  if (!options.visualAsset) {
+    return options.card.html;
+  }
+
+  const image = await readFile(
+    resolveDraftArtifactPath(
+      options.revision.outputDir,
+      options.visualAsset.filePath
+    )
+  );
+  const dataUri = `data:image/png;base64,${image.toString("base64")}`;
+  const visualAssetCss = `
+    .visual-stage.has-visual-asset {
+      background: #eef2f7;
+    }
+
+    .visual-asset {
+      position: absolute;
+      inset: 0;
+      z-index: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .visual-stage.has-visual-asset .visual-placeholder {
+      padding: 18px 22px;
+      background: rgba(247, 247, 245, 0.82);
+      border: 2px solid rgba(15, 23, 42, 0.12);
+    }
+`;
+  const imgHtml = `<img class="visual-asset" src="${dataUri}" alt="${escapeHtml(
+    options.card.visualTreatment.altText
+  )}">`;
+
+  return options.card.html
+    .replace("</style>", `${visualAssetCss}  </style>`)
+    .replace('class="visual-stage"', 'class="visual-stage has-visual-asset"')
+    .replace(
+      '<div class="visual-placeholder">',
+      `${imgHtml}\n      <div class="visual-placeholder">`
+    );
+}
+
+function findVisualAsset(
+  card: CarouselHtmlCard,
+  visualAssets: CarouselPngVisualAsset[]
+): CarouselPngVisualAsset | undefined {
+  return visualAssets.find(
+    (asset) =>
+      asset.slideIndex === card.slideIndex &&
+      asset.assetSlotId === card.visualTreatment.assetSlotId
+  );
+}
+
+function resolveDraftArtifactPath(outputDir: string, filePath: string): string {
+  const root = resolve(outputDir);
+  const separatorNormalized = filePath.replace(/\\/g, "/");
+  const normalized = normalize(separatorNormalized);
+  const resolved = resolve(root, normalized);
+  const relativePath = relative(root, resolved);
+
+  if (
+    filePath.trim().length === 0 ||
+    isAbsolute(normalized) ||
+    win32.isAbsolute(filePath) ||
+    relativePath === ".." ||
+    relativePath.startsWith(`..${sep}`) ||
+    isAbsolute(relativePath)
+  ) {
+    throw new CarouselPngRenderError(
+      "Could not render carousel PNGs.",
+      "render-failed"
+    );
+  }
+
+  return resolved;
+}
+
+function assertPng(value: Uint8Array): void {
+  const hasPngSignature = pngSignature.every(
+    (byte, index) => value[index] === byte
+  );
+
+  if (!hasPngSignature) {
+    throw new CarouselPngRenderError(
+      "Could not render carousel PNGs.",
+      "render-failed"
+    );
+  }
 }
 
 function parseDiarySlide(value: unknown, index: number): DiarySlide {
