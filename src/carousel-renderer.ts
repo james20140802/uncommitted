@@ -477,8 +477,8 @@ async function composeCardHtml(options: {
 
 function applyLayoutFit(html: string, layoutFit: CarouselLayoutFit): string {
   return html.replace(
-    /data-layout-fit="[^"]+"/,
-    `data-layout-fit="${layoutFit}"`
+    /(<article\b[^>]*\sdata-layout-fit=")[^"]+"/,
+    `$1${layoutFit}"`
   );
 }
 
@@ -680,7 +680,7 @@ function renderCardHtml(options: {
     .visual-stage::before {
       width: 430px;
       height: 430px;
-      right: -92px;
+      right: 28px;
       top: 70px;
       border-radius: 999px;
       background: rgba(255, 255, 255, 0.42);
