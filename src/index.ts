@@ -17,16 +17,24 @@ export type { CliIo, CliOptions } from "./cli.js";
 export { commands, isKnownCommand } from "./commands.js";
 export type { Command } from "./commands.js";
 export {
+  CarouselPngRenderError,
   CarouselRenderInputError,
   createCarouselHtmlCards,
-  parseCarouselRenderInput
+  parseCarouselRenderInput,
+  renderCarouselPngs
 } from "./carousel-renderer.js";
 export type {
+  CarouselHtmlToPngRenderer,
   CarouselHtmlCard,
+  CarouselPngMetadata,
+  CarouselPngRenderErrorCode,
+  CarouselPngRenderResult,
+  CarouselPngVisualAsset,
   CarouselRenderInput,
   CarouselRenderInputErrorCode,
   CarouselVisualTreatment,
-  CarouselVisualTreatmentKind
+  CarouselVisualTreatmentKind,
+  RenderCarouselPngsOptions
 } from "./carousel-renderer.js";
 export {
   collectGitForRegisteredProjects,
