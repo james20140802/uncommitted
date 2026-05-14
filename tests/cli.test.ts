@@ -606,14 +606,33 @@ describe("cli", () => {
     ]);
   });
 
-  it("rejects unsupported schedule subcommands", async () => {
+  it("installs the macOS schedule", async () => {
+    const { io, stdout, stderr } = createIo();
+    const directory = await mkdtemp(join(tmpdir(), "uncommitted-cli-schedule-install-"));
+    const homeDir = join(directory, "home");
+
+    const exitCode = await runCli(["schedule", "install", "--time", "23:30"], io, {
+      homeDir
+    });
+
+    const plistPath = join(homeDir, "Library", "LaunchAgents", "com.uncommitted.schedule.plist");
+    const plistContent = await readFile(plistPath, "utf8");
+
+    expect(exitCode).toBe(0);
+    expect(stderr).toEqual([]);
+    expect(stdout.join("\n")).toContain("Installed macOS schedule for 23:30.");
+    expect(plistContent).toContain("<key>Hour</key>");
+    expect(plistContent).toContain("<integer>23</integer>");
+  });
+
+  it("rejects schedule install without --time", async () => {
     const { io, stdout, stderr } = createIo();
 
-    const exitCode = await runCli(["schedule", "status"], io);
+    const exitCode = await runCli(["schedule", "install"], io);
 
     expect(exitCode).toBe(1);
     expect(stdout).toEqual([]);
-    expect(stderr).toEqual(["Usage: uncommitted schedule run-now"]);
+    expect(stderr.join("\n")).toContain("Usage: uncommitted schedule install --time HH:mm");
   });
 
   it("routes doctor to the environment report handler", async () => {
