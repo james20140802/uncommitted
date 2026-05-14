@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   CarouselPngRenderError,
   type CarouselHtmlToPngRenderer
@@ -606,14 +606,83 @@ describe("cli", () => {
     ]);
   });
 
-  it("rejects unsupported schedule subcommands", async () => {
+  it("installs the macOS schedule", async () => {
+    vi.stubGlobal("process", { ...process, platform: "darwin" });
+
+    const { io, stdout, stderr } = createIo();
+    const directory = await mkdtemp(join(tmpdir(), "uncommitted-cli-schedule-install-"));
+    const homeDir = join(directory, "home");
+
+    const exitCode = await runCli(["schedule", "install", "--time", "23:30"], io, {
+      homeDir,
+      schedulerExecutor: async () => ({ stdout: "", stderr: "" })
+    });
+
+    expect(exitCode).toBe(0);
+    expect(stderr).toEqual([]);
+
+    const plistPath = join(homeDir, "Library", "LaunchAgents", "com.uncommitted.schedule.plist");
+    const plistContent = await readFile(plistPath, "utf8");
+
+    expect(stdout.join("\n")).toContain("Installed macOS schedule for 23:30.");
+    expect(plistContent).toContain("<key>Hour</key>");
+    expect(plistContent).toContain("<integer>23</integer>");
+
+    vi.unstubAllGlobals();
+  });
+
+  it("fails schedule install on unsupported platforms", async () => {
+    vi.stubGlobal("process", { ...process, platform: "linux" });
+
     const { io, stdout, stderr } = createIo();
 
-    const exitCode = await runCli(["schedule", "status"], io);
+    const exitCode = await runCli(["schedule", "install", "--time", "23:30"], io);
 
     expect(exitCode).toBe(1);
     expect(stdout).toEqual([]);
-    expect(stderr).toEqual(["Usage: uncommitted schedule run-now"]);
+    expect(stderr).toEqual(["macOS is required to install the scheduler."]);
+
+    vi.unstubAllGlobals();
+  });
+
+  it("rejects schedule install without --time", async () => {
+    vi.stubGlobal("process", { ...process, platform: "darwin" });
+    const { io, stdout, stderr } = createIo();
+
+    const exitCode = await runCli(["schedule", "install"], io);
+
+    expect(exitCode).toBe(1);
+    expect(stdout).toEqual([]);
+    expect(stderr.join("\n")).toContain("Usage: uncommitted schedule install --time HH:mm");
+    vi.unstubAllGlobals();
+  });
+
+  it("rejects invalid schedule time", async () => {
+    vi.stubGlobal("process", { ...process, platform: "darwin" });
+    const { io, stdout, stderr } = createIo();
+
+    const exitCode = await runCli(["schedule", "install", "--time", "25:00"], io);
+
+    expect(exitCode).toBe(1);
+    expect(stdout).toEqual([]);
+    expect(stderr).toEqual(["Schedule time must use 24-hour HH:mm format."]);
+    vi.unstubAllGlobals();
+  });
+
+  it("returns error code when schedule installation fails", async () => {
+    vi.stubGlobal("process", { ...process, platform: "darwin" });
+    const { io, stdout, stderr } = createIo();
+
+    const exitCode = await runCli(["schedule", "install", "--time", "23:30"], io, {
+      schedulerExecutor: async () => {
+        throw new Error("launchctl failed");
+      }
+    });
+
+    expect(exitCode).toBe(1);
+    expect(stdout).toEqual([]);
+    expect(stderr).toEqual(["launchctl failed"]);
+    vi.unstubAllGlobals();
   });
 
   it("routes doctor to the environment report handler", async () => {

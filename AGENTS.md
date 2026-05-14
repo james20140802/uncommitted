@@ -18,12 +18,24 @@ Long-form context lives in Notion: `Uncommitted`, `기획서`, `MVP 기능 명�
 ## Development Workflow
 
 - GitHub Issues are the source of truth.
-- Codex CLI is the main implementation tool.
+- All code agents must follow this workflow; Codex is the baseline workflow for this repository.
 - For each task, read the issue first with `gh issue view <number>`.
-- Summarize the issue before implementation.
-- If the user asked for planning first, propose a plan and wait for acceptance before editing.
+- Before implementation, inspect `git status --short` and the current branch.
+- Summarize the issue's goal, scope, out-of-scope items, acceptance criteria, and implementation notes before implementation.
+- If the user asked for planning first, said not to edit yet, invoked a planning workflow, or the issue scope is unclear, propose a plan and wait for acceptance before editing.
+- When the user replies `confirm` after a plan, move directly into implementation without reopening scope discussion.
 - One issue normally maps to one branch and one PR.
 - Keep changes scoped to the issue. Avoid opportunistic refactors.
+
+Default issue workflow:
+1. Read the issue with `gh issue view <number>`.
+2. Inspect repository state with `git status --short` and the current branch.
+3. Restate goal, scope, out-of-scope, acceptance criteria, and intended behavior.
+4. Define the focused test target before editing.
+5. Add or update focused tests first when the change is testable.
+6. Implement the smallest change that satisfies the issue.
+7. Run targeted checks first when useful, then the relevant full validation commands.
+8. Report changed files, checks run, and remaining risk.
 
 ## TDD Rule
 
@@ -35,6 +47,8 @@ Long-form context lives in Notion: `Uncommitted`, `기획서`, `MVP 기능 명�
 
 Expected validation commands, when available: `pnpm test`, `pnpm lint`, `pnpm typecheck`, `pnpm build`. If a script does not exist, say so explicitly.
 
+Also run `git diff --check` before commit or PR publication when possible.
+
 ## GitHub And Git Rules
 
 Allowed read-only GitHub commands: `gh issue view <number>`, `gh issue list`, `gh pr view <number>`, `gh pr diff <number>`.
@@ -43,19 +57,38 @@ These require explicit user approval: `gh issue create`, `gh issue edit`, `gh is
 
 Template rules:
 - When creating GitHub issues, follow `.github/ISSUE_TEMPLATE/feature.yml` or `.github/ISSUE_TEMPLATE/bug.yml` and include goal, scope, out-of-scope, acceptance criteria, and implementation notes.
-- When creating PRs with `gh pr create`, use `.github/pull_request_template.md` as the body template, for example `gh pr create --template .github/pull_request_template.md`.
-- Do not use ad hoc `--body` text unless the user explicitly asks for a custom PR body; `--body` bypasses the PR template.
+- When creating PRs with `gh pr create`, preserve `.github/pull_request_template.md`'s structure. Prefer filling the template into a temporary body file and using `--body-file`; `--template` is acceptable only when it reliably preserves the template and required filled fields.
+- Do not use ad hoc `--body` text unless the user explicitly asks for a custom PR body; ad hoc bodies bypass the PR template shape.
 - Fill the PR template's related issue section with `Closes #<issue-number>` when the PR should close an issue on merge.
 
 Branch and commit rules:
 - The user normally creates branches, commits, pushes, and PRs.
 - Codex may do those actions only when explicitly asked.
 - Do not run destructive Git commands unless explicitly requested.
+- If asked to create a branch for an issue while on `main`, use a focused branch name for that issue.
 - Before committing, inspect the diff and stage only intended files.
 - Keep one logical change per commit.
 - Use gitmoji in commit messages.
 
 Useful read-only Git commands: `git status --short`, `git diff`, `git diff --staged`, `git log --oneline -n 10`.
+
+## Parallel Worktree Rules
+
+- Use sibling worktrees only when the user asks for parallel issue work or when issues are clearly independent.
+- Prefer issue-numbered sibling paths such as `../uncommitted-issue-<number>` for parallel delivery.
+- Keep one issue per worktree, one branch per issue, and one logical PR per branch.
+- Install and validate dependencies per worktree; do not assume another worktree's `node_modules` or generated state is usable.
+- Before claiming issues can run in parallel, check dependencies and overlapping files. If needed, use concrete Git evidence such as `git diff --name-only`, branch comparisons, or `git merge-tree`.
+
+## PR Review Fix Workflow
+
+- For PR review fixes, inspect thread-aware unresolved review context rather than relying only on flat PR comments.
+- If the user asks to fix only the latest review, scope the work to the latest actionable review batch.
+- Fix only review feedback that is valid, technically sound, and in scope for the PR.
+- Prefer the smallest safe fix; avoid refactors and unrelated cleanup.
+- Add or update tests when the review exposes behavior that should be covered.
+- Validate before reporting completion.
+- Resolve only the review threads that were actually fixed, and only when the user has asked to publish or resolve them.
 
 ## Project Board Fields
 
@@ -130,6 +163,9 @@ Manual notes are JSONL at `project-root/.uncommitted/events/manual/YYYY-MM-DD.js
 
 ## Completion Rules
 
+- Before reporting completion, re-read the issue acceptance criteria when an issue is involved.
+- Confirm tests were added or explain why not.
+- Run the relevant validation commands, or explain why a command could not be run.
 - Report what changed, what tests/checks ran, and remaining risk.
 - If tests could not be run, state why.
 - Do not create commits, push branches, open PRs, merge PRs, or close issues unless explicitly asked.
