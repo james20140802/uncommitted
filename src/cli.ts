@@ -31,6 +31,8 @@ import {
   installScheduler,
   type LaunchctlExecutor
 } from "./scheduler.js";
+import type { CarouselHtmlToPngRenderer } from "./carousel-renderer.js";
+import type { ImageAssetProvider } from "./visual-assets.js";
 
 export type CliIo = {
   stdout: (message: string) => void;
