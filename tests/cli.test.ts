@@ -612,7 +612,8 @@ describe("cli", () => {
     const homeDir = join(directory, "home");
 
     const exitCode = await runCli(["schedule", "install", "--time", "23:30"], io, {
-      homeDir
+      homeDir,
+      schedulerExecutor: async () => ({ stdout: "", stderr: "" })
     });
 
     const plistPath = join(homeDir, "Library", "LaunchAgents", "com.uncommitted.schedule.plist");

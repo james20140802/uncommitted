@@ -28,10 +28,9 @@ import {
 } from "./render-command.js";
 import {
   buildLaunchAgentPlist,
-  installScheduler
+  installScheduler,
+  type LaunchctlExecutor
 } from "./scheduler.js";
-import type { CarouselHtmlToPngRenderer } from "./carousel-renderer.js";
-import type { ImageAssetProvider } from "./visual-assets.js";
 
 export type CliIo = {
   stdout: (message: string) => void;
@@ -45,6 +44,7 @@ export type CliOptions = {
   aiProvider?: AiProvider;
   imageAssetProvider?: ImageAssetProvider;
   carouselRenderer?: CarouselHtmlToPngRenderer;
+  schedulerExecutor?: LaunchctlExecutor;
 };
 
 const defaultIo: CliIo = {
@@ -163,7 +163,10 @@ async function runSchedule(
         scheduleTime
       });
 
-      await installScheduler(plist, { homeDir: options.homeDir });
+      await installScheduler(plist, {
+        homeDir: options.homeDir,
+        executor: options.schedulerExecutor
+      });
 
       io.stdout(`Installed macOS schedule for ${scheduleTime}.`);
       io.stdout(`Plist path: ${plist.plistPath}`);
