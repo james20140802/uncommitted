@@ -1,6 +1,11 @@
+import { execFile } from "node:child_process";
+import { mkdir, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { promisify } from "node:util";
 import { resolveConfigPaths } from "./config-paths.js";
+
+const execFileAsync = promisify(execFile);
 
 export type SchedulerPathOptions = {
   homeDir?: string;
@@ -28,6 +33,14 @@ export type LaunchAgentPlist = {
   hour: number;
   minute: number;
   xml: string;
+};
+
+export type LaunchctlExecutor = (
+  args: string[]
+) => Promise<{ stdout: string; stderr: string }>;
+
+export type InstallSchedulerOptions = SchedulerPathOptions & {
+  executor?: LaunchctlExecutor;
 };
 
 const launchdLabel = "com.uncommitted.schedule";
@@ -93,6 +106,34 @@ export function buildLaunchAgentPlist(
     minute,
     xml
   };
+}
+
+export async function installScheduler(
+  plist: LaunchAgentPlist,
+  options: InstallSchedulerOptions = {}
+): Promise<void> {
+  const executor = options.executor ?? defaultLaunchctlExecutor;
+
+  await mkdir(dirname(plist.plistPath), { recursive: true });
+  await writeFile(plist.plistPath, plist.xml, "utf8");
+
+  // We use bootout/bootstrap for modern macOS launchctl (10.11+)
+  // bootout might fail if not already loaded, so we ignore that error.
+  try {
+    const domain = `gui/${process.getuid?.() ?? 501}`;
+    await executor(["bootout", domain, plist.plistPath]);
+  } catch {
+    // Ignore bootout failure (likely not loaded)
+  }
+
+  const domain = `gui/${process.getuid?.() ?? 501}`;
+  await executor(["bootstrap", domain, plist.plistPath]);
+}
+
+async function defaultLaunchctlExecutor(
+  args: string[]
+): Promise<{ stdout: string; stderr: string }> {
+  return await execFileAsync("launchctl", args);
 }
 
 function renderLaunchAgentPlistXml(options: {
