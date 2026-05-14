@@ -123,8 +123,37 @@ export async function runCli(
     return await runRender(commandArgs, io, options);
   }
 
+  if (command === "schedule") {
+    return await runSchedule(commandArgs, io, options);
+  }
+
   io.stderr(`Command not implemented yet: ${command}`);
   return 1;
+}
+
+async function runSchedule(
+  args: string[],
+  io: CliIo,
+  options: CliOptions
+): Promise<number> {
+  if (args.length !== 1 || args[0] !== "run-now") {
+    io.stderr("Usage: uncommitted schedule run-now");
+    return 1;
+  }
+
+  const collectExitCode = await runCollect(["git"], io, options);
+
+  if (collectExitCode !== 0) {
+    return collectExitCode;
+  }
+
+  const generateExitCode = await runGenerate(["today"], io, options);
+
+  if (generateExitCode !== 0) {
+    return generateExitCode;
+  }
+
+  return await runRender(["latest"], io, options);
 }
 
 async function runRender(
