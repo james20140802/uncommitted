@@ -159,10 +159,16 @@ async function runSchedule(
       return 1;
     }
 
+    if (process.platform !== "darwin") {
+      io.stderr("macOS is required to install the scheduler.");
+      return 1;
+    }
+
     try {
       const plist = buildLaunchAgentPlist({
         homeDir: options.homeDir,
-        scheduleTime
+        scheduleTime,
+        executablePath: process.argv[1]
       });
 
       await installScheduler(plist, {

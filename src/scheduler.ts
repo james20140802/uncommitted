@@ -23,6 +23,7 @@ export type SchedulerLogPaths = {
 
 export type LaunchAgentPlistOptions = SchedulerPathOptions & {
   scheduleTime: string;
+  executablePath?: string;
 };
 
 export type LaunchAgentPlist = {
@@ -44,7 +45,7 @@ export type InstallSchedulerOptions = SchedulerPathOptions & {
 };
 
 const launchdLabel = "com.uncommitted.schedule";
-const executableName = "uncommitted";
+const defaultExecutableName = "uncommitted";
 const scheduleCommand = ["schedule", "run-now"] as const;
 
 export function getLaunchdLabel(): string {
@@ -88,9 +89,10 @@ export function buildLaunchAgentPlist(
   const { hour, minute } = parseScheduleTime(options.scheduleTime);
   const plistPath = resolveLaunchAgentPlistPath(options);
   const logs = resolveSchedulerLogPaths(options);
+  const executablePath = options.executablePath ?? defaultExecutableName;
   const xml = renderLaunchAgentPlistXml({
     label: launchdLabel,
-    programArguments: [executableName, ...scheduleCommand],
+    programArguments: [executablePath, ...scheduleCommand],
     hour,
     minute,
     stdoutLogPath: logs.stdout,
@@ -112,6 +114,10 @@ export async function installScheduler(
   plist: LaunchAgentPlist,
   options: InstallSchedulerOptions = {}
 ): Promise<void> {
+  if (process.platform !== "darwin") {
+    throw new Error("macOS is required to install the scheduler.");
+  }
+
   const executor = options.executor ?? defaultLaunchctlExecutor;
 
   await mkdir(dirname(plist.plistPath), { recursive: true });
