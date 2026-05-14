@@ -6,7 +6,10 @@ import type {
   AiProviderHttpTransport,
   AiProviderName
 } from "./ai-provider.js";
-import type { CarouselHtmlCard } from "./carousel-renderer.js";
+import type {
+  CarouselHtmlCard,
+  CarouselVisualStyleMode
+} from "./carousel-renderer.js";
 import {
   type DraftRevision,
   DraftStorageError,
@@ -17,7 +20,9 @@ import { checkDraftSafety } from "./safety-report.js";
 export type VisualAssetFallbackState =
   | "none"
   | "no-provider"
-  | "provider-unsupported";
+  | "provider-unsupported"
+  | "image-generation-disabled"
+  | "provider-failed";
 
 export type VisualAssetGenerationErrorCode =
   | "provider-failed"
@@ -58,6 +63,7 @@ export type VisualAssetMetadata = {
   schemaVersion: 1;
   slideIndex: number;
   assetSlotId: string;
+  visualStyle: CarouselVisualStyleMode;
   promptSummary: string;
   provider: string;
   filePath: string;
@@ -75,6 +81,7 @@ export type GenerateCarouselVisualAssetsOptions = {
   cards: CarouselHtmlCard[];
   provider?: ImageAssetProvider;
   fallbackProviderName: AiProviderName | string;
+  fallbackState?: VisualAssetFallbackState;
 };
 
 export type CreateImageAssetProviderOptions = {
@@ -126,7 +133,8 @@ export async function generateCarouselVisualAssets(
   for (const [index, card] of options.cards.entries()) {
     const fileName = `visuals/${String(index + 1).padStart(2, "0")}.png`;
     const request = createImageAssetRequest(card);
-    const provider = options.provider;
+    const provider =
+      card.visualStyle === "photo-first" ? options.provider : undefined;
     const image = provider
       ? await generateProviderImage(provider, request)
       : {
@@ -152,12 +160,17 @@ export async function generateCarouselVisualAssets(
       schemaVersion: 1,
       slideIndex: card.slideIndex,
       assetSlotId: card.visualTreatment.assetSlotId,
+      visualStyle: card.visualStyle,
       promptSummary: request.promptSummary,
       provider: provider?.name ?? options.fallbackProviderName,
       filePath: fileName,
       fallbackState: provider
         ? "none"
-        : deriveFallbackState(options.fallbackProviderName)
+        : deriveFallbackState({
+            card,
+            fallbackProviderName: options.fallbackProviderName,
+            fallbackState: options.fallbackState
+          })
     });
   }
 
@@ -170,19 +183,37 @@ export async function generateCarouselVisualAssets(
 
 function createImageAssetRequest(card: CarouselHtmlCard): ImageAssetRequest {
   const promptSummary = sanitizeVisualPrompt(card.visualTreatment.prompt);
+  const prompt =
+    card.visualStyle === "photo-first"
+      ? createPhotoFirstPrompt(promptSummary)
+      : createStoryCardPrompt(promptSummary);
 
   return {
     schemaVersion: 1,
     slideIndex: card.slideIndex,
     assetSlotId: card.visualTreatment.assetSlotId,
     promptSummary,
-    prompt: [
-      "Create a 4:5 editorial illustration for an Uncommitted developer diary carousel.",
-      "Use abstract UI objects, terminals, notes, browser frames, charts, or desk objects.",
-      "Do not include readable secrets, raw code, private URLs, emails, tokens, or local file paths.",
-      `Visual intent: ${promptSummary}`
-    ].join("\n")
+    prompt
   };
+}
+
+function createPhotoFirstPrompt(promptSummary: string): string {
+  return [
+    "Create a natural 4:5 editorial photo for an Instagram photo dump.",
+    "Use cinematic but casual workspace mood, detail shot, aftermath shot, desk object, or quiet developer environment language.",
+    "No readable text, no code, no UI screenshots, no logos, no people faces, no file paths, no emails, no tokens, and no private URLs.",
+    "Not a poster, not an infographic, not an explanatory card, and not a text-overlay concept.",
+    `Visual intent: ${promptSummary}`
+  ].join("\n");
+}
+
+function createStoryCardPrompt(promptSummary: string): string {
+  return [
+    "Create a 4:5 local visual treatment for an Uncommitted story-card carousel.",
+    "Use abstract UI objects, terminals, notes, browser frames, charts, or desk objects.",
+    "Do not include readable secrets, raw code, private URLs, emails, tokens, logos, UI screenshots, or local file paths.",
+    `Visual intent: ${promptSummary}`
+  ].join("\n");
 }
 
 function sanitizeVisualPrompt(value: string): string {
@@ -386,10 +417,22 @@ function resolveEnvValue(
   return options.env === undefined ? process.env[key] : options.env[key];
 }
 
-function deriveFallbackState(
-  providerName: AiProviderName | string
-): VisualAssetFallbackState {
-  return providerName === "none" ? "no-provider" : "provider-unsupported";
+function deriveFallbackState(options: {
+  card: CarouselHtmlCard;
+  fallbackProviderName: AiProviderName | string;
+  fallbackState?: VisualAssetFallbackState;
+}): VisualAssetFallbackState {
+  if (options.fallbackState) {
+    return options.fallbackState;
+  }
+
+  if (options.card.visualStyle === "story-card") {
+    return "image-generation-disabled";
+  }
+
+  return options.fallbackProviderName === "none"
+    ? "no-provider"
+    : "provider-unsupported";
 }
 
 function isOpenAiImageResponse(value: unknown): value is {

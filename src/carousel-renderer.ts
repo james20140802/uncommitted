@@ -38,7 +38,9 @@ export type CarouselRenderInput = {
   slides: DiarySlide[];
 };
 
-export type CarouselVisualTreatmentKind = "illustration";
+export type CarouselVisualStyleMode = "photo-first" | "story-card";
+
+export type CarouselVisualTreatmentKind = "photo" | "story-card";
 
 export type CarouselVisualTreatment = {
   kind: CarouselVisualTreatmentKind;
@@ -52,6 +54,7 @@ export type CarouselHtmlCard = {
   slideIndex: number;
   pageNumber: number;
   pageCount: number;
+  visualStyle: CarouselVisualStyleMode;
   visualTreatment: CarouselVisualTreatment;
   html: string;
 };
@@ -105,6 +108,10 @@ export type RenderCarouselPngsOptions = {
   renderer?: CarouselHtmlToPngRenderer;
 };
 
+export type CreateCarouselHtmlCardsOptions = {
+  visualStyle?: CarouselVisualStyleMode;
+};
+
 const invalidStoryMessage =
   "story.json must include ordered slides with title and body.";
 const carouselWidth = 1080;
@@ -139,24 +146,30 @@ export function parseCarouselRenderInput(value: unknown): CarouselRenderInput {
   };
 }
 
-export function createCarouselHtmlCards(value: unknown): CarouselHtmlCard[] {
+export function createCarouselHtmlCards(
+  value: unknown,
+  options: CreateCarouselHtmlCardsOptions = {}
+): CarouselHtmlCard[] {
   const input = parseCarouselRenderInput(value);
   const pageCount = input.slides.length;
+  const visualStyle = options.visualStyle ?? "story-card";
 
   return input.slides.map((slide, index) => {
     const pageNumber = index + 1;
-    const visualTreatment = createVisualTreatment(slide, pageNumber);
+    const visualTreatment = createVisualTreatment(slide, pageNumber, visualStyle);
 
     return {
       fileName: `${String(pageNumber).padStart(2, "0")}.html`,
       slideIndex: slide.index,
       pageNumber,
       pageCount,
+      visualStyle,
       visualTreatment,
       html: renderCardHtml({
         targetDate: input.targetDate,
         projectMarker: input.projectMarker,
         slide,
+        visualStyle,
         visualTreatment,
         pageNumber,
         pageCount
@@ -383,31 +396,47 @@ function validateRenderedCard(): { ok: true } | { ok: false } {
 
   const card = document.querySelector<HTMLElement>(".card");
   const visualStage = document.querySelector<HTMLElement>(".visual-stage");
-  const content = document.querySelector<HTMLElement>(".content");
   const footer = document.querySelector<HTMLElement>(".footer");
-  const title = document.querySelector<HTMLElement>("h1");
-  const body = document.querySelector<HTMLElement>(".body");
   const visualImage = document.querySelector<HTMLImageElement>(".visual-asset");
+  const visualStyle = card?.dataset.carouselVisualStyle;
 
-  if (!card || !visualStage || !content || !footer || !title || !body) {
+  if (!card || !visualStage || !footer) {
     return { ok: false };
   }
 
   const cardRect = card.getBoundingClientRect();
   const visualRect = visualStage.getBoundingClientRect();
-  const contentRect = content.getBoundingClientRect();
   const footerRect = footer.getBoundingClientRect();
 
   if (
     overflowsOwnBox(card) ||
-    overflowsOwnBox(title) ||
-    overflowsOwnBox(body) ||
     overflowsCard(cardRect, visualRect) ||
-    overflowsCard(cardRect, contentRect) ||
-    overflowsCard(cardRect, footerRect) ||
-    visualRect.bottom > contentRect.top - 16 ||
-    contentRect.bottom > footerRect.top - 16
+    overflowsCard(cardRect, footerRect)
   ) {
+    return { ok: false };
+  }
+
+  if (visualStyle !== "photo-first") {
+    const content = document.querySelector<HTMLElement>(".content");
+    const title = document.querySelector<HTMLElement>("h1");
+    const body = document.querySelector<HTMLElement>(".body");
+
+    if (!content || !title || !body) {
+      return { ok: false };
+    }
+
+    const contentRect = content.getBoundingClientRect();
+
+    if (
+      overflowsOwnBox(title) ||
+      overflowsOwnBox(body) ||
+      overflowsCard(cardRect, contentRect) ||
+      visualRect.bottom > contentRect.top - 16 ||
+      contentRect.bottom > footerRect.top - 16
+    ) {
+      return { ok: false };
+    }
+  } else if (visualRect.bottom > footerRect.top - 16) {
     return { ok: false };
   }
 
@@ -443,7 +472,8 @@ async function composeCardHtml(options: {
 
   const dataUri = `data:image/png;base64,${image.toString("base64")}`;
   const visualAssetCss = `
-    .visual-stage.has-visual-asset {
+    .visual-stage.has-visual-asset,
+    .photo-stage.has-visual-asset {
       background: #eef2f7;
     }
 
@@ -456,7 +486,7 @@ async function composeCardHtml(options: {
       object-fit: cover;
     }
 
-    .visual-stage.has-visual-asset .visual-placeholder {
+    .visual-stage.has-visual-asset:not(.photo-stage) .visual-placeholder {
       padding: 18px 22px;
       background: rgba(247, 247, 245, 0.82);
       border: 2px solid rgba(15, 23, 42, 0.12);
@@ -468,7 +498,14 @@ async function composeCardHtml(options: {
 
   return options.card.html
     .replace("</style>", `${visualAssetCss}  </style>`)
-    .replace('class="visual-stage"', 'class="visual-stage has-visual-asset"')
+    .replace(
+      'class="photo-stage visual-stage"',
+      'class="photo-stage has-visual-asset visual-stage"'
+    )
+    .replace(
+      'class="visual-stage"',
+      'class="visual-stage has-visual-asset"'
+    )
     .replace(
       '<div class="visual-placeholder">',
       `${imgHtml}\n      <div class="visual-placeholder">`
@@ -591,14 +628,20 @@ function renderCardHtml(options: {
   targetDate: string;
   projectMarker: string;
   slide: DiarySlide;
+  visualStyle: CarouselVisualStyleMode;
   visualTreatment: CarouselVisualTreatment;
   pageNumber: number;
   pageCount: number;
 }): string {
+  if (options.visualStyle === "photo-first") {
+    return renderPhotoFirstCardHtml(options);
+  }
+
   const title = escapeHtml(options.slide.title.trim());
   const body = escapeHtml(options.slide.body.trim());
   const targetDate = escapeHtml(options.targetDate.trim());
   const projectMarker = escapeHtml(options.projectMarker.trim());
+  const visualStyle = escapeHtml(options.visualStyle);
   const visualAssetSlotId = escapeHtml(options.visualTreatment.assetSlotId);
   const visualKind = escapeHtml(options.visualTreatment.kind);
   const visualPrompt = escapeHtml(options.visualTreatment.prompt);
@@ -806,7 +849,7 @@ function renderCardHtml(options: {
 <body>
   <article class="card" aria-label="Uncommitted carousel card ${escapeHtml(
     pageIndicator
-  )}" data-layout-fit="base">
+  )}" data-layout-fit="base" data-carousel-visual-style="${visualStyle}">
     <header class="topline">
       <div class="project-marker">${projectMarker}</div>
       <time datetime="${targetDate}">${targetDate}</time>
@@ -836,16 +879,163 @@ function renderCardHtml(options: {
 
 function createVisualTreatment(
   slide: DiarySlide,
-  pageNumber: number
+  pageNumber: number,
+  visualStyle: CarouselVisualStyleMode
 ): CarouselVisualTreatment {
   const prompt = slide.visualMood.trim();
+  const isPhotoFirst = visualStyle === "photo-first";
 
   return {
-    kind: "illustration",
+    kind: isPhotoFirst ? "photo" : "story-card",
     assetSlotId: `slide-${String(pageNumber).padStart(2, "0")}-visual`,
     prompt,
-    altText: `Illustration concept: ${prompt}`
+    altText: `${isPhotoFirst ? "Photo-first" : "Story-card"} visual concept: ${prompt}`
   };
+}
+
+function renderPhotoFirstCardHtml(options: {
+  targetDate: string;
+  projectMarker: string;
+  slide: DiarySlide;
+  visualStyle: CarouselVisualStyleMode;
+  visualTreatment: CarouselVisualTreatment;
+  pageNumber: number;
+  pageCount: number;
+}): string {
+  const title = escapeHtml(options.slide.title.trim());
+  const targetDate = escapeHtml(options.targetDate.trim());
+  const projectMarker = escapeHtml(options.projectMarker.trim());
+  const visualStyle = escapeHtml(options.visualStyle);
+  const visualAssetSlotId = escapeHtml(options.visualTreatment.assetSlotId);
+  const visualKind = escapeHtml(options.visualTreatment.kind);
+  const visualPrompt = escapeHtml(options.visualTreatment.prompt);
+  const visualAltText = escapeHtml(options.visualTreatment.altText);
+  const pageIndicator = `${options.pageNumber} / ${options.pageCount}`;
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=1080, initial-scale=1">
+  <title>${title}</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f7f7f5;
+      color: #161616;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: #f7f7f5;
+    }
+
+    .card {
+      width: 1080px;
+      height: 1350px;
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 42px 46px 46px;
+      background: #f7f7f5;
+      color: #161616;
+      overflow: hidden;
+    }
+
+    .topline,
+    .footer {
+      position: relative;
+      z-index: 2;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 28px;
+      font-size: 28px;
+      font-weight: 800;
+      letter-spacing: 0;
+      line-height: 1.2;
+      color: #f8fafc;
+      text-shadow: 0 2px 16px rgba(15, 23, 42, 0.62);
+    }
+
+    .project-marker {
+      max-width: 640px;
+      overflow-wrap: anywhere;
+    }
+
+    .photo-stage {
+      position: absolute;
+      inset: 0;
+      z-index: 0;
+      background:
+        linear-gradient(135deg, rgba(15, 118, 110, 0.18), rgba(15, 23, 42, 0) 42%),
+        linear-gradient(315deg, rgba(234, 179, 8, 0.18), rgba(15, 23, 42, 0) 44%),
+        #dfe7ef;
+      overflow: hidden;
+    }
+
+    .photo-stage::after {
+      position: absolute;
+      inset: 0;
+      z-index: 1;
+      content: "";
+      background:
+        linear-gradient(180deg, rgba(15, 23, 42, 0.36), rgba(15, 23, 42, 0) 24%),
+        linear-gradient(0deg, rgba(15, 23, 42, 0.46), rgba(15, 23, 42, 0) 28%);
+      pointer-events: none;
+    }
+
+    .visual-placeholder {
+      position: absolute;
+      inset: 180px 120px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 0;
+      border: 2px solid rgba(15, 23, 42, 0.14);
+      background: rgba(248, 250, 252, 0.32);
+      color: transparent;
+      overflow: hidden;
+    }
+
+    .mark {
+      font-size: 34px;
+      font-weight: 900;
+      color: #f8fafc;
+    }
+  </style>
+</head>
+<body>
+  <article class="card" aria-label="Uncommitted carousel card ${escapeHtml(
+    pageIndicator
+  )}" data-layout-fit="base" data-carousel-visual-style="${visualStyle}">
+    <header class="topline">
+      <div class="project-marker">${projectMarker}</div>
+      <time datetime="${targetDate}">${targetDate}</time>
+    </header>
+    <section
+      class="photo-stage visual-stage"
+      data-visual-kind="${visualKind}"
+      data-asset-slot-id="${visualAssetSlotId}"
+      data-visual-prompt="${visualPrompt}"
+      aria-label="${visualAltText}"
+    >
+      <div class="visual-placeholder">${visualPrompt}</div>
+    </section>
+    <footer class="footer">
+      <div class="mark">Uncommitted</div>
+      <div>${escapeHtml(pageIndicator)}</div>
+    </footer>
+  </article>
+</body>
+</html>
+`;
 }
 
 function deriveProjectMarker(value: Record<string, unknown>): string {

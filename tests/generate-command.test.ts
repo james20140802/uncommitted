@@ -14,7 +14,7 @@ import type { GitActivityEvent } from "../src/collect-git-command.js";
 import type { DiaryDraft } from "../src/diary-generator.js";
 import { addProject, type ProjectRecord } from "../src/project-add.js";
 import type { StoryFormatPlan } from "../src/story-format-plan.js";
-import type { ImageAssetProvider } from "../src/visual-assets.js";
+import type { ImageAssetProvider, ImageAssetRequest } from "../src/visual-assets.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -50,7 +50,9 @@ describe("generate command", () => {
     const activitySummary = await readJson(join(outputDir, "activity-summary.json"));
     const story = await readJson(join(outputDir, "story.json"));
     const caption = await readFile(join(outputDir, "caption.txt"), "utf8");
-    const metadata = await readJson(join(outputDir, "metadata.json"));
+    const metadata = (await readJson(join(outputDir, "metadata.json"))) as {
+      visualAssets: unknown[];
+    };
     const safetyReport = await readJson(join(outputDir, "safety-report.json"));
     const visualAsset = await readFile(join(outputDir, "visuals", "01.png"));
 
@@ -109,6 +111,8 @@ describe("generate command", () => {
       },
       exported: false,
       published: false,
+      carouselVisualStyle: "story-card",
+      requestedCarouselVisualStyle: "photo-first",
       files: [
         "activity-summary.json",
         "story.json",
@@ -124,6 +128,7 @@ describe("generate command", () => {
           schemaVersion: 1,
           slideIndex: 1,
           assetSlotId: "slide-01-visual",
+          visualStyle: "story-card",
           provider: "mock",
           filePath: "visuals/01.png",
           fallbackState: "provider-unsupported",
@@ -176,7 +181,9 @@ describe("generate command", () => {
       aiProvider: provider
     });
     const outputDir = join(fixture.draftRoot, "2026-05-12", "rev-001");
-    const metadata = await readJson(join(outputDir, "metadata.json"));
+    const metadata = (await readJson(join(outputDir, "metadata.json"))) as {
+      visualAssets: unknown[];
+    };
     const safetyReport = await readJson(join(outputDir, "safety-report.json"));
 
     expect(exitCode).toBe(0);
@@ -221,7 +228,9 @@ describe("generate command", () => {
     const activitySummary = await readJson(join(outputDir, "activity-summary.json"));
     const story = await readJson(join(outputDir, "story.json"));
     const caption = await readFile(join(outputDir, "caption.txt"), "utf8");
-    const metadata = await readJson(join(outputDir, "metadata.json"));
+    const metadata = (await readJson(join(outputDir, "metadata.json"))) as {
+      visualAssets: unknown[];
+    };
     const safetyReport = await readJson(join(outputDir, "safety-report.json"));
     const latest = await readJson(join(fixture.draftRoot, "latest.json"));
 
@@ -494,11 +503,9 @@ describe("generate command", () => {
     });
     const outputDir = join(fixture.draftRoot, "2026-05-12", "rev-001");
 
-    expect(exitCode).toBe(5);
-    expect(stdout).toEqual([]);
-    expect(stderr).toEqual([
-      "Visual generation failed. Check image provider configuration."
-    ]);
+    expect(exitCode).toBe(0);
+    expect(stdout).toEqual([`Generated text draft for 2026-05-12: ${outputDir}`]);
+    expect(stderr).toEqual([]);
     await expect(readJson(join(outputDir, "activity-summary.json"))).resolves.toMatchObject({
       targetDate: "2026-05-12"
     });
@@ -511,8 +518,51 @@ describe("generate command", () => {
     await expect(readJson(join(outputDir, "safety-report.json"))).resolves.toMatchObject({
       status: "safe"
     });
-    await expect(readFile(join(outputDir, "metadata.json"), "utf8")).rejects.toMatchObject({
-      code: "ENOENT"
+    const metadata = (await readJson(join(outputDir, "metadata.json"))) as {
+      visualAssets: unknown[];
+    };
+
+    expect(metadata).toMatchObject({
+      carouselVisualStyle: "story-card",
+      requestedCarouselVisualStyle: "photo-first"
+    });
+    expect(metadata.visualAssets[0]).toMatchObject({
+      visualStyle: "story-card",
+      fallbackState: "provider-failed",
+      filePath: "visuals/01.png"
+    });
+  });
+
+  it("keeps photo-first mode when image generation succeeds", async () => {
+    const { io, stdout, stderr } = createIo();
+    const fixture = await createRegisteredProjectFixture();
+    const imageAssetProvider = new RecordingImageAssetProvider();
+
+    await writeGitEvent(fixture.project, "2026-05-12");
+
+    const exitCode = await runCli(["generate", "today"], io, {
+      homeDir: fixture.homeDir,
+      now: () => "2026-05-12T23:30:00.000Z",
+      aiProvider: new TaskAwareProvider(),
+      imageAssetProvider
+    });
+    const outputDir = join(fixture.draftRoot, "2026-05-12", "rev-001");
+    const metadata = (await readJson(join(outputDir, "metadata.json"))) as {
+      visualAssets: unknown[];
+    };
+
+    expect(exitCode).toBe(0);
+    expect(stderr).toEqual([]);
+    expect(stdout).toEqual([`Generated text draft for 2026-05-12: ${outputDir}`]);
+    expect(imageAssetProvider.requests[0]?.prompt).toContain("editorial photo");
+    expect(metadata).toMatchObject({
+      carouselVisualStyle: "photo-first",
+      requestedCarouselVisualStyle: "photo-first"
+    });
+    expect(metadata.visualAssets[0]).toMatchObject({
+      visualStyle: "photo-first",
+      fallbackState: "none",
+      filePath: "visuals/01.png"
     });
   });
 
@@ -604,6 +654,23 @@ class FailingImageAssetProvider implements ImageAssetProvider {
 
   async generateImageAsset(): Promise<never> {
     throw new Error("image provider unavailable");
+  }
+}
+
+class RecordingImageAssetProvider implements ImageAssetProvider {
+  readonly name = "fixture-image";
+  readonly requests: ImageAssetRequest[] = [];
+
+  async generateImageAsset(request: ImageAssetRequest) {
+    this.requests.push(request);
+
+    return {
+      mimeType: "image/png" as const,
+      data: Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=",
+        "base64"
+      )
+    };
   }
 }
 
