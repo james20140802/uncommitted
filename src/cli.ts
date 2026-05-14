@@ -164,10 +164,11 @@ async function runSchedule(
     }
 
     try {
+      const executablePath = realpathSync.native(process.argv[1]);
       const plist = buildLaunchAgentPlist({
         homeDir: options.homeDir,
         scheduleTime,
-        executablePath: process.argv[1]
+        executablePath
       });
 
       await installScheduler(plist, {

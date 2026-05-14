@@ -657,6 +657,34 @@ describe("cli", () => {
     vi.unstubAllGlobals();
   });
 
+  it("rejects invalid schedule time", async () => {
+    vi.stubGlobal("process", { ...process, platform: "darwin" });
+    const { io, stdout, stderr } = createIo();
+
+    const exitCode = await runCli(["schedule", "install", "--time", "25:00"], io);
+
+    expect(exitCode).toBe(1);
+    expect(stdout).toEqual([]);
+    expect(stderr).toEqual(["Schedule time must use 24-hour HH:mm format."]);
+    vi.unstubAllGlobals();
+  });
+
+  it("returns error code when schedule installation fails", async () => {
+    vi.stubGlobal("process", { ...process, platform: "darwin" });
+    const { io, stdout, stderr } = createIo();
+
+    const exitCode = await runCli(["schedule", "install", "--time", "23:30"], io, {
+      schedulerExecutor: async () => {
+        throw new Error("launchctl failed");
+      }
+    });
+
+    expect(exitCode).toBe(1);
+    expect(stdout).toEqual([]);
+    expect(stderr).toEqual(["launchctl failed"]);
+    vi.unstubAllGlobals();
+  });
+
   it("routes doctor to the environment report handler", async () => {
     const { io, stdout, stderr } = createIo();
     const directory = await mkdtemp(join(tmpdir(), "uncommitted-cli-doctor-"));

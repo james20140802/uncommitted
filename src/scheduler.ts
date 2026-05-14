@@ -120,6 +120,9 @@ export async function installScheduler(
 
   const executor = options.executor ?? defaultLaunchctlExecutor;
 
+  const logs = resolveSchedulerLogPaths(options);
+  await mkdir(dirname(logs.stdout), { recursive: true });
+
   await mkdir(dirname(plist.plistPath), { recursive: true });
   await writeFile(plist.plistPath, plist.xml, "utf8");
 
