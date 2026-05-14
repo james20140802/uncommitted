@@ -618,11 +618,12 @@ describe("cli", () => {
       schedulerExecutor: async () => ({ stdout: "", stderr: "" })
     });
 
+    expect(exitCode).toBe(0);
+    expect(stderr).toEqual([]);
+
     const plistPath = join(homeDir, "Library", "LaunchAgents", "com.uncommitted.schedule.plist");
     const plistContent = await readFile(plistPath, "utf8");
 
-    expect(exitCode).toBe(0);
-    expect(stderr).toEqual([]);
     expect(stdout.join("\n")).toContain("Installed macOS schedule for 23:30.");
     expect(plistContent).toContain("<key>Hour</key>");
     expect(plistContent).toContain("<integer>23</integer>");

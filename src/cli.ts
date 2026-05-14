@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 
 import { realpathSync } from "node:fs";
-import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   collectGitForRegisteredProjects,
