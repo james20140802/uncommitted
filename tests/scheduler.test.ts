@@ -92,6 +92,19 @@ describe("macOS scheduler plist helpers", () => {
     });
   });
 
+  it("supports an absolute executablePath in the generated plist", () => {
+    const homeDir = "/tmp/uncommitted-scheduler-home";
+    const executablePath = "/usr/local/bin/uncommitted";
+
+    const plist = buildLaunchAgentPlist({
+      homeDir,
+      scheduleTime: "23:30",
+      executablePath
+    });
+
+    expect(plist.xml).toContain(`<string>${executablePath}</string>`);
+  });
+
   it("rejects invalid schedule times with a short actionable error", () => {
     for (const scheduleTime of ["", "9:30", "24:00", "23:60", "23:30:00"]) {
       expect(() => parseScheduleTime(scheduleTime)).toThrow(
