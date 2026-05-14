@@ -32,14 +32,35 @@ describe("carousel renderer", () => {
     expect(cards[0]?.html).toContain("1 / 3");
     expect(cards[0]?.html).toContain("Uncommitted");
     expect(cards[0]?.visualTreatment).toEqual({
-      kind: "illustration",
+      kind: "story-card",
       assetSlotId: "slide-01-visual",
       prompt: "clean card",
-      altText: "Illustration concept: clean card"
+      altText: "Story-card visual concept: clean card"
     });
+    expect(cards[0]?.visualStyle).toBe("story-card");
     expect(cards[0]?.html).toContain("class=\"visual-stage\"");
-    expect(cards[0]?.html).toContain("data-visual-kind=\"illustration\"");
+    expect(cards[0]?.html).toContain("data-carousel-visual-style=\"story-card\"");
+    expect(cards[0]?.html).toContain("data-visual-kind=\"story-card\"");
     expect(cards[0]?.html).toContain("data-asset-slot-id=\"slide-01-visual\"");
+  });
+
+  it("creates photo-first cards with image-forward markup and no large body copy", () => {
+    const cards = createCarouselHtmlCards(createStoryDraft(), {
+      visualStyle: "photo-first"
+    });
+
+    expect(cards[0]?.visualStyle).toBe("photo-first");
+    expect(cards[0]?.visualTreatment).toMatchObject({
+      kind: "photo",
+      assetSlotId: "slide-01-visual",
+      altText: "Photo-first visual concept: clean card"
+    });
+    expect(cards[0]?.html).toContain("data-carousel-visual-style=\"photo-first\"");
+    expect(cards[0]?.html).toContain("data-visual-kind=\"photo\"");
+    expect(cards[0]?.html).not.toContain(
+      "The renderer now has a contract before it gets a camera."
+    );
+    expect(cards[0]?.html).not.toContain("<p class=\"body\"");
   });
 
   it("escapes slide and visual treatment content before writing HTML", () => {
@@ -193,6 +214,39 @@ describe("carousel renderer", () => {
     ]);
     await expect(readFile(join(revision.outputDir, "story.json"), "utf8")).resolves.toBe(
       "{\"schemaVersion\":1}\n"
+    );
+  });
+
+  it("renders photo-first PNGs with visual assets as the primary surface", async () => {
+    const revision = await createTestRevision();
+    const cards = createCarouselHtmlCards(createStoryDraft(), {
+      visualStyle: "photo-first"
+    });
+    const renderer = new RecordingPngRenderer();
+
+    await mkdir(join(revision.outputDir, "visuals"), { recursive: true });
+    await writeFile(join(revision.outputDir, "visuals", "01.png"), fixturePng);
+
+    await renderCarouselPngs({
+      revision,
+      cards: [cards[0]],
+      visualAssets: [
+        {
+          slideIndex: 1,
+          assetSlotId: "slide-01-visual",
+          filePath: "visuals/01.png"
+        }
+      ],
+      renderer
+    });
+
+    expect(renderer.calls[0]?.html).toContain("class=\"visual-asset\"");
+    expect(renderer.calls[0]?.html).toContain(
+      "class=\"photo-stage has-visual-asset visual-stage\""
+    );
+    expect(renderer.calls[0]?.html).not.toContain("<p class=\"body\"");
+    expect(renderer.calls[0]?.html).not.toContain(
+      "The renderer now has a contract before it gets a camera."
     );
   });
 

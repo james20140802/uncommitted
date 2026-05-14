@@ -4,6 +4,7 @@ import {
   CarouselPngRenderError,
   CarouselRenderInputError,
   createCarouselHtmlCards,
+  type CarouselVisualStyleMode,
   renderCarouselPngs,
   type CarouselHtmlToPngRenderer,
   type CarouselHtmlCard,
@@ -88,7 +89,7 @@ export async function runRenderCommand(
 
   assertDraftIsRenderable(metadata);
 
-  const cards = createCards(story);
+  const cards = createCardsWithStyle(story, readCarouselVisualStyle(metadata));
   const visualAssets = readVisualAssets(metadata);
   assertVisualAssetsCoverCards(cards, visualAssets);
 
@@ -210,9 +211,9 @@ function assertDraftIsRenderable(metadata: Record<string, unknown>): void {
   }
 }
 
-function createCards(story: unknown) {
+function createCardsWithStyle(story: unknown, visualStyle: CarouselVisualStyleMode) {
   try {
-    return createCarouselHtmlCards(story);
+    return createCarouselHtmlCards(story, { visualStyle });
   } catch (error) {
     if (error instanceof CarouselRenderInputError) {
       throw new RenderCommandError(
@@ -223,6 +224,12 @@ function createCards(story: unknown) {
 
     throw error;
   }
+}
+
+function readCarouselVisualStyle(
+  metadata: Record<string, unknown>
+): CarouselVisualStyleMode {
+  return metadata.carouselVisualStyle === "photo-first" ? "photo-first" : "story-card";
 }
 
 function readVisualAssets(

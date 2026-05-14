@@ -8,6 +8,7 @@ export type InitAnswers = {
   draftRoot?: string;
   scheduleTime?: string;
   aiProvider?: string;
+  carouselVisualStyle?: string;
   persona?: string;
   roastLevel?: string;
 };
@@ -22,6 +23,7 @@ export type InitConfig = {
   draftRoot: string;
   scheduleTime: string;
   aiProvider: string;
+  carouselVisualStyle: "photo-first" | "story-card";
   persona: string;
   roastLevel: number;
 };
@@ -35,6 +37,7 @@ const defaultAnswers = {
   draftRoot: "~/Uncommitted/drafts",
   scheduleTime: "23:30",
   aiProvider: "none",
+  carouselVisualStyle: "photo-first",
   persona: "project-local AI coworker writing its own off-the-record diary",
   roastLevel: "2"
 };
@@ -57,6 +60,9 @@ export async function runInitCommand(
   const answers = await resolveAnswers(options.answers);
   const scheduleTime = parseScheduleTime(answers.scheduleTime);
   const aiProvider = parseAiProvider(answers.aiProvider);
+  const carouselVisualStyle = parseCarouselVisualStyle(
+    answers.carouselVisualStyle
+  );
   const roastLevel = parseRoastLevel(answers.roastLevel);
   const paths = resolveConfigPaths({
     homeDir: options.homeDir,
@@ -74,6 +80,7 @@ export async function runInitCommand(
     draftRoot: paths.defaultDraftRoot,
     scheduleTime,
     aiProvider,
+    carouselVisualStyle,
     persona: answers.persona,
     roastLevel
   };
@@ -106,6 +113,8 @@ async function resolveAnswers(answers: InitAnswers = {}): Promise<Required<InitA
       draftRoot: answers.draftRoot ?? defaultAnswers.draftRoot,
       scheduleTime: answers.scheduleTime ?? defaultAnswers.scheduleTime,
       aiProvider: answers.aiProvider ?? defaultAnswers.aiProvider,
+      carouselVisualStyle:
+        answers.carouselVisualStyle ?? defaultAnswers.carouselVisualStyle,
       persona: answers.persona ?? defaultAnswers.persona,
       roastLevel: answers.roastLevel ?? defaultAnswers.roastLevel
     };
@@ -121,6 +130,11 @@ async function resolveAnswers(answers: InitAnswers = {}): Promise<Required<InitA
         readline,
         "AI provider, or none to decide later",
         defaultAnswers.aiProvider
+      ),
+      carouselVisualStyle: await ask(
+        readline,
+        "Carousel visual style",
+        defaultAnswers.carouselVisualStyle
       ),
       persona: await ask(readline, "Persona", defaultAnswers.persona),
       roastLevel: await ask(readline, "Roast level 0-5", defaultAnswers.roastLevel)
@@ -166,6 +180,16 @@ function parseAiProvider(value: string): string {
     throw new Error(
       `AI provider must be one of: ${supportedAiProviders.join(", ")}.`
     );
+  }
+
+  return normalized;
+}
+
+function parseCarouselVisualStyle(value: string): "photo-first" | "story-card" {
+  const normalized = value.trim().toLowerCase();
+
+  if (normalized !== "photo-first" && normalized !== "story-card") {
+    throw new Error("Carousel visual style must be one of: photo-first, story-card.");
   }
 
   return normalized;

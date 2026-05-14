@@ -10,7 +10,10 @@ import {
   type AiProviderConfig,
   type AiProviderName
 } from "./ai-provider.js";
-import { createCarouselHtmlCards } from "./carousel-renderer.js";
+import {
+  createCarouselHtmlCards,
+  type CarouselVisualStyleMode
+} from "./carousel-renderer.js";
 import type { GitActivityEvent } from "./collect-git-command.js";
 import { resolveConfigPaths } from "./config-paths.js";
 import {
@@ -90,12 +93,14 @@ export type GenerateCommandResult = {
 
 type GenerateConfig = AiProviderConfig & {
   draftRoot: string;
+  carouselVisualStyle: CarouselVisualStyleMode;
 };
 
 type GenerateConfigFile = {
   schemaVersion: 1;
   draftRoot: string;
   aiProvider: AiProviderName;
+  carouselVisualStyle?: CarouselVisualStyleMode;
   persona: string;
   roastLevel: number;
 };
@@ -126,6 +131,8 @@ type DraftMetadataBase = {
   exported: false;
   published: false;
   files: string[];
+  requestedCarouselVisualStyle: CarouselVisualStyleMode;
+  carouselVisualStyle: CarouselVisualStyleMode;
 };
 
 type DraftMetadata = DraftMetadataBase & {
@@ -206,10 +213,6 @@ export async function runGenerateCommand(
   );
 
   const provider = options.aiProvider ?? createAiProvider(config);
-  const imageAssetProvider = await runVisualAssetGeneration(
-    async () => options.imageAssetProvider ?? createImageAssetProvider(config),
-    draftRevision.outputDir
-  );
   const recentFormats = await loadRecentStoryFormatHistory({
     homeDir: options.homeDir
   });
@@ -253,7 +256,9 @@ export async function runGenerateCommand(
     status: "draft",
     exported: false,
     published: false,
-    files: [...baseDraftFiles]
+    files: [...baseDraftFiles],
+    requestedCarouselVisualStyle: config.carouselVisualStyle,
+    carouselVisualStyle: config.carouselVisualStyle
   };
   const safetyReport = createSafetyReport(
     buildDraftSafetyText({ draft, caption, metadata: baseMetadata })
@@ -291,20 +296,23 @@ export async function runGenerateCommand(
     );
   }
 
-  const visualAssets = await runVisualAssetGeneration(
-    () =>
-      generateCarouselVisualAssets({
-        revision: draftRevision,
-        cards: createCarouselHtmlCards(draft),
-        provider: imageAssetProvider,
-        fallbackProviderName: config.provider
-      }),
-    draftRevision.outputDir
-  );
+  const imageAssetProvider = await resolveImageAssetProvider({
+    config,
+    injectedProvider: options.imageAssetProvider
+  });
+  const { visualAssets, visualStyle } = await generateVisualAssetsForDraft({
+    revision: draftRevision,
+    draft,
+    requestedVisualStyle: config.carouselVisualStyle,
+    provider: imageAssetProvider,
+    fallbackProviderName: config.provider,
+    outputDir: draftRevision.outputDir
+  });
   const metadata = buildDraftMetadata({
     baseMetadata,
     safetyReport,
-    visualAssets
+    visualAssets,
+    visualStyle
   });
 
   await runDraftStorageOperation(async () => {
@@ -338,9 +346,12 @@ function buildDraftMetadata(options: {
   baseMetadata: DraftMetadataBase;
   safetyReport: SafetyReport;
   visualAssets: VisualAssetGenerationResult;
+  visualStyle?: CarouselVisualStyleMode;
 }): DraftMetadata {
   return {
     ...options.baseMetadata,
+    carouselVisualStyle:
+      options.visualStyle ?? options.baseMetadata.carouselVisualStyle,
     files: [...baseDraftFiles, ...options.visualAssets.files],
     exportPolicy: options.safetyReport.status,
     exportReady: options.safetyReport.exportAllowed,
@@ -399,6 +410,104 @@ async function runVisualAssetGeneration<T>(
   }
 }
 
+async function resolveImageAssetProvider(options: {
+  config: GenerateConfig;
+  injectedProvider?: ImageAssetProvider;
+}): Promise<ImageAssetProvider | undefined> {
+  if (options.config.carouselVisualStyle === "story-card") {
+    return undefined;
+  }
+
+  if (options.injectedProvider) {
+    return options.injectedProvider;
+  }
+
+  try {
+    return createImageAssetProvider(options.config);
+  } catch (error) {
+    if (error instanceof VisualAssetGenerationError) {
+      return undefined;
+    }
+
+    throw error;
+  }
+}
+
+async function generateVisualAssetsForDraft(options: {
+  revision: Parameters<typeof generateCarouselVisualAssets>[0]["revision"];
+  draft: DiaryDraft;
+  requestedVisualStyle: CarouselVisualStyleMode;
+  provider?: ImageAssetProvider;
+  fallbackProviderName: AiProviderName;
+  outputDir: string;
+}): Promise<{
+  visualAssets: VisualAssetGenerationResult;
+  visualStyle: CarouselVisualStyleMode;
+}> {
+  const initialVisualStyle =
+    options.requestedVisualStyle === "photo-first" && !options.provider
+      ? "story-card"
+      : options.requestedVisualStyle;
+  const fallbackState =
+    initialVisualStyle === "story-card" &&
+    options.requestedVisualStyle === "story-card"
+      ? "image-generation-disabled"
+      : initialVisualStyle === "story-card" &&
+          options.requestedVisualStyle === "photo-first"
+        ? options.fallbackProviderName === "none"
+          ? "no-provider"
+          : "provider-unsupported"
+        : undefined;
+
+  try {
+    const visualAssets = await runVisualAssetGeneration(
+      () =>
+        generateCarouselVisualAssets({
+          revision: options.revision,
+          cards: createCarouselHtmlCards(options.draft, {
+            visualStyle: initialVisualStyle
+          }),
+          provider: options.provider,
+          fallbackProviderName: options.fallbackProviderName,
+          fallbackState
+        }),
+      options.outputDir
+    );
+
+    return {
+      visualAssets,
+      visualStyle: initialVisualStyle
+    };
+  } catch (error) {
+    if (
+      error instanceof GenerateCommandError &&
+      error.code === "visual-generation-failed" &&
+      options.requestedVisualStyle === "photo-first" &&
+      options.provider
+    ) {
+      const visualAssets = await runVisualAssetGeneration(
+        () =>
+          generateCarouselVisualAssets({
+            revision: options.revision,
+            cards: createCarouselHtmlCards(options.draft, {
+              visualStyle: "story-card"
+            }),
+            fallbackProviderName: options.fallbackProviderName,
+            fallbackState: "provider-failed"
+          }),
+        options.outputDir
+      );
+
+      return {
+        visualAssets,
+        visualStyle: "story-card"
+      };
+    }
+
+    throw error;
+  }
+}
+
 function parseGenerateDate(
   args: string[],
   now: (() => string) | undefined
@@ -450,6 +559,7 @@ async function readGenerateConfig(
         draftRoot: parsed.draftRoot
       }).defaultDraftRoot,
       provider: parsed.aiProvider,
+      carouselVisualStyle: parsed.carouselVisualStyle ?? "photo-first",
       persona: parsed.persona,
       roastLevel: parsed.roastLevel
     };
@@ -597,12 +707,20 @@ function isGenerateConfigFile(value: unknown): value is GenerateConfigFile {
     value.schemaVersion === 1 &&
     typeof value.draftRoot === "string" &&
     isAiProviderName(value.aiProvider) &&
+    (value.carouselVisualStyle === undefined ||
+      isCarouselVisualStyleMode(value.carouselVisualStyle)) &&
     typeof value.persona === "string" &&
     typeof value.roastLevel === "number" &&
     Number.isInteger(value.roastLevel) &&
     value.roastLevel >= 0 &&
     value.roastLevel <= 5
   );
+}
+
+function isCarouselVisualStyleMode(
+  value: unknown
+): value is CarouselVisualStyleMode {
+  return value === "photo-first" || value === "story-card";
 }
 
 function isProjectsFile(value: unknown): value is ProjectsFile {

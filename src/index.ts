@@ -33,6 +33,7 @@ export type {
   CarouselPngVisualAsset,
   CarouselRenderInput,
   CarouselRenderInputErrorCode,
+  CarouselVisualStyleMode,
   CarouselVisualTreatment,
   CarouselVisualTreatmentKind,
   RenderCarouselPngsOptions

@@ -15,6 +15,7 @@ describe("init command", () => {
         draftRoot,
         scheduleTime: "23:30",
         aiProvider: "openai",
+        carouselVisualStyle: "photo-first",
         persona: "dry coworker",
         roastLevel: "3"
       }
@@ -27,6 +28,7 @@ describe("init command", () => {
         draftRoot: join(homeDir, "diary-drafts"),
         scheduleTime: "23:30",
         aiProvider: "openai",
+        carouselVisualStyle: "photo-first",
         persona: "dry coworker",
         roastLevel: 3
       });
@@ -118,8 +120,14 @@ describe("init command", () => {
 
     const config = JSON.parse(
       await readFile(join(homeDir, ".uncommitted", "config.json"), "utf8")
-    ) as { aiProvider: string; persona: string; roastLevel: number };
+    ) as {
+      aiProvider: string;
+      carouselVisualStyle: string;
+      persona: string;
+      roastLevel: number;
+    };
     expect(config.aiProvider).toBe("none");
+    expect(config.carouselVisualStyle).toBe("photo-first");
     expect(config.persona).toBe(
       "project-local AI coworker writing its own off-the-record diary"
     );

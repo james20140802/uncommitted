@@ -127,19 +127,20 @@ describe("visual asset generation", () => {
         schemaVersion: 1,
         slideIndex: 1,
         assetSlotId: "slide-01-visual",
+        visualStyle: "story-card",
         provider: "mock",
         filePath: "visuals/01.png",
-        fallbackState: "provider-unsupported"
+        fallbackState: "image-generation-disabled"
       },
       {
         slideIndex: 2,
         assetSlotId: "slide-02-visual",
-        fallbackState: "provider-unsupported"
+        fallbackState: "image-generation-disabled"
       },
       {
         slideIndex: 3,
         assetSlotId: "slide-03-visual",
-        fallbackState: "provider-unsupported"
+        fallbackState: "image-generation-disabled"
       }
     ]);
 
@@ -169,7 +170,8 @@ describe("visual asset generation", () => {
               "terminal near dev@example.com /Users/dev/private OPENAI_API_KEY=sk-live-secret123 `const token = process.env.SECRET`"
           }
         ]
-      })
+      }),
+      { visualStyle: "photo-first" }
     );
     const provider = new RecordingImageProvider();
 
@@ -181,7 +183,14 @@ describe("visual asset generation", () => {
     });
 
     expect(provider.requests).toHaveLength(1);
-    expect(provider.requests[0]?.prompt).toContain("4:5 editorial illustration");
+    expect(provider.requests[0]?.prompt).toContain("4:5 editorial photo");
+    expect(provider.requests[0]?.prompt).toContain("Instagram photo dump");
+    expect(provider.requests[0]?.prompt).toContain("No readable text");
+    expect(provider.requests[0]?.prompt).toContain("no code");
+    expect(provider.requests[0]?.prompt).toContain("no UI screenshots");
+    expect(provider.requests[0]?.prompt).toContain("no logos");
+    expect(provider.requests[0]?.prompt).toContain("no people faces");
+    expect(provider.requests[0]?.prompt).toContain("no private URLs");
     expect(provider.requests[0]?.prompt).toContain("[redacted-email]");
     expect(provider.requests[0]?.prompt).toContain("[redacted-path]");
     expect(provider.requests[0]?.prompt).toContain("[redacted-secret]");
@@ -194,14 +203,40 @@ describe("visual asset generation", () => {
     expect(result.assets[0]).toMatchObject({
       provider: "fixture-image",
       fallbackState: "none",
+      visualStyle: "photo-first",
       promptSummary:
         "terminal near [redacted-email] [redacted-path] [redacted-secret] [redacted-code]"
     });
   });
 
+  it("does not call hosted image providers for story-card mode", async () => {
+    const revision = await createTestRevision();
+    const cards = createCarouselHtmlCards(createStoryDraft(), {
+      visualStyle: "story-card"
+    });
+    const provider = new RecordingImageProvider();
+
+    const result = await generateCarouselVisualAssets({
+      revision,
+      cards: [cards[0]],
+      provider,
+      fallbackProviderName: "mock"
+    });
+
+    expect(provider.requests).toHaveLength(0);
+    expect(result.assets[0]).toMatchObject({
+      visualStyle: "story-card",
+      provider: "mock",
+      fallbackState: "image-generation-disabled",
+      filePath: "visuals/01.png"
+    });
+  });
+
   it("preserves existing draft artifacts when an image provider fails", async () => {
     const revision = await createTestRevision();
-    const cards = createCarouselHtmlCards(createStoryDraft());
+    const cards = createCarouselHtmlCards(createStoryDraft(), {
+      visualStyle: "photo-first"
+    });
     const preservedArtifact = join(revision.outputDir, "story.json");
 
     await mkdir(revision.outputDir, { recursive: true });
