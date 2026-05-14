@@ -17,6 +17,11 @@ import {
   type CarouselHtmlToPngRenderer
 } from "../src/carousel-renderer.js";
 import { isDirectRun, runCli } from "../src/cli.js";
+import type {
+  AiProvider,
+  AiProviderRawResponse,
+  AiStructuredGenerationRequest
+} from "../src/ai-provider.js";
 import {
   createDraftRevision,
   writeLatestDraftPointer
@@ -461,6 +466,156 @@ describe("cli", () => {
     expect(stderr).toEqual(["Could not render carousel PNGs."]);
   });
 
+  it("runs the scheduled local workflow immediately", async () => {
+    const { io, stdout, stderr } = createIo();
+    const fixture = await createScheduleRunNowFixture();
+    const renderer = new RecordingPngRenderer();
+
+    const exitCode = await runCli(["schedule", "run-now"], io, {
+      homeDir: fixture.homeDir,
+      now: () => "2026-05-31T23:30:00.000Z",
+      aiProvider: new ScheduleAiProvider(),
+      carouselRenderer: renderer
+    });
+
+    const renderedPng = await readFile(
+      join(fixture.draftRoot, "2026-05-31", "rev-001", "carousel", "01.png")
+    );
+
+    expect(exitCode).toBe(0);
+    expect(stderr).toEqual([]);
+    expect(stdout.join("\n")).toContain("Collected Git activity for 1 project.");
+    expect(stdout.join("\n")).toContain(
+      `Generated text draft for 2026-05-31: ${join(
+        fixture.draftRoot,
+        "2026-05-31",
+        "rev-001"
+      )}`
+    );
+    expect(stdout.join("\n")).toContain(
+      `Rendered carousel for 2026-05-31: ${join(
+        fixture.draftRoot,
+        "2026-05-31",
+        "rev-001"
+      )}`
+    );
+    expect(renderedPng).toEqual(pngBytes);
+    expect(renderer.calls).toHaveLength(3);
+  });
+
+  it("uses one target date across schedule run-now steps", async () => {
+    const { io, stdout, stderr } = createIo();
+    const fixture = await createScheduleRunNowFixture();
+    const renderer = new RecordingPngRenderer();
+    const clockValues = [
+      "2026-05-31T23:59:59.000Z",
+      "2026-06-01T00:00:01.000Z",
+      "2026-06-01T00:00:02.000Z"
+    ];
+
+    const exitCode = await runCli(["schedule", "run-now"], io, {
+      homeDir: fixture.homeDir,
+      now: () => clockValues.shift() ?? "2026-06-01T00:00:03.000Z",
+      aiProvider: new ScheduleAiProvider(),
+      carouselRenderer: renderer
+    });
+
+    const renderedPng = await readFile(
+      join(fixture.draftRoot, "2026-05-31", "rev-001", "carousel", "01.png")
+    );
+
+    await expect(
+      access(join(fixture.draftRoot, "2026-06-01", "rev-001", "story.json"))
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    expect(exitCode).toBe(0);
+    expect(stderr).toEqual([]);
+    expect(stdout.join("\n")).toContain("Generated text draft for 2026-05-31");
+    expect(stdout.join("\n")).toContain("Rendered carousel for 2026-05-31");
+    expect(renderedPng).toEqual(pngBytes);
+  });
+
+  it("returns collection exit code for schedule run-now when collection fails", async () => {
+    const { io, stdout, stderr } = createIo();
+    const directory = await mkdtemp(join(tmpdir(), "uncommitted-cli-schedule-empty-"));
+
+    const exitCode = await runCli(["schedule", "run-now"], io, {
+      homeDir: join(directory, "home"),
+      now: () => "2026-05-31T23:30:00.000Z",
+      aiProvider: new ScheduleAiProvider(),
+      carouselRenderer: new RecordingPngRenderer()
+    });
+
+    expect(exitCode).toBe(3);
+    expect(stdout).toEqual([]);
+    expect(stderr).toEqual([
+      "No registered projects. Run `uncommitted project add .` first."
+    ]);
+  });
+
+  it("preserves collect output when schedule run-now generation fails", async () => {
+    const { io, stdout, stderr } = createIo();
+    const fixture = await createScheduleRunNowFixture();
+
+    const exitCode = await runCli(["schedule", "run-now"], io, {
+      homeDir: fixture.homeDir,
+      now: () => "2026-05-31T23:30:00.000Z",
+      aiProvider: new ScheduleAiProvider({ fail: true }),
+      carouselRenderer: new RecordingPngRenderer()
+    });
+
+    expect(exitCode).toBe(4);
+    expect(stdout.join("\n")).toContain("Collected Git activity for 1 project.");
+    expect(stderr).toEqual([
+      "AI provider failed. Check provider configuration."
+    ]);
+  });
+
+  it("preserves generated draft output when schedule run-now rendering fails", async () => {
+    const { io, stdout, stderr } = createIo();
+    const fixture = await createScheduleRunNowFixture();
+
+    const exitCode = await runCli(["schedule", "run-now"], io, {
+      homeDir: fixture.homeDir,
+      now: () => "2026-05-31T23:30:00.000Z",
+      aiProvider: new ScheduleAiProvider(),
+      carouselRenderer: new FailingPngRenderer()
+    });
+
+    expect(exitCode).toBe(5);
+    expect(stdout.join("\n")).toContain("Collected Git activity for 1 project.");
+    expect(stdout.join("\n")).toContain("Generated text draft for 2026-05-31");
+    expect(stderr).toEqual(["Could not render carousel PNGs."]);
+  });
+
+  it("returns safety-blocked exit code for schedule run-now", async () => {
+    const { io, stdout, stderr } = createIo();
+    const fixture = await createScheduleRunNowFixture();
+
+    const exitCode = await runCli(["schedule", "run-now"], io, {
+      homeDir: fixture.homeDir,
+      now: () => "2026-05-31T23:30:00.000Z",
+      aiProvider: new ScheduleAiProvider({ model: "TOKEN=abc123" }),
+      carouselRenderer: new RecordingPngRenderer()
+    });
+
+    expect(exitCode).toBe(6);
+    expect(stdout.join("\n")).toContain("Collected Git activity for 1 project.");
+    expect(stdout.join("\n")).not.toContain("Rendered carousel");
+    expect(stderr).toEqual([
+      "Draft blocked by safety checks. Remove blocked sensitive content."
+    ]);
+  });
+
+  it("rejects unsupported schedule subcommands", async () => {
+    const { io, stdout, stderr } = createIo();
+
+    const exitCode = await runCli(["schedule", "status"], io);
+
+    expect(exitCode).toBe(1);
+    expect(stdout).toEqual([]);
+    expect(stderr).toEqual(["Usage: uncommitted schedule run-now"]);
+  });
+
   it("routes doctor to the environment report handler", async () => {
     const { io, stdout, stderr } = createIo();
     const directory = await mkdtemp(join(tmpdir(), "uncommitted-cli-doctor-"));
@@ -610,6 +765,30 @@ async function createLatestDraftFixture(options: LatestDraftFixtureOptions = {})
   };
 }
 
+async function createScheduleRunNowFixture() {
+  const directory = await mkdtemp(join(tmpdir(), "uncommitted-cli-schedule-"));
+  const repoDir = join(directory, "repo");
+  const homeDir = join(directory, "home");
+  const draftRoot = join(directory, "drafts");
+
+  await initGitRepo(repoDir);
+  await writeFile(join(repoDir, "scheduler.ts"), "const scheduled = true;\n", "utf8");
+  await git(repoDir, ["add", "scheduler.ts"]);
+  await commit(repoDir, "implement scheduled workflow", "2026-05-31T10:00:00Z");
+  await writeConfig(homeDir, draftRoot);
+  await addProject(repoDir, {
+    homeDir,
+    now: () => "2026-05-31T00:00:00.000Z"
+  });
+
+  return {
+    directory,
+    repoDir,
+    homeDir,
+    draftRoot
+  };
+}
+
 async function writeConfig(homeDir: string, draftRoot: string): Promise<void> {
   await mkdir(join(homeDir, ".uncommitted"), { recursive: true });
   await writeJson(join(homeDir, ".uncommitted", "config.json"), {
@@ -673,6 +852,88 @@ function createDraftMetadata(): Record<string, unknown> {
       }
     ]
   };
+}
+
+function createScheduleStoryFormatPlan(): Record<string, unknown> {
+  return {
+    formatName: "Scheduled Dispatch",
+    voice: "dry local coworker",
+    tone: "concise and lightly amused",
+    reason: "The scheduled workflow has real local activity to summarize.",
+    structure: [
+      {
+        part: "Collect",
+        purpose: "Name the local activity."
+      },
+      {
+        part: "Generate",
+        purpose: "Turn the activity into a diary beat."
+      },
+      {
+        part: "Render",
+        purpose: "Close with local carousel output."
+      }
+    ],
+    suggestedSlideCount: 3,
+    captionStyle: "short practical caption",
+    doNotMention: ["raw diffs", "private paths"]
+  };
+}
+
+function createScheduleProviderDraft(): Record<string, unknown> {
+  return {
+    title: "Scheduled Workflow Day",
+    caption: "Scheduled run-now connected the local workflow.",
+    slides: [
+      {
+        index: 1,
+        title: "Collect",
+        body: "Git activity was collected from the registered project.",
+        visualMood: "terminal summary"
+      },
+      {
+        index: 2,
+        title: "Generate",
+        body: "The text draft was generated from local activity.",
+        visualMood: "draft files"
+      },
+      {
+        index: 3,
+        title: "Render",
+        body: "The latest carousel was rendered locally.",
+        visualMood: "finished carousel"
+      }
+    ],
+    hashtags: ["#Uncommitted", "#DevDiary"],
+    altText: "A local Uncommitted scheduled workflow summary."
+  };
+}
+
+class ScheduleAiProvider implements AiProvider {
+  readonly name = "mock";
+  readonly model?: string;
+
+  constructor(private readonly options: { fail?: boolean; model?: string } = {}) {
+    this.model = options.model;
+  }
+
+  async generateStructured(
+    request: AiStructuredGenerationRequest
+  ): Promise<AiProviderRawResponse> {
+    if (this.options.fail) {
+      throw new Error("provider unavailable");
+    }
+
+    if (request.task === "story-plan") {
+      return { responseJson: JSON.stringify(createScheduleStoryFormatPlan()) };
+    }
+
+    if (request.task === "draft") {
+      return { responseJson: JSON.stringify(createScheduleProviderDraft()) };
+    }
+
+    throw new Error(`Unexpected task: ${request.task}`);
+  }
 }
 
 class RecordingPngRenderer implements CarouselHtmlToPngRenderer {
