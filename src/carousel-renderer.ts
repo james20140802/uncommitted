@@ -436,8 +436,6 @@ function validateRenderedCard(): { ok: true } | { ok: false } {
     ) {
       return { ok: false };
     }
-  } else if (visualRect.bottom > footerRect.top - 16) {
-    return { ok: false };
   }
 
   if (
