@@ -26,6 +26,10 @@ import {
   RenderCommandError,
   runRenderCommand
 } from "./render-command.js";
+import {
+  buildLaunchAgentPlist,
+  installScheduler
+} from "./scheduler.js";
 import type { CarouselHtmlToPngRenderer } from "./carousel-renderer.js";
 import type { ImageAssetProvider } from "./visual-assets.js";
 
@@ -136,35 +140,74 @@ async function runSchedule(
   io: CliIo,
   options: CliOptions
 ): Promise<number> {
-  if (args.length !== 1 || args[0] !== "run-now") {
-    io.stderr("Usage: uncommitted schedule run-now");
-    return 1;
+  const [subcommand, ...subcommandArgs] = args;
+
+  if (subcommand === "install") {
+    let scheduleTime: string | undefined;
+
+    for (let i = 0; i < subcommandArgs.length; i++) {
+      if (subcommandArgs[i] === "--time" && i + 1 < subcommandArgs.length) {
+        scheduleTime = subcommandArgs[i + 1];
+        i++;
+      }
+    }
+
+    if (!scheduleTime) {
+      io.stderr("Usage: uncommitted schedule install --time HH:mm");
+      return 1;
+    }
+
+    try {
+      const plist = buildLaunchAgentPlist({
+        homeDir: options.homeDir,
+        scheduleTime
+      });
+
+      await installScheduler(plist, { homeDir: options.homeDir });
+
+      io.stdout(`Installed macOS schedule for ${scheduleTime}.`);
+      io.stdout(`Plist path: ${plist.plistPath}`);
+      return 0;
+    } catch (error) {
+      io.stderr(error instanceof Error ? error.message : "Schedule install failed.");
+      return 1;
+    }
   }
 
-  const scheduledAt = options.now ? options.now() : new Date().toISOString();
-  const targetDate = scheduledAt.slice(0, 10);
-  const workflowOptions = {
-    ...options,
-    now: () => scheduledAt
-  };
+  if (subcommand === "run-now") {
+    if (subcommandArgs.length !== 0) {
+      io.stderr("Usage: uncommitted schedule run-now");
+      return 1;
+    }
 
-  const collectExitCode = await runCollect(["git"], io, workflowOptions);
+    const scheduledAt = options.now ? options.now() : new Date().toISOString();
+    const targetDate = scheduledAt.slice(0, 10);
+    const workflowOptions = {
+      ...options,
+      now: () => scheduledAt
+    };
 
-  if (collectExitCode !== 0) {
-    return collectExitCode;
+    const collectExitCode = await runCollect(["git"], io, workflowOptions);
+
+    if (collectExitCode !== 0) {
+      return collectExitCode;
+    }
+
+    const generateExitCode = await runGenerate(
+      ["--date", targetDate],
+      io,
+      workflowOptions
+    );
+
+    if (generateExitCode !== 0) {
+      return generateExitCode;
+    }
+
+    return await runRender(["latest"], io, workflowOptions);
   }
 
-  const generateExitCode = await runGenerate(
-    ["--date", targetDate],
-    io,
-    workflowOptions
-  );
-
-  if (generateExitCode !== 0) {
-    return generateExitCode;
-  }
-
-  return await runRender(["latest"], io, workflowOptions);
+  io.stderr("Usage: uncommitted schedule <install|run-now> [options]");
+  return 1;
 }
 
 async function runRender(
