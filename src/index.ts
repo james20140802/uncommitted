@@ -136,6 +136,20 @@ export type {
   SafetyStatus
 } from "./safety-report.js";
 export {
+  buildLaunchAgentPlist,
+  getLaunchdLabel,
+  parseScheduleTime,
+  resolveLaunchAgentPlistPath,
+  resolveSchedulerLogPaths
+} from "./scheduler.js";
+export type {
+  LaunchAgentPlist,
+  LaunchAgentPlistOptions,
+  SchedulerLogPaths,
+  SchedulerPathOptions,
+  ScheduleTime
+} from "./scheduler.js";
+export {
   GenerateCommandError,
   runGenerateCommand
 } from "./generate-command.js";
