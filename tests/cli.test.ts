@@ -503,6 +503,37 @@ describe("cli", () => {
     expect(renderer.calls).toHaveLength(3);
   });
 
+  it("uses one target date across schedule run-now steps", async () => {
+    const { io, stdout, stderr } = createIo();
+    const fixture = await createScheduleRunNowFixture();
+    const renderer = new RecordingPngRenderer();
+    const clockValues = [
+      "2026-05-31T23:59:59.000Z",
+      "2026-06-01T00:00:01.000Z",
+      "2026-06-01T00:00:02.000Z"
+    ];
+
+    const exitCode = await runCli(["schedule", "run-now"], io, {
+      homeDir: fixture.homeDir,
+      now: () => clockValues.shift() ?? "2026-06-01T00:00:03.000Z",
+      aiProvider: new ScheduleAiProvider(),
+      carouselRenderer: renderer
+    });
+
+    const renderedPng = await readFile(
+      join(fixture.draftRoot, "2026-05-31", "rev-001", "carousel", "01.png")
+    );
+
+    await expect(
+      access(join(fixture.draftRoot, "2026-06-01", "rev-001", "story.json"))
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    expect(exitCode).toBe(0);
+    expect(stderr).toEqual([]);
+    expect(stdout.join("\n")).toContain("Generated text draft for 2026-05-31");
+    expect(stdout.join("\n")).toContain("Rendered carousel for 2026-05-31");
+    expect(renderedPng).toEqual(pngBytes);
+  });
+
   it("returns collection exit code for schedule run-now when collection fails", async () => {
     const { io, stdout, stderr } = createIo();
     const directory = await mkdtemp(join(tmpdir(), "uncommitted-cli-schedule-empty-"));

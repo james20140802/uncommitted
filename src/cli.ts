@@ -141,19 +141,30 @@ async function runSchedule(
     return 1;
   }
 
-  const collectExitCode = await runCollect(["git"], io, options);
+  const scheduledAt = options.now ? options.now() : new Date().toISOString();
+  const targetDate = scheduledAt.slice(0, 10);
+  const workflowOptions = {
+    ...options,
+    now: () => scheduledAt
+  };
+
+  const collectExitCode = await runCollect(["git"], io, workflowOptions);
 
   if (collectExitCode !== 0) {
     return collectExitCode;
   }
 
-  const generateExitCode = await runGenerate(["today"], io, options);
+  const generateExitCode = await runGenerate(
+    ["--date", targetDate],
+    io,
+    workflowOptions
+  );
 
   if (generateExitCode !== 0) {
     return generateExitCode;
   }
 
-  return await runRender(["latest"], io, options);
+  return await runRender(["latest"], io, workflowOptions);
 }
 
 async function runRender(
