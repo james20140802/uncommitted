@@ -211,10 +211,21 @@ export { addProject, ProjectAddError } from "./project-add.js";
 export type {
   AddProjectOptions,
   AddProjectResult,
-  ProjectAddErrorCode,
-  ProjectRecord,
-  ProjectsFile
+  ProjectAddErrorCode
 } from "./project-add.js";
+export {
+  listProjects,
+  ProjectRegistryError,
+  removeProject
+} from "./project-registry.js";
+export type {
+  ListProjectsResult,
+  ProjectRecord,
+  ProjectRegistryErrorCode,
+  ProjectRegistryOptions,
+  ProjectsFile,
+  RemoveProjectResult
+} from "./project-registry.js";
 export {
   listManualNotes,
   NoteCommandError,

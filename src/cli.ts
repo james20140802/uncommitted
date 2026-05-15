@@ -22,6 +22,12 @@ import {
 } from "./note-command.js";
 import { addProject, ProjectAddError } from "./project-add.js";
 import {
+  listProjects,
+  ProjectRegistryError,
+  removeProject,
+  type ProjectRecord
+} from "./project-registry.js";
+import {
   RenderCommandError,
   runRenderCommand
 } from "./render-command.js";
@@ -110,6 +116,14 @@ export async function runCli(
 
   if (command === "project" && subcommand === "add") {
     return await runProjectAdd(value, io, options);
+  }
+
+  if (command === "project" && subcommand === "list") {
+    return await runProjectList(commandArgs.slice(1), io, options);
+  }
+
+  if (command === "project" && subcommand === "remove") {
+    return await runProjectRemove(value, commandArgs.slice(2), io, options);
   }
 
   if (command === "note") {
@@ -433,6 +447,80 @@ async function runProjectAdd(
 
     throw error;
   }
+}
+
+async function runProjectList(
+  args: string[],
+  io: CliIo,
+  options: CliOptions
+): Promise<number> {
+  if (args.length !== 0) {
+    io.stderr("Usage: uncommitted project list");
+    return 1;
+  }
+
+  try {
+    const result = await listProjects(options);
+
+    if (result.projects.length === 0) {
+      io.stdout("No registered projects. Run `uncommitted project add .` first.");
+      return 0;
+    }
+
+    io.stdout("Registered projects:");
+
+    for (const project of result.projects) {
+      io.stdout(formatProject(project));
+    }
+
+    return 0;
+  } catch (error) {
+    if (error instanceof ProjectRegistryError) {
+      io.stderr(error.message);
+      return 2;
+    }
+
+    throw error;
+  }
+}
+
+async function runProjectRemove(
+  projectId: string | undefined,
+  extraArgs: string[],
+  io: CliIo,
+  options: CliOptions
+): Promise<number> {
+  if (!projectId || extraArgs.length !== 0) {
+    io.stderr("Usage: uncommitted project remove <project-id>");
+    return 1;
+  }
+
+  try {
+    const result = await removeProject(projectId, options);
+
+    io.stdout(`Project removed: ${result.removedProject.id}`);
+    io.stdout(result.removedProject.root);
+    return 0;
+  } catch (error) {
+    if (error instanceof ProjectRegistryError) {
+      io.stderr(error.message);
+      return 2;
+    }
+
+    throw error;
+  }
+}
+
+function formatProject(project: ProjectRecord): string {
+  const status = project.enabled ? "enabled" : "disabled";
+
+  return [
+    project.id,
+    project.name,
+    project.gitRoot,
+    status,
+    project.createdAt
+  ].join("\t");
 }
 
 export function isDirectRun(

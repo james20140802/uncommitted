@@ -6,7 +6,7 @@ import {
   type GitActivity
 } from "./git-activity-collector.js";
 import { resolveConfigPaths } from "./config-paths.js";
-import type { ProjectRecord, ProjectsFile } from "./project-add.js";
+import type { ProjectRecord, ProjectsFile } from "./project-registry.js";
 
 export type CollectGitCommandErrorCode =
   | "invalid-projects-file"

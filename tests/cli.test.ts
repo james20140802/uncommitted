@@ -4,6 +4,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  realpath,
   symlink,
   writeFile
 } from "node:fs/promises";
@@ -313,6 +314,136 @@ describe("cli", () => {
     expect(exitCode).toBe(2);
     expect(stdout).toEqual([]);
     expect(stderr.join("\n")).toContain("Not a Git repository");
+  });
+
+  it("routes project list to the global project registry", async () => {
+    const { io, stdout, stderr } = createIo();
+    const directory = await mkdtemp(join(tmpdir(), "uncommitted-cli-project-list-"));
+    const repoDir = join(directory, "repo");
+    const homeDir = join(directory, "home");
+
+    await initGitRepo(repoDir);
+    await writeConfig(homeDir, join(directory, "drafts"));
+    await addProject(repoDir, {
+      homeDir,
+      now: () => "2026-06-04T00:00:00.000Z"
+    });
+    const realRepoDir = await realpath(repoDir);
+
+    const exitCode = await runCli(["project", "list"], io, { homeDir });
+
+    expect(exitCode).toBe(0);
+    expect(stderr).toEqual([]);
+    expect(stdout).toEqual([
+      "Registered projects:",
+      `repo\trepo\t${realRepoDir}\tenabled\t2026-06-04T00:00:00.000Z`
+    ]);
+  });
+
+  it("routes project list for an empty registry", async () => {
+    const { io, stdout, stderr } = createIo();
+    const directory = await mkdtemp(join(tmpdir(), "uncommitted-cli-project-list-"));
+    const homeDir = join(directory, "home");
+
+    await writeConfig(homeDir, join(directory, "drafts"));
+    await writeJson(join(homeDir, ".uncommitted", "projects.json"), {
+      schemaVersion: 1,
+      projects: []
+    });
+
+    const exitCode = await runCli(["project", "list"], io, { homeDir });
+
+    expect(exitCode).toBe(0);
+    expect(stderr).toEqual([]);
+    expect(stdout).toEqual([
+      "No registered projects. Run `uncommitted project add .` first."
+    ]);
+  });
+
+  it("returns config exit code when project list is not initialized", async () => {
+    const { io, stdout, stderr } = createIo();
+    const directory = await mkdtemp(join(tmpdir(), "uncommitted-cli-project-list-"));
+
+    const exitCode = await runCli(["project", "list"], io, {
+      homeDir: join(directory, "home")
+    });
+
+    expect(exitCode).toBe(2);
+    expect(stdout).toEqual([]);
+    expect(stderr).toEqual(["Config not found. Run `uncommitted init` first."]);
+  });
+
+  it("returns config exit code when project list finds invalid registry data", async () => {
+    const { io, stdout, stderr } = createIo();
+    const directory = await mkdtemp(join(tmpdir(), "uncommitted-cli-project-list-"));
+    const homeDir = join(directory, "home");
+
+    await writeConfig(homeDir, join(directory, "drafts"));
+    await writeFile(join(homeDir, ".uncommitted", "projects.json"), "nope", "utf8");
+
+    const exitCode = await runCli(["project", "list"], io, { homeDir });
+
+    expect(exitCode).toBe(2);
+    expect(stdout).toEqual([]);
+    expect(stderr.join("\n")).toContain("Invalid projects file");
+  });
+
+  it("routes project remove to the global project registry", async () => {
+    const { io, stdout, stderr } = createIo();
+    const directory = await mkdtemp(join(tmpdir(), "uncommitted-cli-project-remove-"));
+    const repoDir = join(directory, "repo");
+    const homeDir = join(directory, "home");
+
+    await initGitRepo(repoDir);
+    await writeConfig(homeDir, join(directory, "drafts"));
+    await addProject(repoDir, {
+      homeDir,
+      now: () => "2026-06-04T00:00:00.000Z"
+    });
+    const realRepoDir = await realpath(repoDir);
+
+    const exitCode = await runCli(["project", "remove", "repo"], io, { homeDir });
+    const projectsFile = await readJson(join(homeDir, ".uncommitted", "projects.json"));
+
+    expect(exitCode).toBe(0);
+    expect(stderr).toEqual([]);
+    expect(stdout).toEqual(["Project removed: repo", realRepoDir]);
+    expect(projectsFile).toEqual({
+      schemaVersion: 1,
+      projects: []
+    });
+  });
+
+  it("returns config exit code when project remove cannot find an id", async () => {
+    const { io, stdout, stderr } = createIo();
+    const directory = await mkdtemp(join(tmpdir(), "uncommitted-cli-project-remove-"));
+    const homeDir = join(directory, "home");
+
+    await writeConfig(homeDir, join(directory, "drafts"));
+    await writeJson(join(homeDir, ".uncommitted", "projects.json"), {
+      schemaVersion: 1,
+      projects: []
+    });
+
+    const exitCode = await runCli(["project", "remove", "missing"], io, {
+      homeDir
+    });
+
+    expect(exitCode).toBe(2);
+    expect(stdout).toEqual([]);
+    expect(stderr).toEqual([
+      "Unknown project id: missing. Run `uncommitted project list`."
+    ]);
+  });
+
+  it("returns usage when project remove is missing an id", async () => {
+    const { io, stdout, stderr } = createIo();
+
+    const exitCode = await runCli(["project", "remove"], io);
+
+    expect(exitCode).toBe(1);
+    expect(stdout).toEqual([]);
+    expect(stderr).toEqual(["Usage: uncommitted project remove <project-id>"]);
   });
 
   it("renders the latest draft carousel with existing visual assets", async () => {
