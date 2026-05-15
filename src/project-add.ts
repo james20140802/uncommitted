@@ -1,10 +1,19 @@
 import { execFile } from "node:child_process";
 import { constants } from "node:fs";
-import { access, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
+import { access, mkdir, realpath, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import process from "node:process";
 import { promisify } from "node:util";
 import { resolveConfigPaths } from "./config-paths.js";
+import {
+  ProjectRegistryError,
+  readProjectsFile,
+  writeProjectsFile,
+  type ProjectRecord,
+  type ProjectsFile
+} from "./project-registry.js";
+
+export type { ProjectRecord, ProjectsFile } from "./project-registry.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -23,21 +32,6 @@ export class ProjectAddError extends Error {
     this.name = "ProjectAddError";
   }
 }
-
-export type ProjectRecord = {
-  schemaVersion: 1;
-  id: string;
-  name: string;
-  root: string;
-  gitRoot: string;
-  enabled: boolean;
-  createdAt: string;
-};
-
-export type ProjectsFile = {
-  schemaVersion: 1;
-  projects: ProjectRecord[];
-};
 
 export type AddProjectOptions = {
   cwd?: string;
@@ -61,7 +55,7 @@ export async function addProject(
   const existingInput = await resolveExistingPath(resolvedInput);
   const gitRoot = await findGitRoot(existingInput);
   const paths = resolveConfigPaths({ homeDir: options.homeDir });
-  const projectsFile = await readProjectsFile(paths.projectsFile);
+  const projectsFile = await readProjectsFileForAdd(paths.projectsFile);
   const existingProject = projectsFile.projects.find(
     (project) => project.gitRoot === gitRoot
   );
@@ -98,7 +92,7 @@ export async function addProject(
   await mkdir(join(gitRoot, ".uncommitted"), { recursive: true });
   await mkdir(paths.configDir, { recursive: true });
   await writeJson(projectFile, project);
-  await writeJson(paths.projectsFile, nextProjectsFile);
+  await writeProjectsFile(paths.projectsFile, nextProjectsFile);
 
   return {
     status: "added",
@@ -148,31 +142,15 @@ async function findGitRoot(path: string): Promise<string> {
   }
 }
 
-async function readProjectsFile(path: string): Promise<ProjectsFile> {
+async function readProjectsFileForAdd(path: string): Promise<ProjectsFile> {
   try {
-    const parsed = JSON.parse(await readFile(path, "utf8")) as unknown;
-
-    if (isProjectsFile(parsed)) {
-      return parsed;
-    }
-
-    throw new ProjectAddError(
-      `Invalid projects file: ${path}`,
-      "invalid-projects-file"
-    );
+    return await readProjectsFile(path, { missingAsEmpty: true });
   } catch (error) {
-    if (error instanceof ProjectAddError) {
-      throw error;
+    if (error instanceof ProjectRegistryError) {
+      throw new ProjectAddError(error.message, "invalid-projects-file");
     }
 
-    if (isNodeError(error) && error.code === "ENOENT") {
-      return { schemaVersion: 1, projects: [] };
-    }
-
-    throw new ProjectAddError(
-      `Invalid projects file: ${path}`,
-      "invalid-projects-file"
-    );
+    throw error;
   }
 }
 
@@ -196,33 +174,4 @@ function slugProjectId(name: string): string {
     .replace(/^-+|-+$/g, "");
 
   return slug || "project";
-}
-
-function isProjectsFile(value: unknown): value is ProjectsFile {
-  if (!isRecord(value) || value.schemaVersion !== 1 || !Array.isArray(value.projects)) {
-    return false;
-  }
-
-  return value.projects.every(isProjectRecord);
-}
-
-function isProjectRecord(value: unknown): value is ProjectRecord {
-  return (
-    isRecord(value) &&
-    value.schemaVersion === 1 &&
-    typeof value.id === "string" &&
-    typeof value.name === "string" &&
-    typeof value.root === "string" &&
-    typeof value.gitRoot === "string" &&
-    typeof value.enabled === "boolean" &&
-    typeof value.createdAt === "string"
-  );
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
-
-function isNodeError(error: unknown): error is NodeJS.ErrnoException {
-  return error instanceof Error && "code" in error;
 }
