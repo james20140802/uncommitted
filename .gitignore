@@ -3,4 +3,10 @@ dist/
 .DS_Store
 .omc/
 .uncommitted/
+
+# AI Setting Related Files
 GEMINI.md
+.agents/
+.codex/
+docs/plans
+.codex-workflows-manifest.json
