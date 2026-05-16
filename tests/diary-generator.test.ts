@@ -96,27 +96,41 @@ describe("diary generator", () => {
         }
       }
     });
-    expect(provider.requests[0]?.instructions).toContain(
-      "Return structured JSON for story.json"
-    );
-    expect(provider.requests[0]?.instructions).toContain(
+    const instructions = provider.requests[0]?.instructions ?? "";
+    expect(instructions).toContain("Return structured JSON for story.json");
+    expect(instructions).toContain(
       "Caption must be copyable as an Instagram caption"
     );
-    expect(provider.requests[0]?.instructions).toContain("Do not invent work");
-    expect(provider.requests[0]?.instructions).toContain(
-      "Write like the AI coworker is recording how the shared workday felt to it"
+    expect(instructions).toContain("Do not invent work");
+    expect(instructions).toContain(
+      "The configured AI coworker persona is the caption narrator"
     );
-    expect(provider.requests[0]?.instructions).toContain(
-      "Do not write a status report"
+    expect(instructions).toContain(
+      "Do not explain the persona to the reader"
     );
-    expect(provider.requests[0]?.instructions).toContain(
-      "not the user's diary"
+    expect(instructions).toContain(
+      "Use the Story Format Plan for slide structure and story flow"
     );
-    expect(provider.requests[0]?.instructions).toContain(
-      "Make the selected genre visible"
+    expect(instructions).toContain(
+      "Do not force the selected genre to be visible in the caption"
     );
-    expect(provider.requests[0]?.instructions).toContain(
+    expect(instructions).toContain(
+      "Mention one or two concrete work moments from the activity summary"
+    );
+    expect(instructions).toContain("then add the narrator's reaction");
+    expect(instructions).toContain(
+      "Write like a real Instagram caption someone might post after work"
+    );
+    expect(instructions).toContain(
+      "Plain, casual, emotionally specific Korean is better than elegant abstract writing"
+    );
+    expect(instructions).toContain("Do not write a status report");
+    expect(instructions).toContain("Avoid abstract literary lines");
+    expect(instructions).toContain(
       "Do not claim to know the user's inner feelings"
+    );
+    expect(instructions).not.toContain(
+      "Make the selected genre visible in the title, caption"
     );
   });
 
@@ -208,6 +222,13 @@ describe("diary generator", () => {
     );
     expect(provider.requests[0]?.instructions).toContain(
       "For quiet days, acknowledge no recorded work"
+    );
+    const instructions = provider.requests[0]?.instructions ?? "";
+    expect(instructions).toContain(
+      "For quiet-day captions, mention the absence of recorded work honestly"
+    );
+    expect(instructions).not.toContain(
+      "Mention one or two concrete work moments from the activity summary"
     );
   });
 
