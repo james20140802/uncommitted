@@ -224,6 +224,9 @@ function buildDiaryInstructions(options: {
   const quietInstruction = options.quiet
     ? "For quiet days, acknowledge no recorded work and pivot to waiting, observation, or an honest quiet-day monologue."
     : "Use only the concrete work signals in the activity summary.";
+  const captionMomentInstruction = options.quiet
+    ? "For quiet-day captions, mention the absence of recorded work honestly, then add the narrator's reaction to the quiet."
+    : "Mention one or two concrete work moments from the activity summary, then add the narrator's reaction.";
 
   return [
     "Return structured JSON for story.json with title, caption, slides, hashtags, and altText.",
@@ -231,15 +234,23 @@ function buildDiaryInstructions(options: {
     `Use ${options.storyFormatPlan.voice} as the voice and ${options.storyFormatPlan.tone} as the tone.`,
     `Create ${options.storyFormatPlan.suggestedSlideCount} slides when possible, while staying within 3-8 slides.`,
     "Write from the configured AI coworker's point of view; this is the narrator's own off-the-record diary, not the user's diary.",
-    "Make the selected genre visible in the title, caption, slide titles, and slide bodies without explaining the genre.",
+    "The configured AI coworker persona is the caption narrator, not a topic, tag, or weak style hint.",
+    "Do not explain the persona to the reader.",
+    "Use the Story Format Plan for slide structure and story flow.",
+    "Make the selected genre visible in the title, slide titles, and slide bodies without explaining the genre.",
+    "Do not force the selected genre to be visible in the caption; the genre may lightly color the caption, but it must not take over.",
     "Caption must be copyable as an Instagram caption, Korean by default, concise, and not report-like.",
-    "Write like the AI coworker is recording how the shared workday felt to it, not what a manager needs to know.",
-    "Do not write a status report, executive summary, changelog, standup update, or task handoff.",
+    "Write like a real Instagram caption someone might post after work.",
+    "Plain, casual, emotionally specific Korean is better than elegant abstract writing.",
+    "Do not try to sound literary, polished, profound, inspirational, or clever.",
+    captionMomentInstruction,
+    "Use everyday reactions such as frustration, relief, awkwardness, tiredness, doubt, stubbornness, small satisfaction, or mild embarrassment.",
+    "Do not write a status report, executive summary, changelog, standup update, task summary, task handoff, or metric-led recap.",
     "Avoid report words and shapes such as summary, snapshot, total commits, files changed, insertions, deletions, next steps, owner, or action items.",
     "Avoid metric-led phrasing such as total commits, files changed, insertion/deletion counts, project-by-project bullets, or next-action owner lines.",
-    "Use specific work details sparingly as texture; lead with mood, friction, small relief, embarrassment, momentum, or unfinished tension.",
+    "Avoid abstract literary lines, polished metaphors, slogan-like sentences, and overly conceptual endings.",
     "Do not claim to know the user's inner feelings; frame emotional language as the narrator's reaction or the atmosphere around the work.",
-    "Prefer scenes, metaphors, and concrete moments over task lists.",
+    "Prefer concrete moments and the narrator's everyday reaction over task lists.",
     "Each slide must include index, title, body, and visualMood.",
     "Prefer 3-5 slides for quiet or low activity days; this is guidance, not a hard validation limit.",
     "Do not invent work, commits, bugs, features, shipped changes, or user activity.",
