@@ -181,7 +181,8 @@ export function createCarouselHtmlCards(
 export async function renderCarouselPngs(
   options: RenderCarouselPngsOptions
 ): Promise<CarouselPngRenderResult> {
-  const renderer = options.renderer ?? new PlaywrightCarouselPngRenderer();
+  // Renderer is created lazily so photo-first-only drafts never launch Chromium.
+  let renderer: CarouselHtmlToPngRenderer | undefined = options.renderer;
   const shouldCloseRenderer = options.renderer === undefined;
   const files: string[] = [];
   const images: CarouselPngMetadata[] = [];
@@ -193,32 +194,67 @@ export async function renderCarouselPngs(
       const filePath = `carousel/${String(index + 1).padStart(2, "0")}.png`;
       let png: Uint8Array;
 
-      try {
-        png = await renderCardWithLayoutFallbacks({
-          revision: options.revision,
-          card,
-          visualAsset,
-          renderer
-        });
-      } catch (error) {
-        const renderError = toCarouselPngRenderError(error, "render-failed");
+      // photo-first fast-path: when a visual asset is available, copy its raw
+      // bytes directly to the carousel output without going through Playwright.
+      if (card.visualStyle === "photo-first" && visualAsset) {
+        try {
+          const rawImage = await readFile(
+            resolveDraftArtifactPath(options.revision.outputDir, visualAsset.filePath)
+          );
 
-        failures.push({
-          schemaVersion: 1,
-          slideIndex: card.slideIndex,
-          assetSlotId: card.visualTreatment.assetSlotId,
-          sourceHtmlFileName: card.fileName,
-          filePath,
-          code: renderError.code,
-          message: renderError.message
-        });
+          assertPng(rawImage);
+          png = rawImage;
+        } catch (error) {
+          const renderError = toCarouselPngRenderError(error, "render-failed");
 
-        throw withPartialRenderResult(renderError, {
-          status: "failed",
-          files,
-          images,
-          failures
-        });
+          failures.push({
+            schemaVersion: 1,
+            slideIndex: card.slideIndex,
+            assetSlotId: card.visualTreatment.assetSlotId,
+            sourceHtmlFileName: card.fileName,
+            filePath,
+            code: renderError.code,
+            message: renderError.message
+          });
+
+          throw withPartialRenderResult(renderError, {
+            status: "failed",
+            files,
+            images,
+            failures
+          });
+        }
+      } else {
+        // story-card mode (or photo-first with no visual asset): use Playwright.
+        renderer ??= new PlaywrightCarouselPngRenderer();
+
+        try {
+          png = await renderCardWithLayoutFallbacks({
+            revision: options.revision,
+            card,
+            visualAsset,
+            renderer
+          });
+        } catch (error) {
+          const renderError = toCarouselPngRenderError(error, "render-failed");
+
+          failures.push({
+            schemaVersion: 1,
+            slideIndex: card.slideIndex,
+            assetSlotId: card.visualTreatment.assetSlotId,
+            sourceHtmlFileName: card.fileName,
+            filePath,
+            code: renderError.code,
+            message: renderError.message
+          });
+
+          throw withPartialRenderResult(renderError, {
+            status: "failed",
+            files,
+            images,
+            failures
+          });
+        }
       }
 
       try {
@@ -271,7 +307,7 @@ export async function renderCarouselPngs(
     );
   } finally {
     if (shouldCloseRenderer) {
-      await renderer.close?.();
+      await renderer?.close?.();
     }
   }
 

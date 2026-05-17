@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import sharp from "sharp";
 import { describe, expect, it } from "vitest";
 import type {
   AiProviderHttpRequest,
@@ -20,7 +21,17 @@ import type {
 } from "../src/visual-assets.js";
 
 describe("visual asset generation", () => {
-  it("creates an OpenAI image asset provider from the existing AI provider config", async () => {
+  it("creates an OpenAI image asset provider that requests a supported 1024x1536 source and returns a 1024x1280 Instagram 4:5 crop", async () => {
+    const sourcePng = await sharp({
+      create: {
+        width: 1024,
+        height: 1536,
+        channels: 3,
+        background: { r: 200, g: 100, b: 50 }
+      }
+    })
+      .png()
+      .toBuffer();
     const calls: Array<{ url: string; request: AiProviderHttpRequest }> = [];
     const provider = createImageAssetProvider(
       {
@@ -33,25 +44,25 @@ describe("visual asset generation", () => {
         transport: createTransport(calls, {
           data: [
             {
-              b64_json:
-                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
+              b64_json: sourcePng.toString("base64")
             }
           ]
         })
       }
     );
 
-    await expect(
-      provider?.generateImageAsset({
-        schemaVersion: 1,
-        slideIndex: 1,
-        assetSlotId: "slide-01-visual",
-        prompt: "safe visual prompt",
-        promptSummary: "safe visual prompt"
-      })
-    ).resolves.toMatchObject({
-      mimeType: "image/png"
+    const result = await provider?.generateImageAsset({
+      schemaVersion: 1,
+      slideIndex: 1,
+      assetSlotId: "slide-01-visual",
+      prompt: "safe visual prompt",
+      promptSummary: "safe visual prompt"
     });
+
+    expect(result?.mimeType).toBe("image/png");
+    const returnedMeta = await sharp(Buffer.from(result?.data ?? new Uint8Array())).metadata();
+    expect(returnedMeta.width).toBe(1024);
+    expect(returnedMeta.height).toBe(1280);
 
     expect(provider?.name).toBe("openai");
     expect(calls).toHaveLength(1);
@@ -77,6 +88,42 @@ describe("visual asset generation", () => {
       output_format: "png"
     });
     expect(calls[0]?.request.body).not.toContain("sk-test-secret");
+  });
+
+  it("surfaces crop failure on a non-PNG OpenAI response as a provider-failed error", async () => {
+    const calls: Array<{ url: string; request: AiProviderHttpRequest }> = [];
+    const provider = createImageAssetProvider(
+      {
+        provider: "openai",
+        persona: "wry coworker",
+        roastLevel: 2
+      },
+      {
+        env: { OPENAI_API_KEY: "sk-test-secret" },
+        transport: createTransport(calls, {
+          data: [
+            {
+              b64_json: Buffer.from("not a real png payload").toString("base64")
+            }
+          ]
+        })
+      }
+    );
+
+    await expect(
+      provider?.generateImageAsset({
+        schemaVersion: 1,
+        slideIndex: 1,
+        assetSlotId: "slide-01-visual",
+        prompt: "safe visual prompt",
+        promptSummary: "safe visual prompt"
+      })
+    ).rejects.toEqual(
+      new VisualAssetGenerationError(
+        "Visual generation failed. Check image provider configuration.",
+        "provider-failed"
+      )
+    );
   });
 
   it("does not create real image adapters for unsupported MVP providers", () => {

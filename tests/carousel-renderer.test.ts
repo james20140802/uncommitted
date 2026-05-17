@@ -217,7 +217,7 @@ describe("carousel renderer", () => {
     );
   });
 
-  it("renders photo-first PNGs with visual assets as the primary surface", async () => {
+  it("skips Playwright rendering for photo-first cards and copies raw visual bytes directly", async () => {
     const revision = await createTestRevision();
     const cards = createCarouselHtmlCards(createStoryDraft(), {
       visualStyle: "photo-first"
@@ -226,10 +226,86 @@ describe("carousel renderer", () => {
 
     await mkdir(join(revision.outputDir, "visuals"), { recursive: true });
     await writeFile(join(revision.outputDir, "visuals", "01.png"), fixturePng);
+    await writeFile(join(revision.outputDir, "visuals", "02.png"), fixturePng);
+    await writeFile(join(revision.outputDir, "visuals", "03.png"), fixturePng);
 
-    await renderCarouselPngs({
+    const result = await renderCarouselPngs({
+      revision,
+      cards,
+      visualAssets: [
+        {
+          slideIndex: 1,
+          assetSlotId: "slide-01-visual",
+          filePath: "visuals/01.png"
+        },
+        {
+          slideIndex: 2,
+          assetSlotId: "slide-02-visual",
+          filePath: "visuals/02.png"
+        },
+        {
+          slideIndex: 3,
+          assetSlotId: "slide-03-visual",
+          filePath: "visuals/03.png"
+        }
+      ],
+      renderer
+    });
+
+    // Playwright renderer must NOT be called for photo-first cards
+    expect(renderer.calls).toHaveLength(0);
+
+    // Carousel output files must exist
+    expect(result.files).toEqual([
+      "carousel/01.png",
+      "carousel/02.png",
+      "carousel/03.png"
+    ]);
+
+    // Raw visual bytes are copied verbatim — no re-encoding
+    const carouselPng = await readFile(join(revision.outputDir, "carousel", "01.png"));
+    expect(Buffer.from(carouselPng).equals(fixturePng)).toBe(true);
+  });
+
+  it("falls back to Playwright for photo-first cards that have no matching visual asset", async () => {
+    const revision = await createTestRevision();
+    const cards = createCarouselHtmlCards(createStoryDraft(), {
+      visualStyle: "photo-first"
+    });
+    const renderer = new RecordingPngRenderer();
+
+    // No visuals provided — should fall back to Playwright
+    const result = await renderCarouselPngs({
       revision,
       cards: [cards[0]],
+      visualAssets: [],
+      renderer
+    });
+
+    expect(renderer.calls).toHaveLength(1);
+    expect(result.files).toEqual(["carousel/01.png"]);
+    expect(result.images[0]).toMatchObject({
+      slideIndex: 1,
+      assetSlotId: "slide-01-visual",
+      filePath: "carousel/01.png"
+    });
+    expect(result.images[0]?.visualAssetPath).toBeUndefined();
+  });
+
+  it("mixes photo-first fast-path and Playwright fallback per card based on available visual assets", async () => {
+    const revision = await createTestRevision();
+    const cards = createCarouselHtmlCards(createStoryDraft(), {
+      visualStyle: "photo-first"
+    });
+    const renderer = new RecordingPngRenderer();
+
+    await mkdir(join(revision.outputDir, "visuals"), { recursive: true });
+    // Only slide 1 gets a visual asset; slides 2 and 3 fall back to Playwright
+    await writeFile(join(revision.outputDir, "visuals", "01.png"), fixturePng);
+
+    const result = await renderCarouselPngs({
+      revision,
+      cards,
       visualAssets: [
         {
           slideIndex: 1,
@@ -240,14 +316,15 @@ describe("carousel renderer", () => {
       renderer
     });
 
-    expect(renderer.calls[0]?.html).toContain("class=\"visual-asset\"");
-    expect(renderer.calls[0]?.html).toContain(
-      "class=\"photo-stage has-visual-asset visual-stage\""
-    );
-    expect(renderer.calls[0]?.html).not.toContain("<p class=\"body\"");
-    expect(renderer.calls[0]?.html).not.toContain(
-      "The renderer now has a contract before it gets a camera."
-    );
+    // Slide 1: fast-path (no renderer call); slides 2 & 3: Playwright fallback
+    expect(renderer.calls).toHaveLength(2);
+    expect(result.files).toEqual([
+      "carousel/01.png",
+      "carousel/02.png",
+      "carousel/03.png"
+    ]);
+    expect(result.images[0]?.visualAssetPath).toBe("visuals/01.png");
+    expect(result.images[1]?.visualAssetPath).toBeUndefined();
   });
 
   it("fits long but reasonable slide text with deterministic layout fallbacks", async () => {
