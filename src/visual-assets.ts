@@ -1,4 +1,5 @@
 import process from "node:process";
+import sharp from "sharp";
 import type {
   AiProviderConfig,
   AiProviderHttpRequest,
@@ -93,6 +94,10 @@ export type CreateImageAssetProviderOptions = {
 const openAiImageEndpoint = "https://api.openai.com/v1/images/generations";
 const openAiImageEnvKey = "OPENAI_API_KEY";
 const openAiImageModel = "gpt-image-1.5";
+const openAiImageRequestSize = "1024x1536";
+const openAiImageRequestHeight = 1536;
+const carouselTargetWidth = 1024;
+const carouselTargetHeight = 1280;
 const defaultImageProviderTimeoutMs = 300_000;
 const providerTimeoutEnvKey = "UNCOMMITTED_AI_TIMEOUT_MS";
 const placeholderPng = Buffer.from(
@@ -260,7 +265,7 @@ class OpenAiImageAssetProvider implements ImageAssetProvider {
           model: openAiImageModel,
           prompt: request.prompt,
           n: 1,
-          size: "1024x1280",
+          size: openAiImageRequestSize,
           quality: "low",
           output_format: "png"
         }),
@@ -273,7 +278,9 @@ class OpenAiImageAssetProvider implements ImageAssetProvider {
 
       return {
         mimeType: "image/png",
-        data: decodeOpenAiImageResponse(await readResponseJson(response))
+        data: await cropToInstagramFourFive(
+          decodeOpenAiImageResponse(await readResponseJson(response))
+        )
       };
     } catch (error) {
       if (error instanceof VisualAssetGenerationError) {
@@ -339,6 +346,31 @@ async function readResponseJson(
   } catch {
     throw new VisualAssetGenerationError(
       "Image provider returned invalid response.",
+      "provider-failed"
+    );
+  }
+}
+
+// OpenAI's image API does not accept 1024x1280 as a `size`; the closest
+// supported 4:5-ish value is 1024x1536. Center-crop the response down to the
+// Instagram 4:5 frame the carousel expects.
+async function cropToInstagramFourFive(png: Uint8Array): Promise<Uint8Array> {
+  try {
+    const top = Math.floor((openAiImageRequestHeight - carouselTargetHeight) / 2);
+    const buffer = await sharp(Buffer.from(png))
+      .extract({
+        left: 0,
+        top,
+        width: carouselTargetWidth,
+        height: carouselTargetHeight
+      })
+      .png()
+      .toBuffer();
+
+    return new Uint8Array(buffer);
+  } catch {
+    throw new VisualAssetGenerationError(
+      "Visual generation failed. Check image provider configuration.",
       "provider-failed"
     );
   }
