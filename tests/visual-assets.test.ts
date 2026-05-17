@@ -72,7 +72,7 @@ describe("visual asset generation", () => {
       model: "gpt-image-1.5",
       prompt: "safe visual prompt",
       n: 1,
-      size: "1024x1536",
+      size: "1024x1280",
       quality: "low",
       output_format: "png"
     });

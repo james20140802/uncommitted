@@ -260,7 +260,7 @@ class OpenAiImageAssetProvider implements ImageAssetProvider {
           model: openAiImageModel,
           prompt: request.prompt,
           n: 1,
-          size: "1024x1536",
+          size: "1024x1280",
           quality: "low",
           output_format: "png"
         }),
