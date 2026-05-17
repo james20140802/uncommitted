@@ -230,15 +230,14 @@ function buildDiaryInstructions(options: {
 
   return [
     "Return structured JSON for story.json with title, caption, slides, hashtags, and altText.",
-    `Follow the Story Format Plan named ${options.storyFormatPlan.formatName}.`,
-    `Use ${options.storyFormatPlan.voice} as the voice and ${options.storyFormatPlan.tone} as the tone.`,
+    "Follow the Story Format Plan for story title, slide titles, slide bodies, and visualMood only.",
+    "Use the Story Format Plan's voice and tone for the story slides only.",
     `Create ${options.storyFormatPlan.suggestedSlideCount} slides when possible, while staying within 3-8 slides.`,
     "Write from the configured AI coworker's point of view; this is the narrator's own off-the-record diary, not the user's diary.",
     "The configured AI coworker persona is the caption narrator, not a topic, tag, or weak style hint.",
     "Do not explain the persona to the reader.",
     "Use the Story Format Plan for slide structure and story flow.",
-    "Make the selected genre visible in the title, slide titles, and slide bodies without explaining the genre.",
-    "Do not force the selected genre to be visible in the caption; the genre may lightly color the caption, but it must not take over.",
+    "Do not use the Story Format Plan, formatName, voice, tone, or captionStyle to create a concept for the caption.",
     "Caption must be copyable as an Instagram caption, Korean by default, concise, and not report-like.",
     "Write like a real Instagram caption someone might post after work.",
     "Plain, casual, emotionally specific Korean is better than elegant abstract writing.",
