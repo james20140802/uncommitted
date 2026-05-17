@@ -112,8 +112,13 @@ describe("diary generator", () => {
       "Use the Story Format Plan for slide structure and story flow"
     );
     expect(instructions).toContain(
-      "Do not force the selected genre to be visible in the caption"
+      "Do not use the Story Format Plan, formatName, voice, tone, or captionStyle to create a concept for the caption"
     );
+    expect(instructions).not.toContain("Bug Court Transcript");
+    expect(instructions).not.toContain("tired QA narrator");
+    expect(instructions).not.toContain("deadpan, witty, affectionate");
+    expect(instructions).not.toContain("selected genre");
+    expect(instructions).not.toContain("genre may lightly color the caption");
     expect(instructions).toContain(
       "Mention one or two concrete work moments from the activity summary"
     );
