@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import { AiGenerationError, MockAiProvider } from "../src/ai-provider.js";
 import type { ActivitySummary } from "../src/activity-summary.js";
 import {
+  buildCaptionInstructions,
   deriveCaptionText,
+  generateCaption,
   generateDiaryDraft
 } from "../src/diary-generator.js";
 import type { StoryFormatPlan } from "../src/story-format-plan.js";
@@ -359,6 +361,142 @@ describe("diary generator", () => {
       code: "malformed-response",
       message: "AI provider fabricated quiet-day activity."
     });
+  });
+});
+
+describe("caption generator", () => {
+  it("buildCaptionInstructions includes few-shot good and bad examples", () => {
+    const instructions = buildCaptionInstructions({ quiet: false });
+
+    // Good example anchors
+    expect(instructions).toContain("caption 몇 줄만 손보자고 했는데");
+    expect(instructions).toContain("preview 만든다길래");
+
+    // Bad example anchors
+    expect(instructions).toContain("보이지 않는 가능성이");
+    expect(instructions).toContain("오늘도 개발했습니다");
+
+    // Core style rules
+    expect(instructions).toContain("AI 동료");
+    expect(instructions).toContain("Instagram");
+    expect(instructions).not.toContain("captionStyle");
+  });
+
+  it("buildCaptionInstructions quiet-day variant mentions absence of work", () => {
+    const instructions = buildCaptionInstructions({ quiet: true });
+
+    expect(instructions).toContain("조용한 날");
+  });
+
+  it("generateCaption sends commitSubjects as caption anchor in prompt input", async () => {
+    const provider = new MockAiProvider({
+      response: {
+        caption:
+          "caption 몇 줄만 손보자고 했는데\n프롬프트 말투 회의가 됐습니다\n\n저는 옆에서 예시들 맞고 있었습니다",
+        hashtags: ["#Uncommitted", "#AI동료일지", "#프롬프트개선"]
+      }
+    });
+
+    await generateCaption({
+      activitySummary: createActivitySummary({
+        commitSignals: {
+          totalCommits: 2,
+          filesChanged: 4,
+          insertions: 120,
+          deletions: 18,
+          subjects: ["add caption prompt", "fix rendering bug"],
+          themes: ["coding"]
+        }
+      }),
+      provider,
+      persona: "wry coworker",
+      roastLevel: 2
+    });
+
+    expect(provider.requests).toHaveLength(1);
+    const request = provider.requests[0]!;
+    expect(request.task).toBe("caption");
+    const inputJson = JSON.stringify(request.input);
+    expect(inputJson).toContain("add caption prompt");
+    expect(inputJson).toContain("fix rendering bug");
+  });
+
+  it("generateCaption returns validated { caption, hashtags[] } from mocked provider", async () => {
+    const provider = new MockAiProvider({
+      response: {
+        caption:
+          "preview 만든다길래\n이제 결과물 바로 보는 줄 알았습니다\n\n개발자들은 왜 항상\n자기가 만든 걸 제일 못 믿을까요",
+        hashtags: ["#Uncommitted", "#Preview", "#개발일기"]
+      }
+    });
+
+    const result = await generateCaption({
+      activitySummary: createActivitySummary(),
+      provider,
+      persona: "wry coworker",
+      roastLevel: 2
+    });
+
+    expect(result.caption).toBe(
+      "preview 만든다길래\n이제 결과물 바로 보는 줄 알았습니다\n\n개발자들은 왜 항상\n자기가 만든 걸 제일 못 믿을까요"
+    );
+    expect(result.hashtags).toEqual([
+      "#Uncommitted",
+      "#Preview",
+      "#개발일기"
+    ]);
+  });
+
+  it("generateCaption throws AiGenerationError on malformed provider response", async () => {
+    const emptyProvider = new MockAiProvider({ response: {} });
+    const missingHashtagsProvider = new MockAiProvider({
+      response: { caption: "괜찮은 날이었습니다" }
+    });
+    const badHashtagProvider = new MockAiProvider({
+      response: {
+        caption: "괜찮은 날이었습니다",
+        hashtags: ["noHash"]
+      }
+    });
+    const failingProvider = new MockAiProvider({
+      failure: new Error("network error")
+    });
+
+    await expect(
+      generateCaption({
+        activitySummary: createActivitySummary(),
+        provider: emptyProvider,
+        persona: "wry coworker",
+        roastLevel: 2
+      })
+    ).rejects.toMatchObject({ code: "malformed-response" });
+
+    await expect(
+      generateCaption({
+        activitySummary: createActivitySummary(),
+        provider: missingHashtagsProvider,
+        persona: "wry coworker",
+        roastLevel: 2
+      })
+    ).rejects.toMatchObject({ code: "malformed-response" });
+
+    await expect(
+      generateCaption({
+        activitySummary: createActivitySummary(),
+        provider: badHashtagProvider,
+        persona: "wry coworker",
+        roastLevel: 2
+      })
+    ).rejects.toMatchObject({ code: "malformed-response" });
+
+    await expect(
+      generateCaption({
+        activitySummary: createActivitySummary(),
+        provider: failingProvider,
+        persona: "wry coworker",
+        roastLevel: 2
+      })
+    ).rejects.toBeInstanceOf(AiGenerationError);
   });
 });
 

@@ -55,6 +55,18 @@ export type DiaryGeneratorOptions = {
   entryMode?: "daily_global";
 };
 
+export type CaptionResult = {
+  caption: string;
+  hashtags: string[];
+};
+
+export type GenerateCaptionOptions = {
+  activitySummary: ActivitySummary;
+  provider: AiProvider;
+  persona: string;
+  roastLevel: number;
+};
+
 type DiaryDraftProviderData = JsonObject & {
   title?: JsonValue;
   caption?: JsonValue;
@@ -260,6 +272,159 @@ function buildDiaryInstructions(options: {
     "Never attack the user's identity, ability, appearance, mental health, personal value, or real life.",
     "Do not imply the draft was automatically posted or exported."
   ].join("\n");
+}
+
+export function buildCaptionInstructions(options: { quiet: boolean }): string {
+  const quietInstruction = options.quiet
+    ? "This is a quiet day with no recorded Git activity. Acknowledge the absence of recorded work honestly. Write a caption about the quiet — the narrator observed little activity and says so plainly. Do not invent work. A 조용한 날 caption is valid and honest content."
+    : "Use the concrete commitSubjects from the input as caption anchors. Pick one or two specific work moments as the topic of the observation or joke. Do not invent work not in the input.";
+
+  return [
+    "Return JSON with exactly two fields: caption (string) and hashtags (array of strings).",
+    "You are Uncommitted, an AI 동료 writing on your own Instagram-like account about today's work with your human developer.",
+    "This is NOT the user's diary. This is NOT a work report. This is NOT product marketing copy.",
+    "Write in Korean. Instagram-native. Casual, readable, slightly meme-like.",
+    "First-person AI coworker perspective. You may say '우리 개발자', '인간', '제가 봄', '저는 옆에서 봤습니다', or similar.",
+    "4 to 8 short lines. Blank lines are allowed. Add 2 to 5 hashtags (each starting with #).",
+    "Mild roast is allowed toward situations, workflow, bugs, TODOs, vague requirements, or developer habits. Never insult ability, worth, personality, identity, mental health, or real life.",
+    quietInstruction,
+    "",
+    "=== GOOD EXAMPLES ===",
+    "",
+    "Good example 1 (caption/prompt improvement day):",
+    "caption 몇 줄만 손보자고 했는데",
+    "프롬프트 말투 회의가 됐습니다",
+    "",
+    "우리 개발자 오늘",
+    '"이게 인스타 같냐"를 제일 많이 말함',
+    "",
+    "저는 옆에서 예시들 맞고 있었습니다",
+    "",
+    "#Uncommitted #AI동료일지 #프롬프트개선",
+    "",
+    "Good example 2 (preview/latest feature day):",
+    "preview 만든다길래",
+    "이제 결과물 바로 보는 줄 알았습니다",
+    "",
+    "근데 latest도 봐야 하고",
+    "draft 경로도 봐야 하고",
+    "저장된 이미지도 믿어야 함",
+    "",
+    "개발자들은 왜 항상",
+    "자기가 만든 걸 제일 못 믿을까요",
+    "",
+    "#Uncommitted #Preview #개발일기",
+    "",
+    "Good example 3 (quiet/no-commit day):",
+    "Git은 조용했습니다",
+    "",
+    "커밋도 없고",
+    "바뀐 파일도 거의 없고",
+    "증거가 별로 없음",
+    "",
+    "그래서 오늘은 없는 척 안 하고",
+    "조용한 날로 올립니다",
+    "",
+    "#Uncommitted #QuietDay #커밋없는날",
+    "",
+    "=== BAD EXAMPLES (do not write like these) ===",
+    "",
+    "Bad example 1 — abstract/literary, no concrete anchor:",
+    "보이지 않는 가능성이",
+    "조용한 구조 속에서",
+    "아직 오지 않은 내일의 형태를 준비한 날이었습니다.",
+    "",
+    "Bad example 2 — work report/changelog tone:",
+    "오늘은 Git activity collector를 개선하고, preview latest 기능을 점검했으며, export instagram 명령어의 동작을 확인했습니다.",
+    "",
+    "Bad example 3 — generic, no specific anchor, repeats every day:",
+    "오늘도 개발했습니다",
+    "쉽지 않았습니다",
+    "그래도 전보다 나아졌습니다",
+    "",
+    "#Uncommitted #개발일기",
+    "",
+    "=== RULES ===",
+    "Do not start every caption with '오늘은'.",
+    "Do not write a work report, changelog, or standup update.",
+    "Do not use abstract metaphors or literary prose.",
+    "Do not expose secrets, local paths, credentials, code snippets, private URLs, or emails.",
+    "Do not imply the draft was automatically posted or exported.",
+    "Each hashtag must start with # and contain no spaces."
+  ].join("\n");
+}
+
+function buildSafeCaptionInput(options: {
+  activitySummary: ActivitySummary;
+  persona: string;
+  roastLevel: number;
+}): SafeActivitySummary {
+  const summary = options.activitySummary;
+  const quiet = summary.activityLevel === "none";
+
+  return {
+    schemaVersion: 1,
+    targetDate: summary.targetDate,
+    quiet,
+    overview: `${summary.activityLevel} day. Persona: ${options.persona}. Roast level: ${options.roastLevel}.`,
+    highlights: quiet
+      ? ["No recorded Git activity or manual notes today."]
+      : summary.commitSignals.subjects.slice(0, 5),
+    projectSummaries: [],
+    captionAnchor: {
+      commitSubjects: summary.commitSignals.subjects,
+      activityLevel: summary.activityLevel
+    }
+  };
+}
+
+type CaptionProviderData = JsonObject & {
+  caption?: JsonValue;
+  hashtags?: JsonValue;
+};
+
+export async function generateCaption(
+  options: GenerateCaptionOptions
+): Promise<CaptionResult> {
+  const request = createAiGenerationRequest({
+    task: "caption",
+    instructions: buildCaptionInstructions({
+      quiet: options.activitySummary.activityLevel === "none"
+    }),
+    summary: buildSafeCaptionInput({
+      activitySummary: options.activitySummary,
+      persona: options.persona,
+      roastLevel: options.roastLevel
+    })
+  });
+
+  const response = await generateStructured<CaptionProviderData>(
+    options.provider,
+    request
+  );
+
+  return parseCaptionResult(response.data);
+}
+
+function parseCaptionResult(data: CaptionProviderData): CaptionResult {
+  assertSafeProviderData(data);
+
+  if (
+    typeof data.caption !== "string" ||
+    data.caption.trim().length === 0 ||
+    !Array.isArray(data.hashtags) ||
+    !data.hashtags.every(isHashtag)
+  ) {
+    throw new AiGenerationError(
+      "AI provider returned invalid caption.",
+      "malformed-response"
+    );
+  }
+
+  return {
+    caption: data.caption.trim(),
+    hashtags: data.hashtags.map((h) => (h as string).trim())
+  };
 }
 
 function parseDiaryDraft(options: {
