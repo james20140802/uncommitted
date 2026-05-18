@@ -212,3 +212,157 @@ describe("export-command (UNC-92: scaffold)", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// UNC-94: Safety policy (safe / warning / blocked)
+// ---------------------------------------------------------------------------
+
+async function scaffoldDraftWithSafety(
+  draftRoot: string,
+  safetyStatus: "safe" | "warning" | "blocked",
+  warningReason?: string
+): Promise<void> {
+  const targetDate = "2026-05-18";
+  const revision = "rev-001";
+  const outputDir = join(draftRoot, targetDate, revision);
+  await mkdir(join(outputDir, "carousel"), { recursive: true });
+
+  await writeFile(join(outputDir, "caption.txt"), "Caption text.\n", "utf8");
+  await writeFile(
+    join(outputDir, "metadata.json"),
+    JSON.stringify({ schemaVersion: 1, targetDate }, null, 2) + "\n",
+    "utf8"
+  );
+  await writeFile(join(outputDir, "carousel", "01.png"), "FAKE_PNG");
+
+  const message =
+    safetyStatus === "blocked"
+      ? "Remove blocked sensitive content."
+      : safetyStatus === "warning"
+        ? warningReason ?? "Review redactions before export."
+        : "Safety check passed.";
+
+  await writeFile(
+    join(outputDir, "safety-report.json"),
+    JSON.stringify({
+      schemaVersion: 1,
+      status: safetyStatus,
+      risks: safetyStatus !== "safe"
+        ? [{ category: "secret", severity: safetyStatus, message }]
+        : [],
+      redactionsApplied: [],
+      exportAllowed: safetyStatus !== "blocked",
+      message
+    }, null, 2) + "\n",
+    "utf8"
+  );
+
+  const pointer = {
+    schemaVersion: 1,
+    targetDate,
+    revision,
+    path: outputDir,
+    updatedAt: "2026-05-18T23:30:00.000Z"
+  };
+  await writeFile(
+    join(draftRoot, "latest.json"),
+    JSON.stringify(pointer, null, 2) + "\n",
+    "utf8"
+  );
+  await writeFile(
+    join(draftRoot, targetDate, "latest.json"),
+    JSON.stringify(pointer, null, 2) + "\n",
+    "utf8"
+  );
+}
+
+describe("export-command (UNC-94: safety policy)", () => {
+  it("safe draft exports with no warning and safetyStatus 'safe' in metadata", async () => {
+    const draftRoot = await createTempDir();
+    await scaffoldDraftWithSafety(draftRoot, "safe");
+
+    const result = await runExportCommand(["instagram"], {
+      draftRoot,
+      now: () => "2026-05-18T23:35:00.000Z"
+    });
+
+    expect(result.safetyStatus).toBe("safe");
+    expect(result.warningMessage).toBeUndefined();
+
+    const meta = JSON.parse(
+      await readFile(join(result.exportDir, "metadata.json"), "utf8")
+    ) as Record<string, unknown>;
+    expect(meta.safetyStatus).toBe("safe");
+  });
+
+  it("warning draft exports successfully and returns a warning message with reason", async () => {
+    const draftRoot = await createTempDir();
+    await scaffoldDraftWithSafety(draftRoot, "warning", "Review redactions before export.");
+
+    const result = await runExportCommand(["instagram"], {
+      draftRoot,
+      now: () => "2026-05-18T23:35:00.000Z"
+    });
+
+    expect(result.safetyStatus).toBe("warning");
+    expect(result.warningMessage).toBeDefined();
+    expect(result.warningMessage).toContain("Review redactions before export.");
+    expect(result.exportedFiles).toContain("caption.txt");
+
+    const meta = JSON.parse(
+      await readFile(join(result.exportDir, "metadata.json"), "utf8")
+    ) as Record<string, unknown>;
+    expect(meta.safetyStatus).toBe("warning");
+  });
+
+  it("blocked draft throws ExportCommandError with safety-blocked code", async () => {
+    const draftRoot = await createTempDir();
+    await scaffoldDraftWithSafety(draftRoot, "blocked");
+
+    await expect(
+      runExportCommand(["instagram"], {
+        draftRoot,
+        now: () => "2026-05-18T23:35:00.000Z"
+      })
+    ).rejects.toThrow(ExportCommandError);
+
+    try {
+      await runExportCommand(["instagram"], {
+        draftRoot,
+        now: () => "2026-05-18T23:35:00.000Z"
+      });
+    } catch (err) {
+      expect(err).toBeInstanceOf(ExportCommandError);
+      expect((err as ExportCommandError).code).toBe("safety-blocked");
+    }
+  });
+
+  it("blocked draft does not create an export folder", async () => {
+    const draftRoot = await createTempDir();
+    await scaffoldDraftWithSafety(draftRoot, "blocked");
+
+    try {
+      await runExportCommand(["instagram"], { draftRoot });
+    } catch {
+      // expected
+    }
+
+    const exportBase = join(draftRoot, "exports", "instagram");
+    await expect(readdir(exportBase)).rejects.toThrow();
+  });
+
+  it("exported metadata.json includes safetyStatus for warning drafts", async () => {
+    const draftRoot = await createTempDir();
+    await scaffoldDraftWithSafety(draftRoot, "warning", "Possible secret detected.");
+
+    const result = await runExportCommand(["instagram"], {
+      draftRoot,
+      now: () => "2026-05-18T23:35:00.000Z"
+    });
+
+    const meta = JSON.parse(
+      await readFile(join(result.exportDir, "metadata.json"), "utf8")
+    ) as Record<string, unknown>;
+    expect(meta.safetyStatus).toBe("warning");
+  });
+});

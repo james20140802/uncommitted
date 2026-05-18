@@ -1,4 +1,4 @@
-import { copyFile, mkdir, readdir, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { readLatestDraftPointer } from "./draft-storage.js";
 import type { SafetyStatus } from "./safety-report.js";
@@ -44,6 +44,11 @@ export type ExportCommandResult = {
   safetyStatus: SafetyStatus;
   sourceDraftPath: string;
   exportedAt: string;
+  /**
+   * Present when safetyStatus is "warning". Includes the reason from
+   * safety-report.json. The caller (CLI layer) should print this to stderr.
+   */
+  warningMessage?: string;
 };
 
 export type ExportMetadata = {
@@ -67,15 +72,13 @@ const USAGE = "Usage: uncommitted export instagram";
 /**
  * Run the `export instagram [latest]` command.
  *
- * Happy-path flow (UNC-92 scaffold):
- *  1. Resolve the latest draft via latest.json pointer.
- *  2. Create export folder under {draftRoot}/exports/instagram/{date}/{revision}/.
- *  3. Copy caption.txt verbatim.
- *  4. Copy carousel PNGs with zero-padded names (carousel-01.png, ...).
- *  5. Write metadata.json recording source, timestamp, safety status, file list.
+ * Safety policy (UNC-94):
+ *  - safe: export proceeds silently.
+ *  - warning: export proceeds; result.warningMessage contains the reason.
+ *  - blocked: throws ExportCommandError("safety-blocked") before any folder is created.
  *
- * Safety policy enforcement (UNC-94), missing-file handling (UNC-95), and
- * idempotency (UNC-96) are layered on top in subsequent sub-issues.
+ * Ordering: safety is enforced BEFORE creating the export folder so that a
+ * blocked draft never leaves behind a partial export directory.
  */
 export async function runExportCommand(
   args: string[],
@@ -91,13 +94,13 @@ export async function runExportCommand(
   const pointer = await resolveLatestPointer(draftRoot);
   const sourceDraftPath = pointer.path;
 
-  // 3. Read safety report from the draft
-  const safetyStatus = await readSafetyStatus(sourceDraftPath);
+  // 3. Read safety report (status + reason)
+  const safetyInfo = await readSafetyInfo(sourceDraftPath);
 
-  // 4. Enforce safety policy
-  enforceSafetyPolicy(safetyStatus);
+  // 4. Enforce safety policy BEFORE touching the export folder
+  const policyResult = checkSafetyPolicy(safetyInfo.status, safetyInfo.reason);
 
-  // 5. Collect carousel PNGs
+  // 5. Collect carousel PNGs (validate BEFORE creating export folder)
   const carouselPngs = await collectCarouselPngs(sourceDraftPath);
 
   // 6. Create export folder
@@ -121,7 +124,7 @@ export async function runExportCommand(
     schemaVersion: 1,
     sourceDraftPath,
     exportedAt,
-    safetyStatus,
+    safetyStatus: safetyInfo.status,
     exportedFiles: [...exportedFiles, "metadata.json"]
   });
   exportedFiles.push("metadata.json");
@@ -129,21 +132,25 @@ export async function runExportCommand(
   return {
     exportDir,
     exportedFiles,
-    safetyStatus,
+    safetyStatus: safetyInfo.status,
     sourceDraftPath,
-    exportedAt
+    exportedAt,
+    warningMessage: policyResult.warningMessage
   };
 }
 
 // ---------------------------------------------------------------------------
-// Safety policy helpers (extended in UNC-94)
+// Safety policy helpers
 // ---------------------------------------------------------------------------
 
 /**
- * Returns a warning message when the safety status is "warning", or undefined
- * when safe. Throws ExportCommandError for "blocked".
+ * Enforces the MVP safety policy.
  *
- * This is intentionally a small, isolated function so UNC-94 can wrap it.
+ * - "safe": returns {} (no warning).
+ * - "warning": returns { warningMessage } with the reason string.
+ * - "blocked": throws ExportCommandError with code "safety-blocked".
+ *
+ * Kept as a small dedicated function so future overrides can wrap it.
  */
 export function checkSafetyPolicy(
   safetyStatus: SafetyStatus,
@@ -191,10 +198,18 @@ async function resolveLatestPointer(draftRoot: string) {
   }
 }
 
-async function readSafetyStatus(sourceDraftPath: string): Promise<SafetyStatus> {
-  const { readFile } = await import("node:fs/promises");
+type SafetyInfo = {
+  status: SafetyStatus;
+  /** The human-readable reason from safety-report.json (used as warning reason) */
+  reason?: string;
+};
+
+async function readSafetyInfo(sourceDraftPath: string): Promise<SafetyInfo> {
   try {
-    const raw = await readFile(join(sourceDraftPath, "safety-report.json"), "utf8");
+    const raw = await readFile(
+      join(sourceDraftPath, "safety-report.json"),
+      "utf8"
+    );
     const parsed = JSON.parse(raw) as unknown;
 
     if (
@@ -203,52 +218,40 @@ async function readSafetyStatus(sourceDraftPath: string): Promise<SafetyStatus> 
         parsed.status === "warning" ||
         parsed.status === "blocked")
     ) {
-      return parsed.status as SafetyStatus;
+      const reason =
+        typeof parsed.message === "string" ? parsed.message : undefined;
+      return { status: parsed.status as SafetyStatus, reason };
     }
   } catch {
-    // If no safety report, treat as safe for scaffold (UNC-94 adds strict policy)
+    // If no safety report file, treat as safe (graceful degradation)
   }
 
-  return "safe";
-}
-
-function enforceSafetyPolicy(safetyStatus: SafetyStatus): void {
-  // Scaffold: only block "blocked" status. UNC-94 adds warning output.
-  if (safetyStatus === "blocked") {
-    throw new ExportCommandError(
-      "Export blocked: draft contains sensitive content. Review safety-report.json.",
-      "safety-blocked"
-    );
-  }
+  return { status: "safe" };
 }
 
 async function collectCarouselPngs(sourceDraftPath: string): Promise<string[]> {
   const carouselDir = join(sourceDraftPath, "carousel");
 
+  let entries: string[];
   try {
-    const entries = await readdir(carouselDir);
-    const pngs = entries
-      .filter((e) => e.endsWith(".png"))
-      .sort();
-
-    if (pngs.length === 0) {
-      throw new ExportCommandError(
-        "No carousel PNGs found. Run `uncommitted render latest` first.",
-        "missing-carousel"
-      );
-    }
-
-    return pngs;
-  } catch (error) {
-    if (error instanceof ExportCommandError) {
-      throw error;
-    }
-
+    entries = await readdir(carouselDir);
+  } catch {
     throw new ExportCommandError(
       "No carousel PNGs found. Run `uncommitted render latest` first.",
       "missing-carousel"
     );
   }
+
+  const pngs = entries.filter((e) => e.endsWith(".png")).sort();
+
+  if (pngs.length === 0) {
+    throw new ExportCommandError(
+      "No carousel PNGs found. Run `uncommitted render latest` first.",
+      "missing-carousel"
+    );
+  }
+
+  return pngs;
 }
 
 async function createExportDir(exportDir: string): Promise<void> {

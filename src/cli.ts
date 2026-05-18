@@ -296,8 +296,8 @@ async function runExport(
       now: options.now
     });
 
-    if (result.safetyStatus === "warning") {
-      io.stderr("Safety warning: draft contains redacted content. Review before posting.");
+    if (result.warningMessage) {
+      io.stderr(result.warningMessage);
     }
 
     io.stdout(`Exported to: ${result.exportDir}`);
