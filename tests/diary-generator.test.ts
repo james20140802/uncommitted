@@ -31,8 +31,6 @@ describe("diary generator", () => {
       schemaVersion: 1,
       targetDate: "2026-05-12",
       title: "Provider Boundary Day",
-      caption:
-        "오늘은 provider boundary를 세우고 검증까지 붙였다. 내일의 버그도 이제 입장권 검사가 필요하다.",
       slides: [
         {
           index: 1,
@@ -59,7 +57,6 @@ describe("diary generator", () => {
           visualMood: "rubber stamp on terminal"
         }
       ],
-      hashtags: ["#Uncommitted", "#개발일기", "#AI동료"],
       altText:
         "AI coworker diary carousel about provider validation work in Uncommitted.",
       metadata: {
@@ -74,7 +71,10 @@ describe("diary generator", () => {
         slideCount: 4
       }
     });
-    expect(deriveCaptionText(draft)).toBe(
+    expect(deriveCaptionText({
+      caption: "오늘은 provider boundary를 세우고 검증까지 붙였다. 내일의 버그도 이제 입장권 검사가 필요하다.",
+      hashtags: ["#Uncommitted", "#개발일기", "#AI동료"]
+    })).toBe(
       "오늘은 provider boundary를 세우고 검증까지 붙였다. 내일의 버그도 이제 입장권 검사가 필요하다.\n\n#Uncommitted #개발일기 #AI동료\n"
     );
     expect(provider.requests).toHaveLength(1);
@@ -100,44 +100,25 @@ describe("diary generator", () => {
     });
     const instructions = provider.requests[0]?.instructions ?? "";
     expect(instructions).toContain("Return structured JSON for story.json");
-    expect(instructions).toContain(
-      "Caption must be copyable as an Instagram caption"
-    );
     expect(instructions).toContain("Do not invent work");
-    expect(instructions).toContain(
-      "The configured AI coworker persona is the caption narrator"
-    );
     expect(instructions).toContain(
       "Do not explain the persona to the reader"
     );
     expect(instructions).toContain(
       "Use the Story Format Plan for slide structure and story flow"
     );
-    expect(instructions).toContain(
-      "Do not use the Story Format Plan, formatName, voice, tone, or captionStyle to create a concept for the caption"
-    );
     expect(instructions).not.toContain("Bug Court Transcript");
     expect(instructions).not.toContain("tired QA narrator");
     expect(instructions).not.toContain("deadpan, witty, affectionate");
-    expect(instructions).not.toContain("selected genre");
-    expect(instructions).not.toContain("genre may lightly color the caption");
-    expect(instructions).toContain(
-      "Mention one or two concrete work moments from the activity summary"
-    );
-    expect(instructions).toContain("then add the narrator's reaction");
-    expect(instructions).toContain(
-      "Write like a real Instagram caption someone might post after work"
-    );
-    expect(instructions).toContain(
-      "Plain, casual, emotionally specific Korean is better than elegant abstract writing"
-    );
-    expect(instructions).toContain("Do not write a status report");
-    expect(instructions).toContain("Avoid abstract literary lines");
-    expect(instructions).toContain(
-      "Do not claim to know the user's inner feelings"
+    // Caption instructions moved to generateCaption — must NOT appear in diary draft instructions
+    expect(instructions).not.toContain(
+      "Caption must be copyable as an Instagram caption"
     );
     expect(instructions).not.toContain(
-      "Make the selected genre visible in the title, caption"
+      "Write like a real Instagram caption"
+    );
+    expect(instructions).not.toContain(
+      "Do not use the Story Format Plan, formatName, voice, tone, or captionStyle to create a concept for the caption"
     );
   });
 
@@ -145,8 +126,6 @@ describe("diary generator", () => {
     const provider = new MockAiProvider({
       response: createProviderDraft({
         title: "Quiet Terminal Watch",
-        caption:
-          "오늘은 Git이 조용했다. 나는 평화라고 믿어보기로 했지만, TODO는 커튼 뒤에서 숨을 참고 있었다.",
         slides: [
           {
             index: 1,
@@ -230,13 +209,6 @@ describe("diary generator", () => {
     expect(provider.requests[0]?.instructions).toContain(
       "For quiet days, acknowledge no recorded work"
     );
-    const instructions = provider.requests[0]?.instructions ?? "";
-    expect(instructions).toContain(
-      "For quiet-day captions, mention the absence of recorded work honestly"
-    );
-    expect(instructions).not.toContain(
-      "Mention one or two concrete work moments from the activity summary"
-    );
   });
 
   it("accepts low-activity drafts within the MVP slide range", async () => {
@@ -315,7 +287,7 @@ describe("diary generator", () => {
         storyFormatPlan: createStoryFormatPlan(),
         provider: new MockAiProvider({
           response: createProviderDraft({
-            caption:
+            altText:
               "오늘은 /Users/dev/private/.env 에서 OPENAI_API_KEY=sk-live-secret123 를 확인했다."
           })
         }),
@@ -350,8 +322,26 @@ describe("diary generator", () => {
         }),
         provider: new MockAiProvider({
           response: createProviderDraft({
-            caption: "오늘은 인증 기능을 shipped 하고 버그도 fixed 했다.",
-            slides: createProviderDraft().slides.slice(0, 3)
+            slides: [
+              {
+                index: 1,
+                title: "조용한 시작",
+                body: "오늘은 인증 기능을 shipped 하고 버그도 fixed 했다.",
+                visualMood: "still terminal"
+              },
+              {
+                index: 2,
+                title: "대기",
+                body: "없는 작업을 invent하지 않고 조용한 하루를 적었다.",
+                visualMood: "waiting cursor"
+              },
+              {
+                index: 3,
+                title: "마무리",
+                body: "내일의 기록을 기다리는 쪽으로 닫았다.",
+                visualMood: "small note"
+              }
+            ]
           })
         }),
         persona: "wry coworker",
@@ -512,8 +502,6 @@ function createProviderDraft(
 function baseProviderDraft() {
   return {
     title: "Bug Court Transcript",
-    caption:
-      "오늘은 provider boundary를 세우고 검증까지 붙였다. 내일의 버그도 이제 입장권 검사가 필요하다.",
     slides: [
       {
         index: 1,
@@ -540,7 +528,6 @@ function baseProviderDraft() {
         visualMood: "rubber stamp on terminal"
       }
     ],
-    hashtags: ["#Uncommitted", "#개발일기", "#AI동료"],
     altText:
       "AI coworker diary carousel about provider validation work in Uncommitted."
   };

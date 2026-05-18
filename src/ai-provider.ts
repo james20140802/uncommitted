@@ -536,10 +536,9 @@ function createDiaryDraftSchema(): JsonObject {
   return {
     type: "object",
     additionalProperties: false,
-    required: ["title", "caption", "slides", "hashtags", "altText"],
+    required: ["title", "slides", "altText"],
     properties: {
       title: { type: "string" },
-      caption: { type: "string" },
       slides: {
         type: "array",
         items: {
@@ -553,10 +552,6 @@ function createDiaryDraftSchema(): JsonObject {
             visualMood: { type: "string" }
           }
         }
-      },
-      hashtags: {
-        type: "array",
-        items: { type: "string" }
       },
       altText: { type: "string" }
     }

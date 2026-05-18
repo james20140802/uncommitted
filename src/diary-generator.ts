@@ -38,9 +38,7 @@ export type DiaryDraft = {
   schemaVersion: 1;
   targetDate: string;
   title: string;
-  caption: string;
   slides: DiarySlide[];
-  hashtags: string[];
   altText: string;
   metadata: DiaryDraftMetadata;
 };
@@ -69,9 +67,7 @@ export type GenerateCaptionOptions = {
 
 type DiaryDraftProviderData = JsonObject & {
   title?: JsonValue;
-  caption?: JsonValue;
   slides?: JsonValue;
-  hashtags?: JsonValue;
   altText?: JsonValue;
 };
 
@@ -132,11 +128,11 @@ export async function generateDiaryDraft(
   });
 }
 
-export function deriveCaptionText(draft: DiaryDraft): string {
-  const parts = [draft.caption.trim()];
+export function deriveCaptionText(result: CaptionResult): string {
+  const parts = [result.caption.trim()];
 
-  if (draft.hashtags.length > 0) {
-    parts.push(draft.hashtags.join(" "));
+  if (result.hashtags.length > 0) {
+    parts.push(result.hashtags.join(" "));
   }
 
   return `${parts.join("\n\n")}\n`;
@@ -236,32 +232,15 @@ function buildDiaryInstructions(options: {
   const quietInstruction = options.quiet
     ? "For quiet days, acknowledge no recorded work and pivot to waiting, observation, or an honest quiet-day monologue."
     : "Use only the concrete work signals in the activity summary.";
-  const captionMomentInstruction = options.quiet
-    ? "For quiet-day captions, mention the absence of recorded work honestly, then add the narrator's reaction to the quiet."
-    : "Mention one or two concrete work moments from the activity summary, then add the narrator's reaction.";
 
   return [
-    "Return structured JSON for story.json with title, caption, slides, hashtags, and altText.",
+    "Return structured JSON for story.json with title, slides, and altText.",
     "Follow the Story Format Plan for story title, slide titles, slide bodies, and visualMood only.",
     "Use the Story Format Plan's voice and tone for the story slides only.",
     `Create ${options.storyFormatPlan.suggestedSlideCount} slides when possible, while staying within 3-8 slides.`,
     "Write from the configured AI coworker's point of view; this is the narrator's own off-the-record diary, not the user's diary.",
-    "The configured AI coworker persona is the caption narrator, not a topic, tag, or weak style hint.",
     "Do not explain the persona to the reader.",
     "Use the Story Format Plan for slide structure and story flow.",
-    "Do not use the Story Format Plan, formatName, voice, tone, or captionStyle to create a concept for the caption.",
-    "Caption must be copyable as an Instagram caption, Korean by default, concise, and not report-like.",
-    "Write like a real Instagram caption someone might post after work.",
-    "Plain, casual, emotionally specific Korean is better than elegant abstract writing.",
-    "Do not try to sound literary, polished, profound, inspirational, or clever.",
-    captionMomentInstruction,
-    "Use everyday reactions such as frustration, relief, awkwardness, tiredness, doubt, stubbornness, small satisfaction, or mild embarrassment.",
-    "Do not write a status report, executive summary, changelog, standup update, task summary, task handoff, or metric-led recap.",
-    "Avoid report words and shapes such as summary, snapshot, total commits, files changed, insertions, deletions, next steps, owner, or action items.",
-    "Avoid metric-led phrasing such as total commits, files changed, insertion/deletion counts, project-by-project bullets, or next-action owner lines.",
-    "Avoid abstract literary lines, polished metaphors, slogan-like sentences, and overly conceptual endings.",
-    "Do not claim to know the user's inner feelings; frame emotional language as the narrator's reaction or the atmosphere around the work.",
-    "Prefer concrete moments and the narrator's everyday reaction over task lists.",
     "Each slide must include index, title, body, and visualMood.",
     "Prefer 3-5 slides for quiet or low activity days; this is guidance, not a hard validation limit.",
     "Do not invent work, commits, bugs, features, shipped changes, or user activity.",
@@ -442,14 +421,12 @@ function parseDiaryDraft(options: {
     schemaVersion: 1,
     targetDate: options.activitySummary.targetDate,
     title: options.data.title.trim(),
-    caption: options.data.caption.trim(),
     slides: options.data.slides.map((slide) => ({
       index: slide.index,
       title: slide.title.trim(),
       body: slide.body.trim(),
       visualMood: slide.visualMood.trim()
     })),
-    hashtags: options.data.hashtags.map((hashtag) => hashtag.trim()),
     altText: options.data.altText.trim(),
     metadata: {
       targetDate: options.activitySummary.targetDate,
@@ -480,20 +457,14 @@ function isDiaryDraftProviderData(
   value: DiaryDraftProviderData
 ): value is DiaryDraftProviderData & {
   title: string;
-  caption: string;
   slides: DiarySlide[];
-  hashtags: string[];
   altText: string;
 } {
   return (
     typeof value.title === "string" &&
     value.title.trim().length > 0 &&
-    typeof value.caption === "string" &&
-    value.caption.trim().length > 0 &&
     Array.isArray(value.slides) &&
     value.slides.every(isDiarySlide) &&
-    Array.isArray(value.hashtags) &&
-    value.hashtags.every(isHashtag) &&
     typeof value.altText === "string" &&
     value.altText.trim().length > 0
   );
@@ -509,12 +480,8 @@ function isDiaryDraft(value: unknown): value is DiaryDraft {
     typeof value.targetDate === "string" &&
     typeof value.title === "string" &&
     value.title.trim().length > 0 &&
-    typeof value.caption === "string" &&
-    value.caption.trim().length > 0 &&
     Array.isArray(value.slides) &&
     value.slides.every(isDiarySlide) &&
-    Array.isArray(value.hashtags) &&
-    value.hashtags.every(isHashtag) &&
     typeof value.altText === "string" &&
     value.altText.trim().length > 0 &&
     isDiaryMetadata(value.metadata)
@@ -654,13 +621,11 @@ function assertNoUnsafeStrings(value: JsonValue): void {
 function collectDraftText(draft: DiaryDraft): string[] {
   return [
     draft.title,
-    draft.caption,
     ...draft.slides.flatMap((slide) => [
       slide.title,
       slide.body,
       slide.visualMood
     ]),
-    ...draft.hashtags,
     draft.altText
   ];
 }
