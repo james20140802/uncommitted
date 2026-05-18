@@ -477,11 +477,17 @@ function createResponseFormat(task: AiGenerationTask): JsonObject {
             strict: true,
             schema: createStoryFormatPlanSchema()
           }
-        : {
-            name: "uncommitted_diary_draft",
-            strict: true,
-            schema: createDiaryDraftSchema()
-          }
+        : task === "caption"
+          ? {
+              name: "uncommitted_caption",
+              strict: true,
+              schema: createCaptionSchema()
+            }
+          : {
+              name: "uncommitted_diary_draft",
+              strict: true,
+              schema: createDiaryDraftSchema()
+            }
   };
 }
 
@@ -553,6 +559,21 @@ function createDiaryDraftSchema(): JsonObject {
         items: { type: "string" }
       },
       altText: { type: "string" }
+    }
+  };
+}
+
+function createCaptionSchema(): JsonObject {
+  return {
+    type: "object",
+    additionalProperties: false,
+    required: ["caption", "hashtags"],
+    properties: {
+      caption: { type: "string" },
+      hashtags: {
+        type: "array",
+        items: { type: "string" }
+      }
     }
   };
 }
