@@ -547,3 +547,163 @@ describe("export-command (UNC-94: safety policy)", () => {
     expect(meta.safetyStatus).toBe("warning");
   });
 });
+
+// ---------------------------------------------------------------------------
+// UNC-96: Idempotency — re-run safety and metadata correctness
+// ---------------------------------------------------------------------------
+
+describe("export-command (UNC-96: idempotency)", () => {
+  it("re-running on the same draft overwrites export cleanly (metadata reflects new timestamp)", async () => {
+    const draftRoot = await createTempDir();
+    await scaffoldDraft(draftRoot);
+
+    // First run
+    await runExportCommand(["instagram"], {
+      draftRoot,
+      now: () => "2026-05-18T23:00:00.000Z"
+    });
+
+    // Second run — same draft, different timestamp
+    const result2 = await runExportCommand(["instagram"], {
+      draftRoot,
+      now: () => "2026-05-18T23:35:00.000Z"
+    });
+
+    const meta = JSON.parse(
+      await readFile(join(result2.exportDir, "metadata.json"), "utf8")
+    ) as Record<string, unknown>;
+
+    // metadata.json must reflect the SECOND export's timestamp
+    expect(meta.exportedAt).toBe("2026-05-18T23:35:00.000Z");
+  });
+
+  it("re-run on the same draft does not corrupt the source draft", async () => {
+    const draftRoot = await createTempDir();
+    await scaffoldDraft(draftRoot, { captionText: "Original caption\n" });
+
+    await runExportCommand(["instagram"], {
+      draftRoot,
+      now: () => "2026-05-18T23:00:00.000Z"
+    });
+    await runExportCommand(["instagram"], {
+      draftRoot,
+      now: () => "2026-05-18T23:35:00.000Z"
+    });
+
+    // Source caption must be unchanged
+    const sourceCaption = await readFile(
+      join(draftRoot, "2026-05-18", "rev-001", "caption.txt"),
+      "utf8"
+    );
+    expect(sourceCaption).toBe("Original caption\n");
+  });
+
+  it("re-run after revision advances creates a new export path, leaves old export untouched", async () => {
+    const draftRoot = await createTempDir();
+
+    // First draft: rev-001
+    await scaffoldDraft(draftRoot, {
+      revision: "rev-001",
+      captionText: "Day one\n"
+    });
+    const result1 = await runExportCommand(["instagram"], {
+      draftRoot,
+      now: () => "2026-05-18T23:00:00.000Z"
+    });
+
+    // Second draft: rev-002 — update latest.json to point to rev-002
+    const targetDate = "2026-05-18";
+    const rev2Dir = join(draftRoot, targetDate, "rev-002");
+    await mkdir(join(rev2Dir, "carousel"), { recursive: true });
+    await writeFile(join(rev2Dir, "caption.txt"), "Day two\n", "utf8");
+    await writeFile(
+      join(rev2Dir, "safety-report.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        status: "safe",
+        risks: [],
+        redactionsApplied: [],
+        exportAllowed: true,
+        message: "Safety check passed."
+      }, null, 2) + "\n",
+      "utf8"
+    );
+    await writeFile(join(rev2Dir, "carousel", "01.png"), "PNG_V2");
+
+    const pointer2 = {
+      schemaVersion: 1,
+      targetDate,
+      revision: "rev-002",
+      path: rev2Dir,
+      updatedAt: "2026-05-18T23:20:00.000Z"
+    };
+    await writeFile(
+      join(draftRoot, "latest.json"),
+      JSON.stringify(pointer2, null, 2) + "\n",
+      "utf8"
+    );
+
+    const result2 = await runExportCommand(["instagram"], {
+      draftRoot,
+      now: () => "2026-05-18T23:35:00.000Z"
+    });
+
+    // Different export dirs
+    expect(result2.exportDir).not.toBe(result1.exportDir);
+
+    // Old export caption still unchanged
+    const oldCaption = await readFile(join(result1.exportDir, "caption.txt"), "utf8");
+    expect(oldCaption).toBe("Day one\n");
+
+    // New export has new caption
+    const newCaption = await readFile(join(result2.exportDir, "caption.txt"), "utf8");
+    expect(newCaption).toBe("Day two\n");
+  });
+
+  it("re-run after partial export folder deletion succeeds and recreates all files", async () => {
+    const draftRoot = await createTempDir();
+    await scaffoldDraft(draftRoot, { carouselCount: 2 });
+
+    // First run
+    const result1 = await runExportCommand(["instagram"], {
+      draftRoot,
+      now: () => "2026-05-18T23:00:00.000Z"
+    });
+
+    // Simulate partial deletion: remove carousel-01.png from export
+    const { unlink } = await import("node:fs/promises");
+    await unlink(join(result1.exportDir, "carousel-01.png"));
+
+    // Re-run should recreate everything
+    const result2 = await runExportCommand(["instagram"], {
+      draftRoot,
+      now: () => "2026-05-18T23:35:00.000Z"
+    });
+
+    // Same export dir (same revision)
+    expect(result2.exportDir).toBe(result1.exportDir);
+
+    // carousel-01.png recreated
+    const png1 = await readFile(join(result2.exportDir, "carousel-01.png"));
+    expect(png1.toString()).toBe("FAKE_PNG_1");
+
+    // metadata.json updated
+    const meta = JSON.parse(
+      await readFile(join(result2.exportDir, "metadata.json"), "utf8")
+    ) as Record<string, unknown>;
+    expect(meta.exportedAt).toBe("2026-05-18T23:35:00.000Z");
+  });
+
+  it("export folder path uses date and revision for disambiguation", async () => {
+    const draftRoot = await createTempDir();
+    await scaffoldDraft(draftRoot, { targetDate: "2026-05-18", revision: "rev-001" });
+
+    const result = await runExportCommand(["instagram"], {
+      draftRoot,
+      now: () => "2026-05-18T23:35:00.000Z"
+    });
+
+    expect(result.exportDir).toContain("2026-05-18");
+    expect(result.exportDir).toContain("rev-001");
+  });
+});

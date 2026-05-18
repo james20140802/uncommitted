@@ -302,6 +302,7 @@ async function runExport(
 
     io.stdout(`Exported to: ${result.exportDir}`);
     io.stdout(`Files: ${result.exportedFiles.join(", ")}`);
+    io.stdout("Re-running export overwrites this folder. Source draft is never modified.");
     return 0;
   } catch (error) {
     if (error instanceof ExportCommandError) {
