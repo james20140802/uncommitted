@@ -276,6 +276,187 @@ async function scaffoldDraftWithSafety(
   );
 }
 
+// ---------------------------------------------------------------------------
+// UNC-95: Error handling — missing draft / missing carousel
+// ---------------------------------------------------------------------------
+
+describe("export-command (UNC-95: error handling)", () => {
+  it("throws missing-draft when latest.json is absent", async () => {
+    const draftRoot = await createTempDir();
+    // No draft scaffolded — latest.json does not exist
+
+    try {
+      await runExportCommand(["instagram"], { draftRoot });
+      expect.fail("should have thrown");
+    } catch (err) {
+      expect(err).toBeInstanceOf(ExportCommandError);
+      expect((err as ExportCommandError).code).toBe("missing-draft");
+      expect((err as ExportCommandError).message).toContain("render latest");
+    }
+  });
+
+  it("error message for missing draft tells user what to run next", async () => {
+    const draftRoot = await createTempDir();
+
+    try {
+      await runExportCommand(["instagram"], { draftRoot });
+    } catch (err) {
+      const msg = (err as ExportCommandError).message;
+      // Should reference generate or render step
+      expect(msg.toLowerCase()).toMatch(/generate|render/);
+    }
+  });
+
+  it("throws missing-carousel when carousel directory is absent", async () => {
+    const draftRoot = await createTempDir();
+    // Scaffold draft WITHOUT carousel directory
+    const targetDate = "2026-05-18";
+    const revision = "rev-001";
+    const outputDir = join(draftRoot, targetDate, revision);
+    await mkdir(outputDir, { recursive: true });
+
+    await writeFile(join(outputDir, "caption.txt"), "Caption.\n", "utf8");
+    await writeFile(
+      join(outputDir, "safety-report.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        status: "safe",
+        risks: [],
+        redactionsApplied: [],
+        exportAllowed: true,
+        message: "Safety check passed."
+      }, null, 2) + "\n",
+      "utf8"
+    );
+
+    const pointer = {
+      schemaVersion: 1,
+      targetDate,
+      revision,
+      path: outputDir,
+      updatedAt: "2026-05-18T23:30:00.000Z"
+    };
+    await writeFile(
+      join(draftRoot, "latest.json"),
+      JSON.stringify(pointer, null, 2) + "\n",
+      "utf8"
+    );
+    await writeFile(
+      join(draftRoot, targetDate, "latest.json"),
+      JSON.stringify(pointer, null, 2) + "\n",
+      "utf8"
+    );
+
+    try {
+      await runExportCommand(["instagram"], { draftRoot });
+      expect.fail("should have thrown");
+    } catch (err) {
+      expect(err).toBeInstanceOf(ExportCommandError);
+      expect((err as ExportCommandError).code).toBe("missing-carousel");
+      expect((err as ExportCommandError).message).toContain("render latest");
+    }
+  });
+
+  it("throws missing-carousel when carousel directory exists but has no PNGs", async () => {
+    const draftRoot = await createTempDir();
+    const targetDate = "2026-05-18";
+    const revision = "rev-001";
+    const outputDir = join(draftRoot, targetDate, revision);
+    await mkdir(join(outputDir, "carousel"), { recursive: true });
+    // carousel dir is empty — no PNGs at all
+
+    await writeFile(join(outputDir, "caption.txt"), "Caption.\n", "utf8");
+    await writeFile(
+      join(outputDir, "safety-report.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        status: "safe",
+        risks: [],
+        redactionsApplied: [],
+        exportAllowed: true,
+        message: "Safety check passed."
+      }, null, 2) + "\n",
+      "utf8"
+    );
+
+    const pointer = {
+      schemaVersion: 1,
+      targetDate,
+      revision,
+      path: outputDir,
+      updatedAt: "2026-05-18T23:30:00.000Z"
+    };
+    await writeFile(
+      join(draftRoot, "latest.json"),
+      JSON.stringify(pointer, null, 2) + "\n",
+      "utf8"
+    );
+    await writeFile(
+      join(draftRoot, targetDate, "latest.json"),
+      JSON.stringify(pointer, null, 2) + "\n",
+      "utf8"
+    );
+
+    try {
+      await runExportCommand(["instagram"], { draftRoot });
+      expect.fail("should have thrown");
+    } catch (err) {
+      expect(err).toBeInstanceOf(ExportCommandError);
+      expect((err as ExportCommandError).code).toBe("missing-carousel");
+    }
+  });
+
+  it("does not create an export folder when carousel is missing", async () => {
+    const draftRoot = await createTempDir();
+    const targetDate = "2026-05-18";
+    const revision = "rev-001";
+    const outputDir = join(draftRoot, targetDate, revision);
+    await mkdir(outputDir, { recursive: true });
+    // No carousel directory
+
+    await writeFile(join(outputDir, "caption.txt"), "Caption.\n", "utf8");
+    await writeFile(
+      join(outputDir, "safety-report.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        status: "safe",
+        risks: [],
+        redactionsApplied: [],
+        exportAllowed: true,
+        message: "Safety check passed."
+      }, null, 2) + "\n",
+      "utf8"
+    );
+
+    const pointer = {
+      schemaVersion: 1,
+      targetDate,
+      revision,
+      path: outputDir,
+      updatedAt: "2026-05-18T23:30:00.000Z"
+    };
+    await writeFile(
+      join(draftRoot, "latest.json"),
+      JSON.stringify(pointer, null, 2) + "\n",
+      "utf8"
+    );
+    await writeFile(
+      join(draftRoot, targetDate, "latest.json"),
+      JSON.stringify(pointer, null, 2) + "\n",
+      "utf8"
+    );
+
+    try {
+      await runExportCommand(["instagram"], { draftRoot });
+    } catch {
+      // expected
+    }
+
+    const exportBase = join(draftRoot, "exports", "instagram");
+    await expect(readdir(exportBase)).rejects.toThrow();
+  });
+});
+
 describe("export-command (UNC-94: safety policy)", () => {
   it("safe draft exports with no warning and safetyStatus 'safe' in metadata", async () => {
     const draftRoot = await createTempDir();
