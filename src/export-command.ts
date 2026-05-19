@@ -216,28 +216,44 @@ type SafetyInfo = {
 };
 
 async function readSafetyInfo(sourceDraftPath: string): Promise<SafetyInfo> {
+  let raw: string;
   try {
-    const raw = await readFile(
-      join(sourceDraftPath, "safety-report.json"),
-      "utf8"
-    );
-    const parsed = JSON.parse(raw) as unknown;
-
-    if (
-      isRecord(parsed) &&
-      (parsed.status === "safe" ||
-        parsed.status === "warning" ||
-        parsed.status === "blocked")
-    ) {
-      const reason =
-        typeof parsed.message === "string" ? parsed.message : undefined;
-      return { status: parsed.status as SafetyStatus, reason };
+    raw = await readFile(join(sourceDraftPath, "safety-report.json"), "utf8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+      return { status: "safe" };
     }
-  } catch {
-    // If no safety report file, treat as safe (graceful degradation)
+    throw new ExportCommandError(
+      "Could not read safety-report.json.",
+      "export-failed"
+    );
   }
 
-  return { status: "safe" };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new ExportCommandError(
+      "safety-report.json has an unrecognized format.",
+      "export-failed"
+    );
+  }
+
+  if (
+    isRecord(parsed) &&
+    (parsed.status === "safe" ||
+      parsed.status === "warning" ||
+      parsed.status === "blocked")
+  ) {
+    const reason =
+      typeof parsed.message === "string" ? parsed.message : undefined;
+    return { status: parsed.status as SafetyStatus, reason };
+  }
+
+  throw new ExportCommandError(
+    "safety-report.json has an unrecognized format.",
+    "export-failed"
+  );
 }
 
 async function collectCarouselPngs(sourceDraftPath: string): Promise<string[]> {
