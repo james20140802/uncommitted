@@ -27,6 +27,11 @@ import {
   removeProject,
   type ProjectRecord
 } from "./project-registry.js";
+import { resolveConfigPaths } from "./config-paths.js";
+import {
+  ExportCommandError,
+  runExportCommand
+} from "./export-command.js";
 import {
   RenderCommandError,
   runRenderCommand
@@ -47,6 +52,7 @@ export type CliIo = {
 export type CliOptions = {
   cwd?: string;
   homeDir?: string;
+  draftRoot?: string;
   now?: () => string;
   aiProvider?: AiProvider;
   imageAssetProvider?: ImageAssetProvider;
@@ -140,6 +146,10 @@ export async function runCli(
 
   if (command === "render") {
     return await runRender(commandArgs, io, options);
+  }
+
+  if (command === "export") {
+    return await runExport(commandArgs, io, options);
   }
 
   if (command === "schedule") {
@@ -266,6 +276,59 @@ async function runRender(
       }
 
       return 5;
+    }
+
+    throw error;
+  }
+}
+
+async function runExport(
+  args: string[],
+  io: CliIo,
+  options: CliOptions
+): Promise<number> {
+  const paths = resolveConfigPaths({ homeDir: options.homeDir });
+  const draftRoot = options.draftRoot ?? paths.defaultDraftRoot;
+
+  try {
+    const result = await runExportCommand(args, {
+      draftRoot,
+      now: options.now
+    });
+
+    if (result.warningMessage) {
+      io.stderr(result.warningMessage);
+    }
+
+    io.stdout(`Exported to: ${result.exportDir}`);
+    io.stdout(`Files: ${result.exportedFiles.join(", ")}`);
+    io.stdout("Re-running export overwrites this folder. Source draft is never modified.");
+    return 0;
+  } catch (error) {
+    if (error instanceof ExportCommandError) {
+      io.stderr(error.message);
+
+      if (error.code === "invalid-arguments") {
+        return 1;
+      }
+
+      if (error.code === "invalid-config") {
+        return 2;
+      }
+
+      if (error.code === "missing-draft") {
+        return 1;
+      }
+
+      if (error.code === "missing-carousel") {
+        return 5;
+      }
+
+      if (error.code === "safety-blocked") {
+        return 6;
+      }
+
+      return 1;
     }
 
     throw error;
