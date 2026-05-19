@@ -92,6 +92,7 @@ export async function runExportCommand(
 
   // 2. Resolve latest draft pointer
   const pointer = await resolveLatestPointer(draftRoot);
+  validatePointerDate(pointer.targetDate);
   const sourceDraftPath = pointer.path;
 
   // 3. Read safety report (status + reason)
@@ -332,6 +333,15 @@ async function writeExportMetadata(
     throw new ExportCommandError(
       "Could not write export metadata.",
       "export-failed"
+    );
+  }
+}
+
+function validatePointerDate(targetDate: string): void {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(targetDate)) {
+    throw new ExportCommandError(
+      "Draft pointer contains an invalid date.",
+      "invalid-config"
     );
   }
 }
