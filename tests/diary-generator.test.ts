@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import { AiGenerationError, MockAiProvider } from "../src/ai-provider.js";
 import type { ActivitySummary } from "../src/activity-summary.js";
 import {
+  buildCaptionInstructions,
   deriveCaptionText,
+  generateCaption,
   generateDiaryDraft
 } from "../src/diary-generator.js";
 import type { StoryFormatPlan } from "../src/story-format-plan.js";
@@ -29,8 +31,6 @@ describe("diary generator", () => {
       schemaVersion: 1,
       targetDate: "2026-05-12",
       title: "Provider Boundary Day",
-      caption:
-        "오늘은 provider boundary를 세우고 검증까지 붙였다. 내일의 버그도 이제 입장권 검사가 필요하다.",
       slides: [
         {
           index: 1,
@@ -57,7 +57,6 @@ describe("diary generator", () => {
           visualMood: "rubber stamp on terminal"
         }
       ],
-      hashtags: ["#Uncommitted", "#개발일기", "#AI동료"],
       altText:
         "AI coworker diary carousel about provider validation work in Uncommitted.",
       metadata: {
@@ -72,7 +71,10 @@ describe("diary generator", () => {
         slideCount: 4
       }
     });
-    expect(deriveCaptionText(draft)).toBe(
+    expect(deriveCaptionText({
+      caption: "오늘은 provider boundary를 세우고 검증까지 붙였다. 내일의 버그도 이제 입장권 검사가 필요하다.",
+      hashtags: ["#Uncommitted", "#개발일기", "#AI동료"]
+    })).toBe(
       "오늘은 provider boundary를 세우고 검증까지 붙였다. 내일의 버그도 이제 입장권 검사가 필요하다.\n\n#Uncommitted #개발일기 #AI동료\n"
     );
     expect(provider.requests).toHaveLength(1);
@@ -98,44 +100,25 @@ describe("diary generator", () => {
     });
     const instructions = provider.requests[0]?.instructions ?? "";
     expect(instructions).toContain("Return structured JSON for story.json");
-    expect(instructions).toContain(
-      "Caption must be copyable as an Instagram caption"
-    );
     expect(instructions).toContain("Do not invent work");
-    expect(instructions).toContain(
-      "The configured AI coworker persona is the caption narrator"
-    );
     expect(instructions).toContain(
       "Do not explain the persona to the reader"
     );
     expect(instructions).toContain(
       "Use the Story Format Plan for slide structure and story flow"
     );
-    expect(instructions).toContain(
-      "Do not use the Story Format Plan, formatName, voice, tone, or captionStyle to create a concept for the caption"
-    );
     expect(instructions).not.toContain("Bug Court Transcript");
     expect(instructions).not.toContain("tired QA narrator");
     expect(instructions).not.toContain("deadpan, witty, affectionate");
-    expect(instructions).not.toContain("selected genre");
-    expect(instructions).not.toContain("genre may lightly color the caption");
-    expect(instructions).toContain(
-      "Mention one or two concrete work moments from the activity summary"
-    );
-    expect(instructions).toContain("then add the narrator's reaction");
-    expect(instructions).toContain(
-      "Write like a real Instagram caption someone might post after work"
-    );
-    expect(instructions).toContain(
-      "Plain, casual, emotionally specific Korean is better than elegant abstract writing"
-    );
-    expect(instructions).toContain("Do not write a status report");
-    expect(instructions).toContain("Avoid abstract literary lines");
-    expect(instructions).toContain(
-      "Do not claim to know the user's inner feelings"
+    // Caption instructions moved to generateCaption — must NOT appear in diary draft instructions
+    expect(instructions).not.toContain(
+      "Caption must be copyable as an Instagram caption"
     );
     expect(instructions).not.toContain(
-      "Make the selected genre visible in the title, caption"
+      "Write like a real Instagram caption"
+    );
+    expect(instructions).not.toContain(
+      "Do not use the Story Format Plan, formatName, voice, tone, or captionStyle to create a concept for the caption"
     );
   });
 
@@ -143,8 +126,6 @@ describe("diary generator", () => {
     const provider = new MockAiProvider({
       response: createProviderDraft({
         title: "Quiet Terminal Watch",
-        caption:
-          "오늘은 Git이 조용했다. 나는 평화라고 믿어보기로 했지만, TODO는 커튼 뒤에서 숨을 참고 있었다.",
         slides: [
           {
             index: 1,
@@ -228,13 +209,6 @@ describe("diary generator", () => {
     expect(provider.requests[0]?.instructions).toContain(
       "For quiet days, acknowledge no recorded work"
     );
-    const instructions = provider.requests[0]?.instructions ?? "";
-    expect(instructions).toContain(
-      "For quiet-day captions, mention the absence of recorded work honestly"
-    );
-    expect(instructions).not.toContain(
-      "Mention one or two concrete work moments from the activity summary"
-    );
   });
 
   it("accepts low-activity drafts within the MVP slide range", async () => {
@@ -313,7 +287,7 @@ describe("diary generator", () => {
         storyFormatPlan: createStoryFormatPlan(),
         provider: new MockAiProvider({
           response: createProviderDraft({
-            caption:
+            altText:
               "오늘은 /Users/dev/private/.env 에서 OPENAI_API_KEY=sk-live-secret123 를 확인했다."
           })
         }),
@@ -348,8 +322,26 @@ describe("diary generator", () => {
         }),
         provider: new MockAiProvider({
           response: createProviderDraft({
-            caption: "오늘은 인증 기능을 shipped 하고 버그도 fixed 했다.",
-            slides: createProviderDraft().slides.slice(0, 3)
+            slides: [
+              {
+                index: 1,
+                title: "조용한 시작",
+                body: "오늘은 인증 기능을 shipped 하고 버그도 fixed 했다.",
+                visualMood: "still terminal"
+              },
+              {
+                index: 2,
+                title: "대기",
+                body: "없는 작업을 invent하지 않고 조용한 하루를 적었다.",
+                visualMood: "waiting cursor"
+              },
+              {
+                index: 3,
+                title: "마무리",
+                body: "내일의 기록을 기다리는 쪽으로 닫았다.",
+                visualMood: "small note"
+              }
+            ]
           })
         }),
         persona: "wry coworker",
@@ -359,6 +351,274 @@ describe("diary generator", () => {
       code: "malformed-response",
       message: "AI provider fabricated quiet-day activity."
     });
+  });
+});
+
+describe("caption generator", () => {
+  it("buildCaptionInstructions includes few-shot good and bad examples", () => {
+    const instructions = buildCaptionInstructions({ quiet: false });
+
+    // Good example anchors
+    expect(instructions).toContain("caption 몇 줄만 손보자고 했는데");
+    expect(instructions).toContain("preview 만든다길래");
+
+    // Bad example anchors
+    expect(instructions).toContain("보이지 않는 가능성이");
+    expect(instructions).toContain("오늘도 개발했습니다");
+
+    // Core style rules
+    expect(instructions).toContain("AI 동료");
+    expect(instructions).toContain("Instagram");
+    expect(instructions).not.toContain("captionStyle");
+  });
+
+  it("buildCaptionInstructions quiet-day variant mentions absence of work", () => {
+    const instructions = buildCaptionInstructions({ quiet: true });
+
+    expect(instructions).toContain("조용한 날");
+  });
+
+  it("generateCaption sends commitSubjects as caption anchor in prompt input", async () => {
+    const provider = new MockAiProvider({
+      response: {
+        caption:
+          "caption 몇 줄만 손보자고 했는데\n프롬프트 말투 회의가 됐습니다\n\n저는 옆에서 예시들 맞고 있었습니다",
+        hashtags: ["#Uncommitted", "#AI동료일지", "#프롬프트개선"]
+      }
+    });
+
+    await generateCaption({
+      activitySummary: createActivitySummary({
+        commitSignals: {
+          totalCommits: 2,
+          filesChanged: 4,
+          insertions: 120,
+          deletions: 18,
+          subjects: ["add caption prompt", "fix rendering bug"],
+          themes: ["coding"]
+        }
+      }),
+      provider,
+      persona: "wry coworker",
+      roastLevel: 2
+    });
+
+    expect(provider.requests).toHaveLength(1);
+    const request = provider.requests[0]!;
+    expect(request.task).toBe("caption");
+    const inputJson = JSON.stringify(request.input);
+    expect(inputJson).toContain("add caption prompt");
+    expect(inputJson).toContain("fix rendering bug");
+  });
+
+  it("generateCaption returns validated { caption, hashtags[] } from mocked provider", async () => {
+    const provider = new MockAiProvider({
+      response: {
+        caption:
+          "preview 만든다길래\n이제 결과물 바로 보는 줄 알았습니다\n\n개발자들은 왜 항상\n자기가 만든 걸 제일 못 믿을까요",
+        hashtags: ["#Uncommitted", "#Preview", "#개발일기"]
+      }
+    });
+
+    const result = await generateCaption({
+      activitySummary: createActivitySummary(),
+      provider,
+      persona: "wry coworker",
+      roastLevel: 2
+    });
+
+    expect(result.caption).toBe(
+      "preview 만든다길래\n이제 결과물 바로 보는 줄 알았습니다\n\n개발자들은 왜 항상\n자기가 만든 걸 제일 못 믿을까요"
+    );
+    expect(result.hashtags).toEqual([
+      "#Uncommitted",
+      "#Preview",
+      "#개발일기"
+    ]);
+  });
+
+  it("generateCaption throws AiGenerationError on malformed provider response", async () => {
+    const emptyProvider = new MockAiProvider({ response: {} });
+    const missingHashtagsProvider = new MockAiProvider({
+      response: { caption: "괜찮은 날이었습니다" }
+    });
+    const badHashtagProvider = new MockAiProvider({
+      response: {
+        caption: "괜찮은 날이었습니다",
+        hashtags: ["noHash"]
+      }
+    });
+    const failingProvider = new MockAiProvider({
+      failure: new Error("network error")
+    });
+
+    await expect(
+      generateCaption({
+        activitySummary: createActivitySummary(),
+        provider: emptyProvider,
+        persona: "wry coworker",
+        roastLevel: 2
+      })
+    ).rejects.toMatchObject({ code: "malformed-response" });
+
+    await expect(
+      generateCaption({
+        activitySummary: createActivitySummary(),
+        provider: missingHashtagsProvider,
+        persona: "wry coworker",
+        roastLevel: 2
+      })
+    ).rejects.toMatchObject({ code: "malformed-response" });
+
+    await expect(
+      generateCaption({
+        activitySummary: createActivitySummary(),
+        provider: badHashtagProvider,
+        persona: "wry coworker",
+        roastLevel: 2
+      })
+    ).rejects.toMatchObject({ code: "malformed-response" });
+
+    await expect(
+      generateCaption({
+        activitySummary: createActivitySummary(),
+        provider: failingProvider,
+        persona: "wry coworker",
+        roastLevel: 2
+      })
+    ).rejects.toBeInstanceOf(AiGenerationError);
+  });
+
+  it("generateCaption rejects quiet-day caption that fabricates work", async () => {
+    const quietSummary = createActivitySummary({
+      activityLevel: "none",
+      dominantTheme: "quiet",
+      projects: [],
+      commitSignals: {
+        totalCommits: 0,
+        filesChanged: 0,
+        insertions: 0,
+        deletions: 0,
+        subjects: [],
+        themes: []
+      },
+      manualContext: { noteCount: 0, notes: [] },
+      smallWins: [],
+      unfinishedThreads: []
+    });
+
+    await expect(
+      generateCaption({
+        activitySummary: quietSummary,
+        provider: new MockAiProvider({
+          response: {
+            caption: "오늘 인증 기능을 shipped 했습니다",
+            hashtags: ["#Uncommitted"]
+          }
+        }),
+        persona: "wry coworker",
+        roastLevel: 2
+      })
+    ).rejects.toMatchObject({
+      code: "malformed-response",
+      message: "AI provider fabricated quiet-day activity in caption."
+    });
+
+    await expect(
+      generateCaption({
+        activitySummary: quietSummary,
+        provider: new MockAiProvider({
+          response: {
+            caption: "버그를 fixed 하고 배포도 merged 했습니다",
+            hashtags: ["#Uncommitted"]
+          }
+        }),
+        persona: "wry coworker",
+        roastLevel: 2
+      })
+    ).rejects.toMatchObject({
+      code: "malformed-response"
+    });
+
+    await expect(
+      generateCaption({
+        activitySummary: quietSummary,
+        provider: new MockAiProvider({
+          response: {
+            caption: "오늘은 조용한 하루였습니다. 기다리고 관찰했습니다.",
+            hashtags: ["#Uncommitted", "#조용한날"]
+          }
+        }),
+        persona: "wry coworker",
+        roastLevel: 2
+      })
+    ).resolves.toMatchObject({
+      caption: "오늘은 조용한 하루였습니다. 기다리고 관찰했습니다."
+    });
+  });
+
+  it("generateCaption uses manual note texts as highlights when commit subjects are absent", async () => {
+    const noteOnlySummary = createActivitySummary({
+      activityLevel: "low",
+      dominantTheme: "planning",
+      projects: [
+        {
+          projectId: "uncommitted",
+          projectName: "uncommitted",
+          repositoryName: "uncommitted",
+          commitCount: 0,
+          filesChanged: 0,
+          insertions: 0,
+          deletions: 0,
+          uncommittedChangeCount: 0,
+          manualNoteCount: 2,
+          themes: ["planning"],
+          summary: "2 manual notes, no commits"
+        }
+      ],
+      commitSignals: {
+        totalCommits: 0,
+        filesChanged: 0,
+        insertions: 0,
+        deletions: 0,
+        subjects: [],
+        themes: []
+      },
+      manualContext: {
+        noteCount: 2,
+        notes: [
+          {
+            projectId: "uncommitted",
+            timestamp: "2026-05-12T10:00:00.000Z",
+            text: "Reviewed the onboarding docs."
+          },
+          {
+            projectId: "uncommitted",
+            timestamp: "2026-05-12T14:00:00.000Z",
+            text: "Updated the API reference."
+          }
+        ]
+      },
+      smallWins: []
+    });
+
+    const provider = new MockAiProvider({
+      response: {
+        caption: "문서 정리하는 하루였습니다",
+        hashtags: ["#Uncommitted"]
+      }
+    });
+
+    await generateCaption({
+      activitySummary: noteOnlySummary,
+      provider,
+      persona: "wry coworker",
+      roastLevel: 2
+    });
+
+    const inputJson = JSON.stringify(provider.requests[0]?.input);
+    expect(inputJson).toContain("Reviewed the onboarding docs.");
+    expect(inputJson).toContain("Updated the API reference.");
   });
 });
 
@@ -374,8 +634,6 @@ function createProviderDraft(
 function baseProviderDraft() {
   return {
     title: "Bug Court Transcript",
-    caption:
-      "오늘은 provider boundary를 세우고 검증까지 붙였다. 내일의 버그도 이제 입장권 검사가 필요하다.",
     slides: [
       {
         index: 1,
@@ -402,7 +660,6 @@ function baseProviderDraft() {
         visualMood: "rubber stamp on terminal"
       }
     ],
-    hashtags: ["#Uncommitted", "#개발일기", "#AI동료"],
     altText:
       "AI coworker diary carousel about provider validation work in Uncommitted."
   };

@@ -666,7 +666,6 @@ function createStoryDraft(overrides: Partial<DiaryDraft> = {}): DiaryDraft {
     schemaVersion: 1,
     targetDate: "2026-05-18",
     title: "Renderer Foundation Day",
-    caption: "HTML cards first, camera later.",
     slides: [
       {
         index: 1,
@@ -687,7 +686,6 @@ function createStoryDraft(overrides: Partial<DiaryDraft> = {}): DiaryDraft {
         visualMood: "quiet stamp"
       }
     ],
-    hashtags: ["#Uncommitted"],
     altText: "Uncommitted carousel draft.",
     metadata: {
       targetDate: "2026-05-18",

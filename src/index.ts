@@ -113,13 +113,16 @@ export type {
 } from "./story-format-plan.js";
 export {
   deriveCaptionText,
+  generateCaption,
   generateDiaryDraft
 } from "./diary-generator.js";
 export type {
+  CaptionResult,
   DiaryDraft,
   DiaryDraftMetadata,
   DiaryGeneratorOptions,
-  DiarySlide
+  DiarySlide,
+  GenerateCaptionOptions
 } from "./diary-generator.js";
 export {
   checkDraftSafety,

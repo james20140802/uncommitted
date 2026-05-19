@@ -11,7 +11,7 @@ import type {
 } from "../src/ai-provider.js";
 import { runCli } from "../src/cli.js";
 import type { GitActivityEvent } from "../src/collect-git-command.js";
-import type { DiaryDraft } from "../src/diary-generator.js";
+import type { CaptionResult, DiaryDraft } from "../src/diary-generator.js";
 import { addProject, type ProjectRecord } from "../src/project-add.js";
 import type { StoryFormatPlan } from "../src/story-format-plan.js";
 import type { ImageAssetProvider, ImageAssetRequest } from "../src/visual-assets.js";
@@ -61,7 +61,8 @@ describe("generate command", () => {
     expect(stdout).toEqual([`Generated text draft for 2026-05-12: ${outputDir}`]);
     expect(provider.requests.map((request) => request.task)).toEqual([
       "story-plan",
-      "draft"
+      "draft",
+      "caption"
     ]);
     expect(activitySummary).toMatchObject({
       schemaVersion: 1,
@@ -276,7 +277,6 @@ describe("generate command", () => {
     const provider = new TaskAwareProvider({
       draft: createProviderDraft({
         title: "Quiet Terminal Watch",
-        caption: "오늘은 기록된 작업이 없었다. 없는 성과는 만들지 않았다.",
         slides: [
           {
             index: 1,
@@ -298,6 +298,10 @@ describe("generate command", () => {
           }
         ],
         altText: "Quiet-day Uncommitted draft with no recorded work."
+      }),
+      caption: createProviderCaption({
+        caption: "오늘은 기록된 작업이 없었다. 없는 성과는 만들지 않았다.",
+        hashtags: ["#Uncommitted", "#QuietDay"]
       })
     });
 
@@ -338,14 +342,14 @@ describe("generate command", () => {
       homeDir: fixture.homeDir,
       now: () => "2026-05-12T23:30:00.000Z",
       aiProvider: new TaskAwareProvider({
-        draft: createProviderDraft({ caption: "첫 번째 draft 감정 기록." })
+        caption: createProviderCaption({ caption: "첫 번째 draft 감정 기록." })
       })
     });
     const secondExitCode = await runCli(["generate", "today"], io, {
       homeDir: fixture.homeDir,
       now: () => "2026-05-12T23:45:00.000Z",
       aiProvider: new TaskAwareProvider({
-        draft: createProviderDraft({ caption: "두 번째 draft 감정 기록." })
+        caption: createProviderCaption({ caption: "두 번째 draft 감정 기록." })
       })
     });
     const dateDir = join(fixture.draftRoot, "2026-05-12");
@@ -617,6 +621,7 @@ class TaskAwareProvider implements AiProvider {
     private readonly options: {
       plan?: StoryFormatPlan;
       draft?: ReturnType<typeof createProviderDraft>;
+      caption?: CaptionResult;
       failDraft?: boolean;
       model?: string;
     } = {}
@@ -642,6 +647,12 @@ class TaskAwareProvider implements AiProvider {
 
       return {
         responseJson: JSON.stringify(this.options.draft ?? createProviderDraft())
+      };
+    }
+
+    if (request.task === "caption") {
+      return {
+        responseJson: JSON.stringify(this.options.caption ?? createProviderCaption())
       };
     }
 
@@ -910,7 +921,6 @@ function createProviderDraft(
 ) {
   return {
     title: "Generate Command Day",
-    caption: "오늘은 generate command를 텍스트 draft까지 연결했다.",
     slides: [
       {
         index: 1,
@@ -931,8 +941,15 @@ function createProviderDraft(
         visualMood: "checklist with one unchecked render item"
       }
     ],
-    hashtags: ["#Uncommitted", "#개발일기"],
     altText: "Uncommitted text diary draft generated from local activity.",
+    ...overrides
+  };
+}
+
+function createProviderCaption(overrides: Partial<CaptionResult> = {}): CaptionResult {
+  return {
+    caption: "오늘은 generate command를 텍스트 draft까지 연결했다.",
+    hashtags: ["#Uncommitted", "#개발일기"],
     ...overrides
   };
 }
