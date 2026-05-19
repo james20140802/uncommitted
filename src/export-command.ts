@@ -185,6 +185,10 @@ function validateArgs(args: string[]): void {
   if (target !== undefined && target !== "latest") {
     throw new ExportCommandError(USAGE, "invalid-arguments");
   }
+
+  if (args.length > 2) {
+    throw new ExportCommandError(USAGE, "invalid-arguments");
+  }
 }
 
 async function resolveLatestPointer(draftRoot: string) {
