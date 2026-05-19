@@ -1,4 +1,4 @@
-import { copyFile, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { DraftStorageError, readLatestDraftPointer } from "./draft-storage.js";
 import type { SafetyStatus } from "./safety-report.js";
@@ -283,6 +283,7 @@ async function collectCarouselPngs(sourceDraftPath: string): Promise<string[]> {
 
 async function createExportDir(exportDir: string): Promise<void> {
   try {
+    await rm(exportDir, { recursive: true, force: true });
     await mkdir(exportDir, { recursive: true });
   } catch {
     throw new ExportCommandError(
