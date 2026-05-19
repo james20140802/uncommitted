@@ -320,8 +320,6 @@ export function buildCaptionInstructions(options: { quiet: boolean }): string {
     "Good example 5 (export/artifact day):",
     "인스타에 올리기 쉽게 빼자고 했는데 생각보다 챙길 게 많았습니다",
     "",
-    "caption.txt carousel 이미지 metadata safety 상태",
-    "",
     "우리 개발자 오늘",
     "\"내보내기\"가 그냥 내보내기가 아니라는 걸 배움",
     "",
