@@ -488,6 +488,138 @@ describe("caption generator", () => {
       })
     ).rejects.toBeInstanceOf(AiGenerationError);
   });
+
+  it("generateCaption rejects quiet-day caption that fabricates work", async () => {
+    const quietSummary = createActivitySummary({
+      activityLevel: "none",
+      dominantTheme: "quiet",
+      projects: [],
+      commitSignals: {
+        totalCommits: 0,
+        filesChanged: 0,
+        insertions: 0,
+        deletions: 0,
+        subjects: [],
+        themes: []
+      },
+      manualContext: { noteCount: 0, notes: [] },
+      smallWins: [],
+      unfinishedThreads: []
+    });
+
+    await expect(
+      generateCaption({
+        activitySummary: quietSummary,
+        provider: new MockAiProvider({
+          response: {
+            caption: "오늘 인증 기능을 shipped 했습니다",
+            hashtags: ["#Uncommitted"]
+          }
+        }),
+        persona: "wry coworker",
+        roastLevel: 2
+      })
+    ).rejects.toMatchObject({
+      code: "malformed-response",
+      message: "AI provider fabricated quiet-day activity in caption."
+    });
+
+    await expect(
+      generateCaption({
+        activitySummary: quietSummary,
+        provider: new MockAiProvider({
+          response: {
+            caption: "버그를 fixed 하고 배포도 merged 했습니다",
+            hashtags: ["#Uncommitted"]
+          }
+        }),
+        persona: "wry coworker",
+        roastLevel: 2
+      })
+    ).rejects.toMatchObject({
+      code: "malformed-response"
+    });
+
+    await expect(
+      generateCaption({
+        activitySummary: quietSummary,
+        provider: new MockAiProvider({
+          response: {
+            caption: "오늘은 조용한 하루였습니다. 기다리고 관찰했습니다.",
+            hashtags: ["#Uncommitted", "#조용한날"]
+          }
+        }),
+        persona: "wry coworker",
+        roastLevel: 2
+      })
+    ).resolves.toMatchObject({
+      caption: "오늘은 조용한 하루였습니다. 기다리고 관찰했습니다."
+    });
+  });
+
+  it("generateCaption uses manual note texts as highlights when commit subjects are absent", async () => {
+    const noteOnlySummary = createActivitySummary({
+      activityLevel: "low",
+      dominantTheme: "planning",
+      projects: [
+        {
+          projectId: "uncommitted",
+          projectName: "uncommitted",
+          repositoryName: "uncommitted",
+          commitCount: 0,
+          filesChanged: 0,
+          insertions: 0,
+          deletions: 0,
+          uncommittedChangeCount: 0,
+          manualNoteCount: 2,
+          themes: ["planning"],
+          summary: "2 manual notes, no commits"
+        }
+      ],
+      commitSignals: {
+        totalCommits: 0,
+        filesChanged: 0,
+        insertions: 0,
+        deletions: 0,
+        subjects: [],
+        themes: []
+      },
+      manualContext: {
+        noteCount: 2,
+        notes: [
+          {
+            projectId: "uncommitted",
+            timestamp: "2026-05-12T10:00:00.000Z",
+            text: "Reviewed the onboarding docs."
+          },
+          {
+            projectId: "uncommitted",
+            timestamp: "2026-05-12T14:00:00.000Z",
+            text: "Updated the API reference."
+          }
+        ]
+      },
+      smallWins: []
+    });
+
+    const provider = new MockAiProvider({
+      response: {
+        caption: "문서 정리하는 하루였습니다",
+        hashtags: ["#Uncommitted"]
+      }
+    });
+
+    await generateCaption({
+      activitySummary: noteOnlySummary,
+      provider,
+      persona: "wry coworker",
+      roastLevel: 2
+    });
+
+    const inputJson = JSON.stringify(provider.requests[0]?.input);
+    expect(inputJson).toContain("Reviewed the onboarding docs.");
+    expect(inputJson).toContain("Updated the API reference.");
+  });
 });
 
 function createProviderDraft(

@@ -348,13 +348,40 @@ function buildSafeCaptionInput(options: {
     overview: `${summary.activityLevel} day. Persona: ${options.persona}. Roast level: ${options.roastLevel}.`,
     highlights: quiet
       ? ["No recorded Git activity or manual notes today."]
-      : summary.commitSignals.subjects.slice(0, 5),
-    projectSummaries: [],
+      : buildCaptionHighlights(summary),
+    projectSummaries: summary.projects
+      .filter((p) => p.commitCount > 0 || p.manualNoteCount > 0)
+      .map((p) => ({
+        projectId: p.projectId,
+        projectName: p.projectName,
+        summary: p.summary,
+        stats: {
+          commits: p.commitCount,
+          filesChanged: p.filesChanged,
+          insertions: p.insertions,
+          deletions: p.deletions,
+          dirtyFiles: p.uncommittedChangeCount
+        }
+      })),
     captionAnchor: {
       commitSubjects: summary.commitSignals.subjects,
       activityLevel: summary.activityLevel
     }
   };
+}
+
+function buildCaptionHighlights(summary: ActivitySummary): string[] {
+  const commitSubjects = summary.commitSignals.subjects.slice(0, 5);
+  if (commitSubjects.length > 0) {
+    return commitSubjects;
+  }
+
+  const noteTexts = summary.manualContext.notes.slice(0, 5).map((n) => n.text);
+  if (noteTexts.length > 0) {
+    return noteTexts;
+  }
+
+  return [...summary.smallWins, ...summary.unfinishedThreads].slice(0, 5);
 }
 
 type CaptionProviderData = JsonObject & {
@@ -382,7 +409,9 @@ export async function generateCaption(
     request
   );
 
-  return parseCaptionResult(response.data);
+  const result = parseCaptionResult(response.data);
+  assertCaptionQuietDayHonesty(result.caption, options.activitySummary);
+  return result;
 }
 
 function parseCaptionResult(data: CaptionProviderData): CaptionResult {
@@ -559,6 +588,26 @@ function assertQuietDayHonesty(
   ) {
     throw new AiGenerationError(
       "AI provider fabricated quiet-day activity.",
+      "malformed-response"
+    );
+  }
+}
+
+function assertCaptionQuietDayHonesty(
+  caption: string,
+  summary: ActivitySummary
+): void {
+  if (summary.activityLevel !== "none") {
+    return;
+  }
+
+  if (
+    /\b(?:\d+\s+commits?|fixed|implemented|shipped|built|released|merged|debugged)\b/i.test(
+      caption
+    )
+  ) {
+    throw new AiGenerationError(
+      "AI provider fabricated quiet-day activity in caption.",
       "malformed-response"
     );
   }
