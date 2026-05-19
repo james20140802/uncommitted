@@ -1,6 +1,6 @@
 import { copyFile, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { readLatestDraftPointer } from "./draft-storage.js";
+import { DraftStorageError, readLatestDraftPointer } from "./draft-storage.js";
 import type { SafetyStatus } from "./safety-report.js";
 
 // ---------------------------------------------------------------------------
@@ -194,10 +194,16 @@ function validateArgs(args: string[]): void {
 async function resolveLatestPointer(draftRoot: string) {
   try {
     return await readLatestDraftPointer(draftRoot);
-  } catch {
+  } catch (err) {
+    if (err instanceof DraftStorageError && err.message.toLowerCase().includes("missing")) {
+      throw new ExportCommandError(
+        "No latest draft found. Run `uncommitted generate today` and `uncommitted render latest` first.",
+        "missing-draft"
+      );
+    }
     throw new ExportCommandError(
-      "No latest draft found. Run `uncommitted generate today` and `uncommitted render latest` first.",
-      "missing-draft"
+      "Could not read draft pointer. Check your configuration.",
+      "invalid-config"
     );
   }
 }
