@@ -137,9 +137,9 @@ describe("export-command (UNC-92: scaffold)", () => {
     expect(png2.toString()).toBe("FAKE_PNG_2");
   });
 
-  it("writes metadata.json with source path, timestamp, safety status, and file list", async () => {
+  it("writes metadata.json with date, revision, timestamp, safety status, and file list", async () => {
     const draftRoot = await createTempDir();
-    const { outputDir } = await scaffoldDraft(draftRoot);
+    await scaffoldDraft(draftRoot, { targetDate: "2026-05-18", revision: "rev-001" });
 
     const result = await runExportCommand(["instagram"], {
       draftRoot,
@@ -150,7 +150,9 @@ describe("export-command (UNC-92: scaffold)", () => {
       await readFile(join(result.exportDir, "metadata.json"), "utf8")
     ) as Record<string, unknown>;
 
-    expect(meta.sourceDraftPath).toBe(outputDir);
+    expect(meta.draftDate).toBe("2026-05-18");
+    expect(meta.draftRevision).toBe("rev-001");
+    expect(meta.sourceDraftPath).toBeUndefined();
     expect(meta.exportedAt).toBe("2026-05-18T23:35:00.000Z");
     expect(meta.safetyStatus).toBe("safe");
     expect(Array.isArray(meta.exportedFiles)).toBe(true);

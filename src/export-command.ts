@@ -53,7 +53,8 @@ export type ExportCommandResult = {
 
 export type ExportMetadata = {
   schemaVersion: 1;
-  sourceDraftPath: string;
+  draftDate: string;
+  draftRevision: string;
   exportedAt: string;
   safetyStatus: SafetyStatus;
   exportedFiles: string[];
@@ -123,7 +124,8 @@ export async function runExportCommand(
   // 8. Write export metadata.json
   await writeExportMetadata(exportDir, {
     schemaVersion: 1,
-    sourceDraftPath,
+    draftDate: pointer.targetDate,
+    draftRevision: pointer.revision,
     exportedAt,
     safetyStatus: safetyInfo.status,
     exportedFiles: [...exportedFiles, "metadata.json"]
