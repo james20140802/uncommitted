@@ -31,6 +31,9 @@ import {
   RenderCommandError,
   runRenderCommand
 } from "./render-command.js";
+import { loadLatestDraftPreview } from "./preview-loader.js";
+import { formatPreview } from "./preview-formatter.js";
+import { resolveConfigPaths } from "./config-paths.js";
 import {
   buildLaunchAgentPlist,
   installScheduler,
@@ -140,6 +143,10 @@ export async function runCli(
 
   if (command === "render") {
     return await runRender(commandArgs, io, options);
+  }
+
+  if (command === "preview") {
+    return await runPreview(commandArgs, io, options);
   }
 
   if (command === "schedule") {
@@ -270,6 +277,30 @@ async function runRender(
 
     throw error;
   }
+}
+
+async function runPreview(
+  args: string[],
+  io: CliIo,
+  options: CliOptions
+): Promise<number> {
+  const [subcommand] = args;
+
+  if (subcommand !== "latest" || args.length !== 1) {
+    io.stderr("Usage: uncommitted preview latest");
+    return 1;
+  }
+
+  const { defaultDraftRoot } = resolveConfigPaths({ homeDir: options.homeDir });
+  const result = await loadLatestDraftPreview(defaultDraftRoot);
+
+  if (result.outcome === "success") {
+    io.stdout(formatPreview(result));
+    return 0;
+  }
+
+  io.stderr(formatPreview(result));
+  return 1;
 }
 
 async function runGenerate(

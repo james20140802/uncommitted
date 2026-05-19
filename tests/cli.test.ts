@@ -881,6 +881,219 @@ describe("cli", () => {
 
     expect(isDirectRun(linkedEntrypoint, pathToFileURL(realEntrypoint).href)).toBe(true);
   });
+
+  describe("preview latest", () => {
+    const defaultStory = { schemaVersion: 1, title: "Test draft", slides: [] };
+    const defaultMetadata = {
+      schemaVersion: 1,
+      targetDate: "2026-05-20",
+      generatedAt: "2026-05-20T00:00:00.000Z",
+      activityLevel: "moderate",
+      formatName: "daily-summary",
+      storyFormatVoice: "casual",
+      storyFormatTone: "warm",
+      projectIds: ["proj-a"],
+      entryMode: "daily_global",
+      slideCount: 3
+    };
+    const defaultSafetyReport = {
+      schemaVersion: 1,
+      status: "safe",
+      risks: [],
+      redactionsApplied: [],
+      exportAllowed: true,
+      message: "Safety check passed."
+    };
+
+    type PreviewArtifactOverrides = {
+      caption?: string | null;
+      story?: unknown;
+      metadata?: unknown | "MALFORMED";
+      safetyReport?: unknown;
+      carouselPngs?: string[];
+    };
+
+    async function setupDraft(
+      overrides: PreviewArtifactOverrides = {}
+    ): Promise<{ homeDir: string; draftRoot: string; outputDir: string }> {
+      const homeDir = await mkdtemp(join(tmpdir(), "uncommitted-preview-cli-"));
+      const draftRoot = join(homeDir, "Uncommitted", "drafts");
+      await mkdir(draftRoot, { recursive: true });
+
+      const revision = await createDraftRevision({
+        draftRoot,
+        targetDate: "2026-05-20"
+      });
+
+      await writeFile(
+        join(revision.outputDir, "story.json"),
+        JSON.stringify(overrides.story ?? defaultStory, null, 2),
+        "utf8"
+      );
+
+      await writeFile(
+        join(revision.outputDir, "metadata.json"),
+        overrides.metadata === "MALFORMED"
+          ? "not valid json {{{"
+          : JSON.stringify(overrides.metadata ?? defaultMetadata, null, 2),
+        "utf8"
+      );
+
+      await writeFile(
+        join(revision.outputDir, "safety-report.json"),
+        JSON.stringify(overrides.safetyReport ?? defaultSafetyReport, null, 2),
+        "utf8"
+      );
+
+      if (overrides.caption !== null) {
+        await writeFile(
+          join(revision.outputDir, "caption.txt"),
+          overrides.caption ?? "Hello from the test caption.\n",
+          "utf8"
+        );
+      }
+
+      if (overrides.carouselPngs && overrides.carouselPngs.length > 0) {
+        const carouselDir = join(revision.outputDir, "carousel");
+        await mkdir(carouselDir, { recursive: true });
+        for (const filename of overrides.carouselPngs) {
+          await writeFile(join(carouselDir, filename), Buffer.alloc(0));
+        }
+      }
+
+      await writeLatestDraftPointer(revision, "2026-05-20T00:00:00.000Z");
+
+      return { homeDir, draftRoot, outputDir: revision.outputDir };
+    }
+
+    it("prints a rendered draft summary and exits 0", async () => {
+      const { io, stdout, stderr } = createIo();
+      const { homeDir } = await setupDraft({
+        carouselPngs: ["01.png", "02.png"]
+      });
+
+      const exitCode = await runCli(["preview", "latest"], io, { homeDir });
+
+      expect(exitCode).toBe(0);
+      expect(stderr).toEqual([]);
+      const out = stdout.join("\n");
+      expect(out).toContain("2026-05-20");
+      expect(out).toContain("rev-001");
+      expect(out).toContain("Hello from the test caption.");
+      expect(out).toContain("carousel/01.png");
+      expect(out).toContain("carousel/02.png");
+    });
+
+    it("prints a text-only draft summary when no carousel directory exists and exits 0", async () => {
+      const { io, stdout, stderr } = createIo();
+      const { homeDir } = await setupDraft();
+
+      const exitCode = await runCli(["preview", "latest"], io, { homeDir });
+
+      expect(exitCode).toBe(0);
+      expect(stderr).toEqual([]);
+      const out = stdout.join("\n");
+      expect(out).toContain("2026-05-20");
+      expect(out).toContain("not yet rendered");
+    });
+
+    it("exits 1 with an actionable message when no latest draft exists", async () => {
+      const { io, stdout, stderr } = createIo();
+      const homeDir = await mkdtemp(
+        join(tmpdir(), "uncommitted-preview-missing-")
+      );
+
+      const exitCode = await runCli(["preview", "latest"], io, { homeDir });
+
+      expect(exitCode).toBe(1);
+      expect(stdout).toEqual([]);
+      expect(stderr.join("\n")).toMatch(/No latest draft|generate today/i);
+    });
+
+    it("exits 1 with an actionable message when metadata.json is malformed", async () => {
+      const { io, stdout, stderr } = createIo();
+      const { homeDir } = await setupDraft({ metadata: "MALFORMED" });
+
+      const exitCode = await runCli(["preview", "latest"], io, { homeDir });
+
+      expect(exitCode).toBe(1);
+      expect(stdout).toEqual([]);
+      expect(stderr.join("\n")).toMatch(/metadata\.json|invalid JSON/i);
+    });
+
+    it("shows warning safety state in stdout and exits 0", async () => {
+      const { io, stdout, stderr } = createIo();
+      const { homeDir } = await setupDraft({
+        safetyReport: {
+          schemaVersion: 1,
+          status: "warning",
+          risks: [],
+          redactionsApplied: [],
+          exportAllowed: true,
+          message: "A test warning."
+        }
+      });
+
+      const exitCode = await runCli(["preview", "latest"], io, { homeDir });
+
+      expect(exitCode).toBe(0);
+      expect(stderr).toEqual([]);
+      const out = stdout.join("\n");
+      expect(out.toLowerCase()).toContain("warning");
+    });
+
+    it("shows blocked safety state in stdout and exits 0", async () => {
+      const { io, stdout, stderr } = createIo();
+      const { homeDir } = await setupDraft({
+        safetyReport: {
+          schemaVersion: 1,
+          status: "blocked",
+          risks: [],
+          redactionsApplied: [],
+          exportAllowed: false,
+          message: "Content is blocked."
+        }
+      });
+
+      const exitCode = await runCli(["preview", "latest"], io, { homeDir });
+
+      expect(exitCode).toBe(0);
+      expect(stderr).toEqual([]);
+      const out = stdout.join("\n");
+      expect(out.toUpperCase()).toContain("BLOCKED");
+    });
+
+    it("does not mutate draft artifacts after a successful preview", async () => {
+      const { io } = createIo();
+      const { homeDir, draftRoot, outputDir } = await setupDraft({
+        carouselPngs: ["01.png"]
+      });
+
+      const latestJsonPath = join(draftRoot, "latest.json");
+      const metadataPath = join(outputDir, "metadata.json");
+      const safetyPath = join(outputDir, "safety-report.json");
+
+      const beforeLatest = await readFile(latestJsonPath, "utf8");
+      const beforeMetadata = await readFile(metadataPath, "utf8");
+      const beforeSafety = await readFile(safetyPath, "utf8");
+
+      await runCli(["preview", "latest"], io, { homeDir });
+
+      expect(await readFile(latestJsonPath, "utf8")).toBe(beforeLatest);
+      expect(await readFile(metadataPath, "utf8")).toBe(beforeMetadata);
+      expect(await readFile(safetyPath, "utf8")).toBe(beforeSafety);
+    });
+
+    it("exits 1 with usage message when no subcommand is given", async () => {
+      const { io, stdout, stderr } = createIo();
+
+      const exitCode = await runCli(["preview"], io);
+
+      expect(exitCode).toBe(1);
+      expect(stdout).toEqual([]);
+      expect(stderr.join("\n")).toContain("Usage: uncommitted preview latest");
+    });
+  });
 });
 
 async function initGitRepo(repoDir: string): Promise<void> {
