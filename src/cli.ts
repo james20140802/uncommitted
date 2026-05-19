@@ -43,6 +43,7 @@ import {
   type LaunchctlRawRunner
 } from "./scheduler.js";
 import { runScheduleStatus } from "./schedule-status-command.js";
+import { runScheduleRemove } from "./schedule-remove-command.js";
 import type { CarouselHtmlToPngRenderer } from "./carousel-renderer.js";
 import type { ImageAssetProvider } from "./visual-assets.js";
 
@@ -279,7 +280,37 @@ async function runSchedule(
     return await runRender(["latest"], io, workflowOptions);
   }
 
-  io.stderr("Usage: uncommitted schedule <install|status|run-now> [options]");
+  if (subcommand === "remove") {
+    if (subcommandArgs.length !== 0) {
+      io.stderr("Usage: uncommitted schedule remove");
+      return 1;
+    }
+
+    const result = await runScheduleRemove({
+      homeDir: options.homeDir,
+      runner: options.schedulerRunner
+    });
+
+    if (!result.removed) {
+      io.stderr(result.launchctlError ?? "Schedule remove failed.");
+      return 1;
+    }
+
+    if (!result.wasInstalled) {
+      io.stdout("Scheduler: not installed (nothing to remove).");
+      return 0;
+    }
+
+    if (result.launchctlError) {
+      io.stderr(`launchctl: ${result.launchctlError}`);
+    }
+
+    io.stdout("Scheduler removed.");
+    io.stdout(`Deleted: ${result.plistPath}`);
+    return 0;
+  }
+
+  io.stderr("Usage: uncommitted schedule <install|status|remove|run-now> [options]");
   return 1;
 }
 
