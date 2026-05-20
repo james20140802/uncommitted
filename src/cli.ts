@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { realpathSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   collectGitForRegisteredProjects,
@@ -291,8 +292,9 @@ async function runPreview(
     return 1;
   }
 
-  const { defaultDraftRoot } = resolveConfigPaths({ homeDir: options.homeDir });
-  const result = await loadLatestDraftPreview(defaultDraftRoot);
+  const paths = resolveConfigPaths({ homeDir: options.homeDir });
+  const draftRoot = await readPreviewDraftRoot(paths.configFile, options.homeDir);
+  const result = await loadLatestDraftPreview(draftRoot);
 
   if (result.outcome === "success") {
     io.stdout(formatPreview(result));
@@ -301,6 +303,35 @@ async function runPreview(
 
   io.stderr(formatPreview(result));
   return 1;
+}
+
+async function readPreviewDraftRoot(
+  configFile: string,
+  homeDir: string | undefined
+): Promise<string> {
+  try {
+    const parsed = JSON.parse(await readFile(configFile, "utf8")) as unknown;
+    if (
+      typeof parsed === "object" &&
+      parsed !== null &&
+      !Array.isArray(parsed) &&
+      typeof (parsed as Record<string, unknown>).draftRoot === "string"
+    ) {
+      return resolveConfigPaths({
+        homeDir,
+        draftRoot: (parsed as Record<string, unknown>).draftRoot as string
+      }).defaultDraftRoot;
+    }
+  } catch (err) {
+    if (!isCliNodeError(err) || err.code !== "ENOENT") {
+      throw err;
+    }
+  }
+  return resolveConfigPaths({ homeDir }).defaultDraftRoot;
+}
+
+function isCliNodeError(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && "code" in error;
 }
 
 async function runGenerate(

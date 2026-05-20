@@ -1084,6 +1084,42 @@ describe("cli", () => {
       expect(await readFile(safetyPath, "utf8")).toBe(beforeSafety);
     });
 
+    it("reads draftRoot from config.json and finds drafts in a custom location", async () => {
+      const { io, stdout, stderr } = createIo();
+      const homeDir = await mkdtemp(join(tmpdir(), "uncommitted-preview-config-"));
+      // Use a non-default draft root stored in config.json
+      const customDraftRoot = join(homeDir, "custom", "drafts");
+      await writeConfig(homeDir, customDraftRoot);
+
+      const revision = await createDraftRevision({
+        draftRoot: customDraftRoot,
+        targetDate: "2026-05-20"
+      });
+      await writeFile(
+        join(revision.outputDir, "story.json"),
+        JSON.stringify(defaultStory, null, 2),
+        "utf8"
+      );
+      await writeFile(
+        join(revision.outputDir, "metadata.json"),
+        JSON.stringify(defaultMetadata, null, 2),
+        "utf8"
+      );
+      await writeFile(
+        join(revision.outputDir, "safety-report.json"),
+        JSON.stringify(defaultSafetyReport, null, 2),
+        "utf8"
+      );
+      await writeFile(join(revision.outputDir, "caption.txt"), "Custom root caption\n", "utf8");
+      await writeLatestDraftPointer(revision, "2026-05-20T00:00:00.000Z");
+
+      const exitCode = await runCli(["preview", "latest"], io, { homeDir });
+
+      expect(exitCode).toBe(0);
+      expect(stderr).toEqual([]);
+      expect(stdout.join("\n")).toContain("Custom root caption");
+    });
+
     it("exits 1 with usage message when no subcommand is given", async () => {
       const { io, stdout, stderr } = createIo();
 
