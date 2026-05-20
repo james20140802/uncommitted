@@ -1,7 +1,13 @@
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
-import { FEEDBACK_REASONS, type FeedbackReason, type FeedbackRecord } from "./feedback-types.js";
+import {
+  FEEDBACK_REASONS,
+  isFeedbackReason,
+  isValidScore,
+  type FeedbackReason,
+  type FeedbackRecord
+} from "./feedback-types.js";
 import { saveFeedback } from "./feedback-storage.js";
 import { readLatestDraftPointer, DraftStorageError } from "./draft-storage.js";
 import type { CliIo } from "./cli.js";
@@ -121,6 +127,22 @@ export function createReadlinePrompter(): FeedbackPrompter {
 }
 
 // ---------------------------------------------------------------------------
+// Non-interactive input type (all flags from CLI)
+// ---------------------------------------------------------------------------
+
+export type NonInteractiveInput = {
+  fun?: number;
+  share?: number;
+  accuracy?: number;
+  safetyConcern?: boolean;
+  wouldPost?: boolean;
+  reasons?: string[];
+  note?: string;
+  /** When true, automatically confirm overwrite without prompting */
+  yes?: boolean;
+};
+
+// ---------------------------------------------------------------------------
 // runFeedbackCommand options
 // ---------------------------------------------------------------------------
 
@@ -134,6 +156,8 @@ export type FeedbackCommandOptions = {
   evalsDir: string;
   prompter: FeedbackPrompter;
   now?: () => string;
+  /** When provided, skip interactive prompts and use these values */
+  nonInteractive?: NonInteractiveInput;
 };
 
 // ---------------------------------------------------------------------------
@@ -146,7 +170,7 @@ export async function runFeedbackCommand(
   options: FeedbackCommandOptions
 ): Promise<number> {
   if (input.subcommand === "latest") {
-    return runFeedbackLatest(io, options);
+    return runFeedbackLatest(input, io, options);
   }
 
   io.stderr(
@@ -156,34 +180,63 @@ export async function runFeedbackCommand(
 }
 
 async function runFeedbackLatest(
+  input: FeedbackCommandInput,
   io: CliIo,
   options: FeedbackCommandOptions
 ): Promise<number> {
-  // 1. Resolve latest draft pointer
+  // 1. Validate non-interactive input early (before hitting the filesystem)
+  if (options.nonInteractive) {
+    const validationError = validateNonInteractiveInput(options.nonInteractive);
+    if (validationError) {
+      io.stderr(validationError);
+      return 1;
+    }
+  }
+
+  // 2. Resolve draft directory
   let targetDate: string;
   let revision: string;
   let outputDir: string;
 
-  try {
-    const pointer = await readLatestDraftPointer(options.draftRoot);
-    targetDate = pointer.targetDate;
-    revision = pointer.revision;
-    outputDir = pointer.path;
-  } catch (error) {
-    if (error instanceof DraftStorageError) {
+  if (input.targetDate) {
+    // Resolve the latest revision for the specific date
+    const result = await resolveLatestRevForDate(
+      options.draftRoot,
+      input.targetDate
+    );
+
+    if (!result) {
       io.stderr(
-        "No latest draft found. Run `uncommitted generate today` first."
+        `No draft found for ${input.targetDate}. Run \`uncommitted generate --date ${input.targetDate}\` first.`
       );
       return 1;
     }
 
-    throw error;
+    targetDate = input.targetDate;
+    revision = result.revision;
+    outputDir = result.outputDir;
+  } else {
+    try {
+      const pointer = await readLatestDraftPointer(options.draftRoot);
+      targetDate = pointer.targetDate;
+      revision = pointer.revision;
+      outputDir = pointer.path;
+    } catch (error) {
+      if (error instanceof DraftStorageError) {
+        io.stderr(
+          "No latest draft found. Run `uncommitted generate today` first."
+        );
+        return 1;
+      }
+
+      throw error;
+    }
   }
 
-  // 2. Read story.json for formatName / activityLevel
+  // 3. Read story.json for formatName / activityLevel
   const storyMeta = await readStoryMeta(outputDir);
 
-  // 3. Display draft metadata
+  // 4. Display draft metadata
   io.stdout(`Draft: ${targetDate} / ${revision}`);
 
   if (storyMeta.formatName) {
@@ -196,32 +249,52 @@ async function runFeedbackLatest(
 
   io.stdout("");
 
-  // 4. Collect feedback interactively
-  const scores = await options.prompter.askScores();
-  const booleans = await options.prompter.askBooleans();
-  const reasons = await options.prompter.askReasons();
-  const note = await options.prompter.askNote();
-
+  // 5. Collect feedback — either non-interactive or interactive
+  let record: FeedbackRecord;
   const createdAt = options.now ? options.now() : new Date().toISOString();
 
-  const record: FeedbackRecord = {
-    date: targetDate,
-    revision,
-    formatName: storyMeta.formatName ?? "",
-    fun: clampScore(scores.fun),
-    share: clampScore(scores.share),
-    accuracy: clampScore(scores.accuracy),
-    safetyConcern: booleans.safetyConcern,
-    wouldPost: booleans.wouldPost,
-    reasons: reasons.filter(isFeedbackReason),
-    note,
-    createdAt
-  };
+  if (options.nonInteractive) {
+    const ni = options.nonInteractive;
+    record = {
+      date: targetDate,
+      revision,
+      formatName: storyMeta.formatName ?? "",
+      fun: clampScore(ni.fun!),
+      share: clampScore(ni.share!),
+      accuracy: clampScore(ni.accuracy!),
+      safetyConcern: ni.safetyConcern ?? false,
+      wouldPost: ni.wouldPost ?? false,
+      reasons: (ni.reasons ?? []).filter(isFeedbackReason) as FeedbackReason[],
+      note: ni.note ?? "",
+      createdAt
+    };
 
-  // 5. Save
-  await saveFeedback(record, outputDir, options.evalsDir, {
-    confirmOverwrite: options.prompter.confirmOverwrite
-  });
+    const confirmOverwrite = ni.yes ? async () => true : options.prompter.confirmOverwrite;
+    await saveFeedback(record, outputDir, options.evalsDir, { confirmOverwrite });
+  } else {
+    const scores = await options.prompter.askScores();
+    const booleans = await options.prompter.askBooleans();
+    const reasons = await options.prompter.askReasons();
+    const note = await options.prompter.askNote();
+
+    record = {
+      date: targetDate,
+      revision,
+      formatName: storyMeta.formatName ?? "",
+      fun: clampScore(scores.fun),
+      share: clampScore(scores.share),
+      accuracy: clampScore(scores.accuracy),
+      safetyConcern: booleans.safetyConcern,
+      wouldPost: booleans.wouldPost,
+      reasons: reasons.filter(isFeedbackReason) as FeedbackReason[],
+      note,
+      createdAt
+    };
+
+    await saveFeedback(record, outputDir, options.evalsDir, {
+      confirmOverwrite: options.prompter.confirmOverwrite
+    });
+  }
 
   io.stdout(`\nFeedback saved for ${targetDate} / ${revision}.`);
   return 0;
@@ -230,6 +303,85 @@ async function runFeedbackLatest(
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Validate non-interactive input. Returns an error string if invalid, else null.
+ */
+function validateNonInteractiveInput(ni: NonInteractiveInput): string | null {
+  if (ni.fun === undefined || ni.fun === null) {
+    return "--fun is required in non-interactive mode. Pass --fun 1-5.";
+  }
+
+  if (!isValidScore(ni.fun)) {
+    return `--fun must be an integer between 1 and 5, got: ${String(ni.fun)}`;
+  }
+
+  if (ni.share === undefined || ni.share === null) {
+    return "--share is required in non-interactive mode. Pass --share 1-5.";
+  }
+
+  if (!isValidScore(ni.share)) {
+    return `--share must be an integer between 1 and 5, got: ${String(ni.share)}`;
+  }
+
+  if (ni.accuracy === undefined || ni.accuracy === null) {
+    return "--accuracy is required in non-interactive mode. Pass --accuracy 1-5.";
+  }
+
+  if (!isValidScore(ni.accuracy)) {
+    return `--accuracy must be an integer between 1 and 5, got: ${String(ni.accuracy)}`;
+  }
+
+  if (ni.reasons) {
+    for (const reason of ni.reasons) {
+      if (!isFeedbackReason(reason)) {
+        return `Invalid reason: "${reason}". Valid reasons: ${FEEDBACK_REASONS.join(", ")}`;
+      }
+    }
+  }
+
+  return null;
+}
+
+type RevisionResult = {
+  revision: string;
+  outputDir: string;
+};
+
+/**
+ * Find the highest revision under draftRoot/targetDate/.
+ * Returns null if no revisions exist.
+ */
+async function resolveLatestRevForDate(
+  draftRoot: string,
+  targetDate: string
+): Promise<RevisionResult | null> {
+  const dateDir = join(draftRoot, targetDate);
+
+  try {
+    const entries = await readdir(dateDir);
+    const revisions = entries
+      .filter((e) => /^rev-\d{3}$/.test(e))
+      .sort((a, b) => b.localeCompare(a)); // descending
+
+    if (revisions.length === 0) {
+      return null;
+    }
+
+    const revision = revisions[0];
+    return { revision, outputDir: join(dateDir, revision) };
+  } catch (error) {
+    if (isNodeError(error) && error.code === "ENOENT") {
+      return null;
+    }
+
+    throw error;
+  }
+}
+
+function isNodeError(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && "code" in error;
+}
 
 type StoryMeta = {
   formatName?: string;
@@ -258,10 +410,6 @@ async function readStoryMeta(outputDir: string): Promise<StoryMeta> {
 function clampScore(value: number): 1 | 2 | 3 | 4 | 5 {
   const clamped = Math.max(1, Math.min(5, Math.round(value)));
   return clamped as 1 | 2 | 3 | 4 | 5;
-}
-
-function isFeedbackReason(value: string): value is FeedbackReason {
-  return (FEEDBACK_REASONS as readonly string[]).includes(value);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

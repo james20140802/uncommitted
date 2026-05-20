@@ -424,16 +424,77 @@ async function runFeedback(
   io: CliIo,
   options: CliOptions
 ): Promise<number> {
-  const [subcommand = "latest"] = args;
+  // Parse args: `feedback [latest] [--date YYYY-MM-DD] [--fun N] [--share N]
+  //   [--accuracy N] [--would-post] [--safety-concern] [--reasons a,b]
+  //   [--note "..."] [--yes]`
+  const [maybeSubcommand, ...rest] = args;
+  const subcommand =
+    maybeSubcommand && !maybeSubcommand.startsWith("-")
+      ? maybeSubcommand
+      : "latest";
+  const flagArgs = maybeSubcommand?.startsWith("-")
+    ? [maybeSubcommand, ...rest]
+    : rest;
+
+  let targetDate: string | undefined;
+  let fun: number | undefined;
+  let share: number | undefined;
+  let accuracy: number | undefined;
+  let safetyConcern: boolean | undefined;
+  let wouldPost: boolean | undefined;
+  let reasons: string[] | undefined;
+  let note: string | undefined;
+  let yes = false;
+  let hasNonInteractiveFlag = false;
+
+  for (let i = 0; i < flagArgs.length; i++) {
+    const flag = flagArgs[i];
+
+    if (flag === "--date" && i + 1 < flagArgs.length) {
+      targetDate = flagArgs[++i];
+    } else if (flag === "--fun" && i + 1 < flagArgs.length) {
+      fun = Number(flagArgs[++i]);
+      hasNonInteractiveFlag = true;
+    } else if (flag === "--share" && i + 1 < flagArgs.length) {
+      share = Number(flagArgs[++i]);
+      hasNonInteractiveFlag = true;
+    } else if (flag === "--accuracy" && i + 1 < flagArgs.length) {
+      accuracy = Number(flagArgs[++i]);
+      hasNonInteractiveFlag = true;
+    } else if (flag === "--would-post") {
+      wouldPost = true;
+      hasNonInteractiveFlag = true;
+    } else if (flag === "--safety-concern") {
+      safetyConcern = true;
+      hasNonInteractiveFlag = true;
+    } else if (flag === "--reasons" && i + 1 < flagArgs.length) {
+      reasons = flagArgs[++i].split(",").map((r) => r.trim()).filter(Boolean);
+      hasNonInteractiveFlag = true;
+    } else if (flag === "--note" && i + 1 < flagArgs.length) {
+      note = flagArgs[++i];
+      hasNonInteractiveFlag = true;
+    } else if (flag === "--yes" || flag === "-y") {
+      yes = true;
+      hasNonInteractiveFlag = true;
+    }
+  }
+
   const paths = resolveConfigPaths({ homeDir: options.homeDir });
   const draftRoot = options.draftRoot ?? paths.defaultDraftRoot;
   const evalsDir = paths.evalsDir;
   const prompter = options.feedbackPrompter ?? createReadlinePrompter();
 
   return runFeedbackCommand(
-    { subcommand },
+    { subcommand, targetDate },
     io,
-    { draftRoot, evalsDir, prompter }
+    {
+      draftRoot,
+      evalsDir,
+      prompter,
+      nonInteractive: hasNonInteractiveFlag
+        ? { fun, share, accuracy, safetyConcern, wouldPost, reasons, note, yes }
+        : undefined
+    }
   );
 }
 
