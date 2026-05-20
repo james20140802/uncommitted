@@ -47,6 +47,11 @@ import {
 } from "./scheduler.js";
 import { runScheduleStatus } from "./schedule-status-command.js";
 import { runScheduleRemove } from "./schedule-remove-command.js";
+import {
+  createReadlinePrompter,
+  runFeedbackCommand,
+  type FeedbackPrompter
+} from "./feedback-command.js";
 import type { CarouselHtmlToPngRenderer } from "./carousel-renderer.js";
 import type { ImageAssetProvider } from "./visual-assets.js";
 
@@ -66,6 +71,8 @@ export type CliOptions = {
   schedulerExecutor?: LaunchctlExecutor;
   /** Injectable structured launchctl runner for status/remove (tests). */
   schedulerRunner?: LaunchctlRawRunner;
+  /** Injectable prompter for feedback command (tests). */
+  feedbackPrompter?: FeedbackPrompter;
 };
 
 const defaultIo: CliIo = {
@@ -166,6 +173,10 @@ export async function runCli(
 
   if (command === "schedule") {
     return await runSchedule(commandArgs, io, options);
+  }
+
+  if (command === "feedback") {
+    return await runFeedback(commandArgs, io, options);
   }
 
   io.stderr(`Command not implemented yet: ${command}`);
@@ -406,6 +417,24 @@ async function readPreviewDraftRoot(
     }
   }
   return resolveConfigPaths({ homeDir }).defaultDraftRoot;
+}
+
+async function runFeedback(
+  args: string[],
+  io: CliIo,
+  options: CliOptions
+): Promise<number> {
+  const [subcommand = "latest"] = args;
+  const paths = resolveConfigPaths({ homeDir: options.homeDir });
+  const draftRoot = options.draftRoot ?? paths.defaultDraftRoot;
+  const evalsDir = paths.evalsDir;
+  const prompter = options.feedbackPrompter ?? createReadlinePrompter();
+
+  return runFeedbackCommand(
+    { subcommand },
+    io,
+    { draftRoot, evalsDir, prompter }
+  );
 }
 
 function isCliNodeError(error: unknown): error is NodeJS.ErrnoException {

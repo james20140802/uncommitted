@@ -13,7 +13,8 @@ export const commands: Command[] = [
   { name: "render", summary: "Render draft cards." },
   { name: "preview", summary: "Preview a draft." },
   { name: "export", summary: "Export draft assets." },
-  { name: "schedule", summary: "Manage the macOS schedule." }
+  { name: "schedule", summary: "Manage the macOS schedule." },
+  { name: "feedback", summary: "Record feedback on a draft." }
 ];
 
 export function isKnownCommand(name: string): boolean {
