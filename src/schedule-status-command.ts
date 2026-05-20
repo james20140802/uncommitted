@@ -28,6 +28,7 @@ export type ScheduleStatusOptions = SchedulerPathOptions & {
 
 /**
  * Inspect whether the Uncommitted macOS scheduler is installed and loaded.
+ * Queries launchctl regardless of plist presence to detect orphaned jobs.
  * Never throws — all failure modes are captured in the result.
  */
 export async function runScheduleStatus(
@@ -37,16 +38,12 @@ export async function runScheduleStatus(
 
   const installed = await fileExists(plistPath);
 
-  if (!installed) {
-    return { installed: false, loaded: false, plistPath };
-  }
-
-  // Query launchctl for loaded state
+  // Always query launchctl — a job may be loaded even when the plist is absent
   const launchctlResult = await runLaunchctl(["list"], options.runner);
 
   if (!launchctlResult.ok) {
     return {
-      installed: true,
+      installed,
       loaded: undefined,
       plistPath,
       launchctlError: launchctlResult.stderr || "launchctl check failed."
@@ -55,7 +52,7 @@ export async function runScheduleStatus(
 
   const loaded = isJobLoaded(launchctlResult.stdout, getLaunchdLabel());
 
-  return { installed: true, loaded, plistPath };
+  return { installed, loaded, plistPath };
 }
 
 /**

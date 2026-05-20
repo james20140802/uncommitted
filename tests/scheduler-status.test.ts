@@ -102,4 +102,31 @@ describe("runScheduleStatus", () => {
     expect(result.installed).toBe(true);
     expect(result.loaded).toBe(false);
   });
+
+  it("reports orphaned job as loaded when plist is absent but job appears in launchctl list", async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), "uncommitted-status-orphan-"));
+    // No plist file created
+
+    const label = getLaunchdLabel();
+    const listOutput = `123\t0\t${label}\n`;
+    const runner = makeRunner(0, listOutput, "");
+
+    const result = await runScheduleStatus({ homeDir, runner });
+
+    expect(result.installed).toBe(false);
+    expect(result.loaded).toBe(true);
+    expect(result.plistPath).toBe(resolveLaunchAgentPlistPath({ homeDir }));
+    expect(result.launchctlError).toBeUndefined();
+  });
+
+  it("reports not installed with indeterminate loaded state when plist absent and launchctl fails", async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), "uncommitted-status-absent-lcfail-"));
+    const runner = makeRunner(-1, "", "__ENOENT__");
+
+    const result = await runScheduleStatus({ homeDir, runner });
+
+    expect(result.installed).toBe(false);
+    expect(result.loaded).toBeUndefined();
+    expect(result.launchctlError).toMatch(/launchctl not found/i);
+  });
 });
