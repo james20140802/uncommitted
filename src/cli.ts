@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { realpathSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   collectGitForRegisteredProjects,
@@ -36,6 +37,8 @@ import {
   RenderCommandError,
   runRenderCommand
 } from "./render-command.js";
+import { loadLatestDraftPreview } from "./preview-loader.js";
+import { formatPreview } from "./preview-formatter.js";
 import {
   buildLaunchAgentPlist,
   installScheduler,
@@ -146,6 +149,10 @@ export async function runCli(
 
   if (command === "render") {
     return await runRender(commandArgs, io, options);
+  }
+
+  if (command === "preview") {
+    return await runPreview(commandArgs, io, options);
   }
 
   if (command === "export") {
@@ -280,6 +287,60 @@ async function runRender(
 
     throw error;
   }
+}
+
+async function runPreview(
+  args: string[],
+  io: CliIo,
+  options: CliOptions
+): Promise<number> {
+  const [subcommand] = args;
+
+  if (subcommand !== "latest" || args.length !== 1) {
+    io.stderr("Usage: uncommitted preview latest");
+    return 1;
+  }
+
+  const paths = resolveConfigPaths({ homeDir: options.homeDir });
+  const draftRoot = await readPreviewDraftRoot(paths.configFile, options.homeDir);
+  const result = await loadLatestDraftPreview(draftRoot);
+
+  if (result.outcome === "success") {
+    io.stdout(formatPreview(result));
+    return 0;
+  }
+
+  io.stderr(formatPreview(result));
+  return 1;
+}
+
+async function readPreviewDraftRoot(
+  configFile: string,
+  homeDir: string | undefined
+): Promise<string> {
+  try {
+    const parsed = JSON.parse(await readFile(configFile, "utf8")) as unknown;
+    if (
+      typeof parsed === "object" &&
+      parsed !== null &&
+      !Array.isArray(parsed) &&
+      typeof (parsed as Record<string, unknown>).draftRoot === "string"
+    ) {
+      return resolveConfigPaths({
+        homeDir,
+        draftRoot: (parsed as Record<string, unknown>).draftRoot as string
+      }).defaultDraftRoot;
+    }
+  } catch (err) {
+    if (!isCliNodeError(err) || err.code !== "ENOENT") {
+      throw err;
+    }
+  }
+  return resolveConfigPaths({ homeDir }).defaultDraftRoot;
+}
+
+function isCliNodeError(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && "code" in error;
 }
 
 async function runExport(
