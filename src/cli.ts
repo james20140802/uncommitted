@@ -424,9 +424,9 @@ async function runFeedback(
   io: CliIo,
   options: CliOptions
 ): Promise<number> {
-  // Parse args: `feedback [latest] [--date YYYY-MM-DD] [--fun N] [--share N]
-  //   [--accuracy N] [--would-post] [--safety-concern] [--reasons a,b]
-  //   [--note "..."] [--yes]`
+  // Parse args: `feedback [latest|report] [--date YYYY-MM-DD] [--days N]
+  //   [--fun N] [--share N] [--accuracy N] [--would-post] [--safety-concern]
+  //   [--reasons a,b] [--note "..."] [--yes]`
   const [maybeSubcommand, ...rest] = args;
   const subcommand =
     maybeSubcommand && !maybeSubcommand.startsWith("-")
@@ -437,6 +437,7 @@ async function runFeedback(
     : rest;
 
   let targetDate: string | undefined;
+  let days: number | undefined;
   let fun: number | undefined;
   let share: number | undefined;
   let accuracy: number | undefined;
@@ -452,6 +453,8 @@ async function runFeedback(
 
     if (flag === "--date" && i + 1 < flagArgs.length) {
       targetDate = flagArgs[++i];
+    } else if (flag === "--days" && i + 1 < flagArgs.length) {
+      days = parseInt(flagArgs[++i], 10);
     } else if (flag === "--fun" && i + 1 < flagArgs.length) {
       fun = Number(flagArgs[++i]);
       hasNonInteractiveFlag = true;
@@ -485,7 +488,7 @@ async function runFeedback(
   const prompter = options.feedbackPrompter ?? createReadlinePrompter();
 
   return runFeedbackCommand(
-    { subcommand, targetDate },
+    { subcommand, targetDate, days },
     io,
     {
       draftRoot,

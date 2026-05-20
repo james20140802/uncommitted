@@ -10,6 +10,7 @@ import {
 } from "./feedback-types.js";
 import { saveFeedback } from "./feedback-storage.js";
 import { readLatestDraftPointer, DraftStorageError } from "./draft-storage.js";
+import { aggregateFeedback, formatFeedbackReport } from "./feedback-report.js";
 import type { CliIo } from "./cli.js";
 
 // ---------------------------------------------------------------------------
@@ -149,6 +150,8 @@ export type NonInteractiveInput = {
 export type FeedbackCommandInput = {
   subcommand: string;
   targetDate?: string;
+  /** For `report` subcommand: number of days to aggregate */
+  days?: number;
 };
 
 export type FeedbackCommandOptions = {
@@ -173,10 +176,25 @@ export async function runFeedbackCommand(
     return runFeedbackLatest(input, io, options);
   }
 
+  if (input.subcommand === "report") {
+    return runFeedbackReport(input, io, options);
+  }
+
   io.stderr(
     `Usage: uncommitted feedback <latest|report> [options]`
   );
   return 1;
+}
+
+async function runFeedbackReport(
+  input: FeedbackCommandInput,
+  io: CliIo,
+  options: FeedbackCommandOptions
+): Promise<number> {
+  const days = input.days ?? 7;
+  const agg = await aggregateFeedback(options.evalsDir, days);
+  io.stdout(formatFeedbackReport(agg));
+  return 0;
 }
 
 async function runFeedbackLatest(
