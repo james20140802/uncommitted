@@ -121,4 +121,55 @@ describe("runScheduleRemove", () => {
     // Confirm path is inside homeDir/Library/LaunchAgents
     expect(plistPath).toContain(join(homeDir, "Library", "LaunchAgents"));
   });
+
+  it("returns removed=false and does not delete plist when bootout fails with non-benign error", async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), "uncommitted-remove-nonbenign-"));
+    const plistPath = resolveLaunchAgentPlistPath({ homeDir });
+    await mkdir(join(homeDir, "Library", "LaunchAgents"), { recursive: true });
+    await writeFile(plistPath, "<plist/>", "utf8");
+
+    // Non-benign exit (e.g. permission denied)
+    const runner = makeRunner(5, "", "Permission denied");
+
+    const result = await runScheduleRemove({ homeDir, runner });
+
+    expect(result.removed).toBe(false);
+    expect(result.wasInstalled).toBe(true);
+    expect(result.launchctlError).toMatch(/Permission denied/);
+    // Plist must NOT be deleted
+    await expect(access(plistPath)).resolves.toBeUndefined();
+  });
+
+  it("attempts bootout even when plist is absent (guards against orphaned jobs)", async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), "uncommitted-remove-orphan-"));
+    // No plist file — scheduler not installed
+
+    const calls: string[][] = [];
+    const runner: LaunchctlRawRunner = async (args) => {
+      calls.push(args);
+      return { exitCode: 0, stdout: "", stderr: "" };
+    };
+
+    const result = await runScheduleRemove({ homeDir, runner });
+
+    expect(result.removed).toBe(true);
+    expect(result.wasInstalled).toBe(false);
+    // Bootout must still have been called
+    expect(calls.some((args) => args[0] === "bootout")).toBe(true);
+  });
+
+  it("returns removed=false when plist deletion fails", async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), "uncommitted-remove-delfail-"));
+    const plistPath = resolveLaunchAgentPlistPath({ homeDir });
+    // Create a directory at plistPath to trigger EISDIR on rm
+    await mkdir(plistPath, { recursive: true });
+
+    const runner = makeRunner(0, "", "");
+
+    const result = await runScheduleRemove({ homeDir, runner });
+
+    expect(result.removed).toBe(false);
+    expect(result.wasInstalled).toBe(true);
+    expect(result.launchctlError).toBeTruthy();
+  });
 });
