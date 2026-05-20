@@ -276,4 +276,55 @@ describe("loadLatestDraftPreview", () => {
       ]);
     }
   });
+
+  it("returns malformed outcome when latest.json path is outside draft root", async () => {
+    const draftRoot = await createDraftRoot();
+    const outsideDir = await createDraftRoot();
+    const pointer = {
+      schemaVersion: 1,
+      targetDate: "2026-05-19",
+      revision: "rev-001",
+      path: outsideDir,
+      updatedAt: "2026-05-19T00:00:00.000Z"
+    };
+    await writeFile(
+      join(draftRoot, "latest.json"),
+      JSON.stringify(pointer, null, 2),
+      "utf8"
+    );
+
+    const result = await loadLatestDraftPreview(draftRoot);
+
+    expect(result.outcome).toBe("malformed");
+  });
+
+  it("propagates non-ENOENT errors from caption read", async () => {
+    const draftRoot = await createDraftRoot();
+    const outputDir = await writeDraftRevision(draftRoot, "2026-05-19", "rev-001", {
+      caption: null,
+      story: defaultStory,
+      metadata: defaultMetadata,
+      safetyReport: defaultSafetyReport
+    });
+    // Create a directory at caption.txt path — readFile will fail with EISDIR, not ENOENT
+    await mkdir(join(outputDir, "caption.txt"), { recursive: true });
+    await writeLatestPointer(draftRoot, "2026-05-19", "rev-001", outputDir);
+
+    await expect(loadLatestDraftPreview(draftRoot)).rejects.toThrow();
+  });
+
+  it("propagates non-ENOENT errors from carousel read", async () => {
+    const draftRoot = await createDraftRoot();
+    const outputDir = await writeDraftRevision(draftRoot, "2026-05-19", "rev-001", {
+      caption: "Test\n",
+      story: defaultStory,
+      metadata: defaultMetadata,
+      safetyReport: defaultSafetyReport
+    });
+    // Create a regular file at the carousel/ path — readdir will fail with ENOTDIR, not ENOENT
+    await writeFile(join(outputDir, "carousel"), Buffer.alloc(0));
+    await writeLatestPointer(draftRoot, "2026-05-19", "rev-001", outputDir);
+
+    await expect(loadLatestDraftPreview(draftRoot)).rejects.toThrow();
+  });
 });

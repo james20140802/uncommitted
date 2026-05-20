@@ -1,5 +1,5 @@
 import { readdir, readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { DraftStorageError, readLatestDraftPointer } from "./draft-storage.js";
 import { isSafetyReport, type SafetyReport } from "./safety-report.js";
 
@@ -60,6 +60,13 @@ export async function loadLatestDraftPreview(
       };
     }
     throw error;
+  }
+
+  if (!isPathInside(draftRoot, outputDir)) {
+    return malformed(
+      join(draftRoot, "latest.json"),
+      "Latest draft pointer references a path outside the draft root."
+    );
   }
 
   // 2. Read caption.txt (optional — null if missing)
@@ -128,8 +135,9 @@ async function readRequiredJson(
 async function readCaptionOptional(outputDir: string): Promise<string | null> {
   try {
     return await readFile(join(outputDir, "caption.txt"), "utf8");
-  } catch {
-    return null;
+  } catch (err) {
+    if (isNodeError(err) && err.code === "ENOENT") return null;
+    throw err;
   }
 }
 
@@ -139,8 +147,9 @@ async function readCarouselPngs(outputDir: string): Promise<string[]> {
 
   try {
     entries = await readdir(carouselDir);
-  } catch {
-    return [];
+  } catch (err) {
+    if (isNodeError(err) && err.code === "ENOENT") return [];
+    throw err;
   }
 
   return entries
@@ -155,4 +164,18 @@ function malformed(filePath: string, message: string): PreviewLoaderMalformed {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isNodeError(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && "code" in error;
+}
+
+function isPathInside(rootPath: string, valuePath: string): boolean {
+  const relativePath = relative(resolve(rootPath), resolve(valuePath));
+  return (
+    relativePath === "" ||
+    (relativePath !== ".." &&
+      !relativePath.startsWith(`..${sep}`) &&
+      !isAbsolute(relativePath))
+  );
 }
