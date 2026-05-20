@@ -1332,7 +1332,6 @@ function createScheduleStoryFormatPlan(): Record<string, unknown> {
 function createScheduleProviderDraft(): Record<string, unknown> {
   return {
     title: "Scheduled Workflow Day",
-    caption: "Scheduled run-now connected the local workflow.",
     slides: [
       {
         index: 1,
@@ -1353,8 +1352,14 @@ function createScheduleProviderDraft(): Record<string, unknown> {
         visualMood: "finished carousel"
       }
     ],
-    hashtags: ["#Uncommitted", "#DevDiary"],
     altText: "A local Uncommitted scheduled workflow summary."
+  };
+}
+
+function createScheduleProviderCaption(): Record<string, unknown> {
+  return {
+    caption: "Scheduled run-now connected the local workflow.",
+    hashtags: ["#Uncommitted", "#DevDiary"]
   };
 }
 
@@ -1379,6 +1384,10 @@ class ScheduleAiProvider implements AiProvider {
 
     if (request.task === "draft") {
       return { responseJson: JSON.stringify(createScheduleProviderDraft()) };
+    }
+
+    if (request.task === "caption") {
+      return { responseJson: JSON.stringify(createScheduleProviderCaption()) };
     }
 
     throw new Error(`Unexpected task: ${request.task}`);

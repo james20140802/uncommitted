@@ -297,9 +297,7 @@ function createStoryDraft(options: {
     schemaVersion: 1,
     targetDate: "2026-05-18",
     title: "Renderer Smoke Day",
-    caption: "Renderer smoke coverage keeps carousel output honest.",
     slides: options.slides,
-    hashtags: ["#Uncommitted"],
     altText: "Uncommitted renderer smoke carousel.",
     metadata: {
       targetDate: "2026-05-18",

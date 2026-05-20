@@ -18,6 +18,7 @@ import type { GitActivityEvent } from "./collect-git-command.js";
 import { resolveConfigPaths } from "./config-paths.js";
 import {
   deriveCaptionText,
+  generateCaption,
   generateDiaryDraft,
   type DiaryDraft
 } from "./diary-generator.js";
@@ -230,7 +231,13 @@ export async function runGenerateCommand(
     persona: config.persona,
     roastLevel: config.roastLevel
   });
-  const caption = deriveCaptionText(draft);
+  const captionResult = await generateCaption({
+    activitySummary,
+    provider,
+    persona: config.persona,
+    roastLevel: config.roastLevel
+  });
+  const caption = deriveCaptionText(captionResult);
   const baseMetadata: DraftMetadataBase = {
     schemaVersion: 1,
     version: 1,
