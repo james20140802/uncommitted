@@ -882,6 +882,130 @@ describe("cli", () => {
     expect(isDirectRun(linkedEntrypoint, pathToFileURL(realEntrypoint).href)).toBe(true);
   });
 
+  it("reports schedule status as not installed when plist is absent", async () => {
+    const { io, stdout, stderr } = createIo();
+    const directory = await mkdtemp(join(tmpdir(), "uncommitted-cli-status-absent-"));
+    const homeDir = join(directory, "home");
+
+    const exitCode = await runCli(["schedule", "status"], io, { homeDir });
+
+    expect(exitCode).toBe(0);
+    expect(stderr).toEqual([]);
+    expect(stdout.join("\n")).toContain("Scheduler: not installed");
+  });
+
+  it("reports schedule status as installed and loaded when plist exists and launchctl confirms", async () => {
+    const { io, stdout, stderr } = createIo();
+    const directory = await mkdtemp(join(tmpdir(), "uncommitted-cli-status-loaded-"));
+    const homeDir = join(directory, "home");
+    const plistDir = join(homeDir, "Library", "LaunchAgents");
+    await mkdir(plistDir, { recursive: true });
+    await writeFile(join(plistDir, "com.uncommitted.schedule.plist"), "<plist/>", "utf8");
+
+    const exitCode = await runCli(["schedule", "status"], io, {
+      homeDir,
+      schedulerRunner: async () => ({
+        exitCode: 0,
+        stdout: "123\t0\tcom.uncommitted.schedule\n",
+        stderr: ""
+      })
+    });
+
+    expect(exitCode).toBe(0);
+    expect(stderr).toEqual([]);
+    expect(stdout.join("\n")).toContain("Scheduler: installed, loaded");
+  });
+
+  it("reports schedule status with launchctl error degrading gracefully", async () => {
+    const { io, stdout, stderr } = createIo();
+    const directory = await mkdtemp(join(tmpdir(), "uncommitted-cli-status-lcfail-"));
+    const homeDir = join(directory, "home");
+    const plistDir = join(homeDir, "Library", "LaunchAgents");
+    await mkdir(plistDir, { recursive: true });
+    await writeFile(join(plistDir, "com.uncommitted.schedule.plist"), "<plist/>", "utf8");
+
+    const exitCode = await runCli(["schedule", "status"], io, {
+      homeDir,
+      schedulerRunner: async () => ({ exitCode: -1, stdout: "", stderr: "__ENOENT__" })
+    });
+
+    expect(exitCode).toBe(0);
+    expect(stderr.join("\n")).toContain("launchctl");
+    expect(stdout.join("\n")).toContain("Scheduler: installed, unknown");
+  });
+
+  it("rejects schedule status with unexpected arguments", async () => {
+    const { io, stdout, stderr } = createIo();
+
+    const exitCode = await runCli(["schedule", "status", "--extra"], io);
+
+    expect(exitCode).toBe(1);
+    expect(stdout).toEqual([]);
+    expect(stderr.join("\n")).toContain("Usage: uncommitted schedule status");
+  });
+
+  it("removes the scheduler when installed and launchctl succeeds", async () => {
+    const { io, stdout, stderr } = createIo();
+    const directory = await mkdtemp(join(tmpdir(), "uncommitted-cli-remove-installed-"));
+    const homeDir = join(directory, "home");
+    const plistDir = join(homeDir, "Library", "LaunchAgents");
+    await mkdir(plistDir, { recursive: true });
+    await writeFile(join(plistDir, "com.uncommitted.schedule.plist"), "<plist/>", "utf8");
+
+    const exitCode = await runCli(["schedule", "remove"], io, {
+      homeDir,
+      schedulerRunner: async () => ({ exitCode: 0, stdout: "", stderr: "" })
+    });
+
+    expect(exitCode).toBe(0);
+    expect(stderr).toEqual([]);
+    expect(stdout.join("\n")).toContain("Scheduler removed.");
+    expect(stdout.join("\n")).toContain("com.uncommitted.schedule.plist");
+  });
+
+  it("succeeds idempotently when scheduler is already absent", async () => {
+    const { io, stdout, stderr } = createIo();
+    const directory = await mkdtemp(join(tmpdir(), "uncommitted-cli-remove-absent-"));
+    const homeDir = join(directory, "home");
+
+    const exitCode = await runCli(["schedule", "remove"], io, {
+      homeDir,
+      schedulerRunner: async () => ({ exitCode: 0, stdout: "", stderr: "" })
+    });
+
+    expect(exitCode).toBe(0);
+    expect(stderr).toEqual([]);
+    expect(stdout.join("\n")).toContain("nothing to remove");
+  });
+
+  it("reports launchctl error on stderr but still reports removed when bootout fails non-fatally", async () => {
+    const { io, stdout, stderr } = createIo();
+    const directory = await mkdtemp(join(tmpdir(), "uncommitted-cli-remove-lcfail-"));
+    const homeDir = join(directory, "home");
+    const plistDir = join(homeDir, "Library", "LaunchAgents");
+    await mkdir(plistDir, { recursive: true });
+    await writeFile(join(plistDir, "com.uncommitted.schedule.plist"), "<plist/>", "utf8");
+
+    const exitCode = await runCli(["schedule", "remove"], io, {
+      homeDir,
+      schedulerRunner: async () => ({ exitCode: 3, stdout: "", stderr: "3: No such process" })
+    });
+
+    expect(exitCode).toBe(0);
+    expect(stderr.join("\n")).toContain("launchctl");
+    expect(stdout.join("\n")).toContain("Scheduler removed.");
+  });
+
+  it("rejects schedule remove with unexpected arguments", async () => {
+    const { io, stdout, stderr } = createIo();
+
+    const exitCode = await runCli(["schedule", "remove", "--extra"], io);
+
+    expect(exitCode).toBe(1);
+    expect(stdout).toEqual([]);
+    expect(stderr.join("\n")).toContain("Usage: uncommitted schedule remove");
+  });
+
   describe("preview latest", () => {
     const defaultStory = { schemaVersion: 1, title: "Test draft", slides: [] };
     const defaultMetadata = {

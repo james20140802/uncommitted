@@ -7,6 +7,78 @@ import { resolveConfigPaths } from "./config-paths.js";
 
 const execFileAsync = promisify(execFile);
 
+// ─── Structured launchctl runner (UNC-85) ─────────────────────────────────
+
+export type LaunchctlResult = {
+  ok: boolean;
+  code: number;
+  stdout: string;
+  stderr: string;
+};
+
+/** Low-level raw launchctl callback result, injectable for tests. */
+export type LaunchctlRawRunner = (
+  args: string[]
+) => Promise<{ exitCode: number; stdout: string; stderr: string }>;
+
+async function defaultLaunchctlRawRunner(
+  args: string[]
+): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+  return new Promise((resolve) => {
+    execFile("launchctl", args, (err, stdout, stderr) => {
+      if (!err) {
+        resolve({ exitCode: 0, stdout, stderr });
+        return;
+      }
+
+      if (err.code === "ENOENT") {
+        resolve({ exitCode: -1, stdout: "", stderr: "__ENOENT__" });
+        return;
+      }
+
+      const code = typeof err.code === "number" ? (err.code as number) : -1;
+      resolve({
+        exitCode: code,
+        stdout: stdout ?? "",
+        stderr: stderr ?? err.message ?? "launchctl failed."
+      });
+    });
+  });
+}
+
+/**
+ * Run `launchctl` with explicit args and return a structured result.
+ * Never throws — subprocess errors are captured in the return value.
+ * Use this for status/remove operations that need to inspect the exit code.
+ * Pass `runner` to inject a fake for tests.
+ */
+export async function runLaunchctl(
+  args: string[],
+  runner: LaunchctlRawRunner = defaultLaunchctlRawRunner
+): Promise<LaunchctlResult> {
+  const raw = await runner(args);
+
+  if (raw.exitCode === -1 && raw.stderr === "__ENOENT__") {
+    return {
+      ok: false,
+      code: -1,
+      stdout: "",
+      stderr: "launchctl not found — macOS is required."
+    };
+  }
+
+  return {
+    ok: raw.exitCode === 0,
+    code: raw.exitCode,
+    stdout: raw.stdout,
+    stderr: raw.stderr
+  };
+}
+
+// ─── End structured launchctl runner ──────────────────────────────────────
+
+// ─── End structured launchctl runner ──────────────────────────────────────
+
 export type SchedulerPathOptions = {
   homeDir?: string;
 };

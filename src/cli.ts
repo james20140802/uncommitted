@@ -42,8 +42,11 @@ import { formatPreview } from "./preview-formatter.js";
 import {
   buildLaunchAgentPlist,
   installScheduler,
-  type LaunchctlExecutor
+  type LaunchctlExecutor,
+  type LaunchctlRawRunner
 } from "./scheduler.js";
+import { runScheduleStatus } from "./schedule-status-command.js";
+import { runScheduleRemove } from "./schedule-remove-command.js";
 import type { CarouselHtmlToPngRenderer } from "./carousel-renderer.js";
 import type { ImageAssetProvider } from "./visual-assets.js";
 
@@ -61,6 +64,8 @@ export type CliOptions = {
   imageAssetProvider?: ImageAssetProvider;
   carouselRenderer?: CarouselHtmlToPngRenderer;
   schedulerExecutor?: LaunchctlExecutor;
+  /** Injectable structured launchctl runner for status/remove (tests). */
+  schedulerRunner?: LaunchctlRawRunner;
 };
 
 const defaultIo: CliIo = {
@@ -216,6 +221,40 @@ async function runSchedule(
     }
   }
 
+  if (subcommand === "status") {
+    if (subcommandArgs.length !== 0) {
+      io.stderr("Usage: uncommitted schedule status");
+      return 1;
+    }
+
+    const result = await runScheduleStatus({
+      homeDir: options.homeDir,
+      runner: options.schedulerRunner
+    });
+
+    if (!result.installed) {
+      io.stdout("Scheduler: not installed");
+      io.stdout(`Plist path: ${result.plistPath}`);
+      return 0;
+    }
+
+    const loadedLabel =
+      result.loaded === true
+        ? "loaded"
+        : result.loaded === false
+          ? "not loaded"
+          : "unknown (launchctl unavailable)";
+
+    io.stdout(`Scheduler: installed, ${loadedLabel}`);
+    io.stdout(`Plist path: ${result.plistPath}`);
+
+    if (result.launchctlError) {
+      io.stderr(`launchctl: ${result.launchctlError}`);
+    }
+
+    return 0;
+  }
+
   if (subcommand === "run-now") {
     if (subcommandArgs.length !== 0) {
       io.stderr("Usage: uncommitted schedule run-now");
@@ -248,7 +287,37 @@ async function runSchedule(
     return await runRender(["latest"], io, workflowOptions);
   }
 
-  io.stderr("Usage: uncommitted schedule <install|run-now> [options]");
+  if (subcommand === "remove") {
+    if (subcommandArgs.length !== 0) {
+      io.stderr("Usage: uncommitted schedule remove");
+      return 1;
+    }
+
+    const result = await runScheduleRemove({
+      homeDir: options.homeDir,
+      runner: options.schedulerRunner
+    });
+
+    if (!result.removed) {
+      io.stderr(result.launchctlError ?? "Schedule remove failed.");
+      return 1;
+    }
+
+    if (!result.wasInstalled) {
+      io.stdout("Scheduler: not installed (nothing to remove).");
+      return 0;
+    }
+
+    if (result.launchctlError) {
+      io.stderr(`launchctl: ${result.launchctlError}`);
+    }
+
+    io.stdout("Scheduler removed.");
+    io.stdout(`Deleted: ${result.plistPath}`);
+    return 0;
+  }
+
+  io.stderr("Usage: uncommitted schedule <install|status|remove|run-now> [options]");
   return 1;
 }
 
