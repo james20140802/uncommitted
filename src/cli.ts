@@ -454,7 +454,13 @@ async function runFeedback(
     if (flag === "--date" && i + 1 < flagArgs.length) {
       targetDate = flagArgs[++i];
     } else if (flag === "--days" && i + 1 < flagArgs.length) {
-      days = parseInt(flagArgs[++i], 10);
+      const rawDays = flagArgs[++i];
+      const parsedDays = parseInt(rawDays, 10);
+      if (!Number.isInteger(parsedDays) || parsedDays < 1) {
+        io.stderr(`--days must be a positive integer, got: ${rawDays}`);
+        return 1;
+      }
+      days = parsedDays;
     } else if (flag === "--fun" && i + 1 < flagArgs.length) {
       fun = Number(flagArgs[++i]);
       hasNonInteractiveFlag = true;
@@ -483,22 +489,33 @@ async function runFeedback(
   }
 
   const paths = resolveConfigPaths({ homeDir: options.homeDir });
-  const draftRoot = options.draftRoot ?? paths.defaultDraftRoot;
+  const draftRoot = options.draftRoot ?? await readPreviewDraftRoot(paths.configFile, options.homeDir);
   const evalsDir = paths.evalsDir;
-  const prompter = options.feedbackPrompter ?? createReadlinePrompter();
+  // Only create readline for 'latest'; 'report' never uses interactive prompts
+  const prompter = options.feedbackPrompter ?? (subcommand === "latest" ? createReadlinePrompter() : {
+    askScores: async (): Promise<never> => { throw new Error("prompter not available"); },
+    askBooleans: async (): Promise<never> => { throw new Error("prompter not available"); },
+    askReasons: async (): Promise<never> => { throw new Error("prompter not available"); },
+    askNote: async (): Promise<never> => { throw new Error("prompter not available"); },
+    confirmOverwrite: async (): Promise<never> => { throw new Error("prompter not available"); },
+  });
 
-  return runFeedbackCommand(
-    { subcommand, targetDate, days },
-    io,
-    {
-      draftRoot,
-      evalsDir,
-      prompter,
-      nonInteractive: hasNonInteractiveFlag
-        ? { fun, share, accuracy, safetyConcern, wouldPost, reasons, note, yes }
-        : undefined
-    }
-  );
+  try {
+    return await runFeedbackCommand(
+      { subcommand, targetDate, days },
+      io,
+      {
+        draftRoot,
+        evalsDir,
+        prompter,
+        nonInteractive: hasNonInteractiveFlag
+          ? { fun, share, accuracy, safetyConcern, wouldPost, reasons, note, yes }
+          : undefined
+      }
+    );
+  } finally {
+    prompter.close?.();
+  }
 }
 
 function isCliNodeError(error: unknown): error is NodeJS.ErrnoException {
