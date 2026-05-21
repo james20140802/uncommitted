@@ -168,9 +168,11 @@ describe("isFeedbackRecord", () => {
 
   it("returns false when required fields are missing", () => {
     const { date: _date, ...noDate } = validRecord;
+    void _date;
     expect(isFeedbackRecord(noDate)).toBe(false);
 
     const { revision: _rev, ...noRevision } = validRecord;
+    void _rev;
     expect(isFeedbackRecord(noRevision)).toBe(false);
   });
 
