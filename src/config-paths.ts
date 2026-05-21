@@ -16,6 +16,7 @@ export type ConfigPaths = {
   globalDraftsDir: string;
   logsDir: string;
   defaultDraftRoot: string;
+  evalsDir: string;
   requiredDirectories: string[];
 };
 
@@ -40,6 +41,8 @@ export function resolveConfigPaths(options: ConfigPathOptions = {}): ConfigPaths
     homeDir
   );
 
+  const evalsDir = resolvePath("~/Uncommitted/evals", homeDir);
+
   const paths = {
     configDir,
     configFile: join(configDir, "config.json"),
@@ -48,7 +51,8 @@ export function resolveConfigPaths(options: ConfigPathOptions = {}): ConfigPaths
     formatHistoryFile: join(historyDir, "formats.json"),
     globalDraftsDir: join(configDir, "drafts"),
     logsDir: join(configDir, "logs"),
-    defaultDraftRoot
+    defaultDraftRoot,
+    evalsDir
   };
 
   return {

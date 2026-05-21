@@ -47,6 +47,11 @@ import {
 } from "./scheduler.js";
 import { runScheduleStatus } from "./schedule-status-command.js";
 import { runScheduleRemove } from "./schedule-remove-command.js";
+import {
+  createReadlinePrompter,
+  runFeedbackCommand,
+  type FeedbackPrompter
+} from "./feedback-command.js";
 import type { CarouselHtmlToPngRenderer } from "./carousel-renderer.js";
 import type { ImageAssetProvider } from "./visual-assets.js";
 
@@ -66,6 +71,8 @@ export type CliOptions = {
   schedulerExecutor?: LaunchctlExecutor;
   /** Injectable structured launchctl runner for status/remove (tests). */
   schedulerRunner?: LaunchctlRawRunner;
+  /** Injectable prompter for feedback command (tests). */
+  feedbackPrompter?: FeedbackPrompter;
 };
 
 const defaultIo: CliIo = {
@@ -166,6 +173,10 @@ export async function runCli(
 
   if (command === "schedule") {
     return await runSchedule(commandArgs, io, options);
+  }
+
+  if (command === "feedback") {
+    return await runFeedback(commandArgs, io, options);
   }
 
   io.stderr(`Command not implemented yet: ${command}`);
@@ -406,6 +417,105 @@ async function readPreviewDraftRoot(
     }
   }
   return resolveConfigPaths({ homeDir }).defaultDraftRoot;
+}
+
+async function runFeedback(
+  args: string[],
+  io: CliIo,
+  options: CliOptions
+): Promise<number> {
+  // Parse args: `feedback [latest|report] [--date YYYY-MM-DD] [--days N]
+  //   [--fun N] [--share N] [--accuracy N] [--would-post] [--safety-concern]
+  //   [--reasons a,b] [--note "..."] [--yes]`
+  const [maybeSubcommand, ...rest] = args;
+  const subcommand =
+    maybeSubcommand && !maybeSubcommand.startsWith("-")
+      ? maybeSubcommand
+      : "latest";
+  const flagArgs = maybeSubcommand?.startsWith("-")
+    ? [maybeSubcommand, ...rest]
+    : rest;
+
+  let targetDate: string | undefined;
+  let days: number | undefined;
+  let fun: number | undefined;
+  let share: number | undefined;
+  let accuracy: number | undefined;
+  let safetyConcern: boolean | undefined;
+  let wouldPost: boolean | undefined;
+  let reasons: string[] | undefined;
+  let note: string | undefined;
+  let yes = false;
+  let hasNonInteractiveFlag = false;
+
+  for (let i = 0; i < flagArgs.length; i++) {
+    const flag = flagArgs[i];
+
+    if (flag === "--date" && i + 1 < flagArgs.length) {
+      targetDate = flagArgs[++i];
+    } else if (flag === "--days" && i + 1 < flagArgs.length) {
+      const rawDays = flagArgs[++i];
+      const parsedDays = parseInt(rawDays, 10);
+      if (!Number.isInteger(parsedDays) || parsedDays < 1) {
+        io.stderr(`--days must be a positive integer, got: ${rawDays}`);
+        return 1;
+      }
+      days = parsedDays;
+    } else if (flag === "--fun" && i + 1 < flagArgs.length) {
+      fun = Number(flagArgs[++i]);
+      hasNonInteractiveFlag = true;
+    } else if (flag === "--share" && i + 1 < flagArgs.length) {
+      share = Number(flagArgs[++i]);
+      hasNonInteractiveFlag = true;
+    } else if (flag === "--accuracy" && i + 1 < flagArgs.length) {
+      accuracy = Number(flagArgs[++i]);
+      hasNonInteractiveFlag = true;
+    } else if (flag === "--would-post") {
+      wouldPost = true;
+      hasNonInteractiveFlag = true;
+    } else if (flag === "--safety-concern") {
+      safetyConcern = true;
+      hasNonInteractiveFlag = true;
+    } else if (flag === "--reasons" && i + 1 < flagArgs.length) {
+      reasons = flagArgs[++i].split(",").map((r) => r.trim()).filter(Boolean);
+      hasNonInteractiveFlag = true;
+    } else if (flag === "--note" && i + 1 < flagArgs.length) {
+      note = flagArgs[++i];
+      hasNonInteractiveFlag = true;
+    } else if (flag === "--yes" || flag === "-y") {
+      yes = true;
+      hasNonInteractiveFlag = true;
+    }
+  }
+
+  const paths = resolveConfigPaths({ homeDir: options.homeDir });
+  const draftRoot = options.draftRoot ?? await readPreviewDraftRoot(paths.configFile, options.homeDir);
+  const evalsDir = paths.evalsDir;
+  // Only create readline for 'latest'; 'report' never uses interactive prompts
+  const prompter = options.feedbackPrompter ?? (subcommand === "latest" ? createReadlinePrompter() : {
+    askScores: async (): Promise<never> => { throw new Error("prompter not available"); },
+    askBooleans: async (): Promise<never> => { throw new Error("prompter not available"); },
+    askReasons: async (): Promise<never> => { throw new Error("prompter not available"); },
+    askNote: async (): Promise<never> => { throw new Error("prompter not available"); },
+    confirmOverwrite: async (): Promise<never> => { throw new Error("prompter not available"); },
+  });
+
+  try {
+    return await runFeedbackCommand(
+      { subcommand, targetDate, days },
+      io,
+      {
+        draftRoot,
+        evalsDir,
+        prompter,
+        nonInteractive: hasNonInteractiveFlag
+          ? { fun, share, accuracy, safetyConcern, wouldPost, reasons, note, yes }
+          : undefined
+      }
+    );
+  } finally {
+    prompter.close?.();
+  }
 }
 
 function isCliNodeError(error: unknown): error is NodeJS.ErrnoException {
