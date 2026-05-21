@@ -36,10 +36,11 @@ export async function saveFeedback(
   const feedbackPath = join(draftDir, FEEDBACK_FILENAME);
   const shouldWrite = await shouldWriteFeedbackJson(feedbackPath, options);
 
-  if (shouldWrite) {
-    await writeFeedbackJson(feedbackPath, record);
+  if (!shouldWrite) {
+    return;
   }
 
+  await writeFeedbackJson(feedbackPath, record);
   await appendToJsonl(evalsDir, record);
 }
 
