@@ -16,7 +16,8 @@
     "dev": "tsc -p tsconfig.build.json && node dist/cli.js",
     "lint": "eslint src tests vitest.config.ts eslint.config.js",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "release:smoke": "bash scripts/release/pack-smoke.sh"
   },
   "engines": {
     "node": ">=22.13.0"
