@@ -34,6 +34,7 @@ export type FeedbackPrompter = {
   askReasons: () => Promise<string[]>;
   askNote: () => Promise<string>;
   confirmOverwrite: () => Promise<boolean>;
+  close?: () => void;
 };
 
 // ---------------------------------------------------------------------------
@@ -83,7 +84,6 @@ export function createReadlinePrompter(): FeedbackPrompter {
       const share = await askScore("Share score");
       const accuracy = await askScore("Accuracy score");
 
-      rl.close();
       return { fun, share, accuracy };
     },
 
@@ -123,6 +123,10 @@ export function createReadlinePrompter(): FeedbackPrompter {
 
     async confirmOverwrite(): Promise<boolean> {
       return askYesNo("Feedback already exists. Overwrite?");
+    },
+
+    close(): void {
+      rl.close();
     }
   };
 }
@@ -217,6 +221,11 @@ async function runFeedbackLatest(
   let outputDir: string;
 
   if (input.targetDate) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(input.targetDate)) {
+      io.stderr(`--date must be in YYYY-MM-DD format, got: ${input.targetDate}`);
+      return 1;
+    }
+
     // Resolve the latest revision for the specific date
     const result = await resolveLatestRevForDate(
       options.draftRoot,
