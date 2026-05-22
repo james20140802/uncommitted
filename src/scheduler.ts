@@ -162,9 +162,16 @@ export function buildLaunchAgentPlist(
   const plistPath = resolveLaunchAgentPlistPath(options);
   const logs = resolveSchedulerLogPaths(options);
   const executablePath = options.executablePath ?? defaultExecutableName;
+  // When the executable is a .js script, launchd cannot resolve the shebang
+  // interpreter because it uses a minimal PATH. Prepend the absolute node binary
+  // path (process.execPath) so launchd invokes: [node, script.js, ...args].
+  // Binary executable paths (no .js extension) are left unchanged.
+  const programArguments = executablePath.endsWith(".js")
+    ? [process.execPath, executablePath, ...scheduleCommand]
+    : [executablePath, ...scheduleCommand];
   const xml = renderLaunchAgentPlistXml({
     label: launchdLabel,
-    programArguments: [executablePath, ...scheduleCommand],
+    programArguments,
     hour,
     minute,
     stdoutLogPath: logs.stdout,
