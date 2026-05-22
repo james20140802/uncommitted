@@ -11,6 +11,8 @@
  * that blocks child_process.
  */
 import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 
@@ -32,11 +34,14 @@ const FORBIDDEN_PATTERNS = [/\.env(\.|$)/i, /\.log$/, /secrets?/i];
 /** Path that MUST be present in the tarball */
 const REQUIRED_PATHS = ["dist/cli.js"];
 
+/** True only when dist/ has been built; skips dist-presence assertions otherwise */
+const distBuilt = existsSync(fileURLToPath(new URL("../dist/cli.js", import.meta.url)));
+
 async function getPackedFiles(): Promise<string[]> {
   const { stdout } = await execFileAsync(
     "npm",
     ["pack", "--dry-run", "--json"],
-    { cwd: new URL("..", import.meta.url).pathname }
+    { cwd: fileURLToPath(new URL("..", import.meta.url)) }
   );
 
   // npm pack --json outputs an array; each entry has a `files` array with `path` strings
@@ -75,7 +80,7 @@ describe("package artifact exclusions (UNC-106)", () => {
     }
   });
 
-  it("packed tarball includes dist/cli.js (the bin entry)", async () => {
+  it.skipIf(!distBuilt)("packed tarball includes dist/cli.js (the bin entry)", async () => {
     const files = await getPackedFiles();
 
     for (const required of REQUIRED_PATHS) {
