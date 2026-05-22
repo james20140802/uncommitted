@@ -87,7 +87,14 @@ if [[ ! -f "$BINARY" && ! -L "$BINARY" ]]; then
   exit 1
 fi
 
-HELP_OUTPUT=$("$BINARY" --help 2>&1 || true)
+HELP_EXIT=0
+HELP_OUTPUT=$("$BINARY" --help 2>&1) || HELP_EXIT=$?
+if [[ $HELP_EXIT -ne 0 ]]; then
+  echo "[smoke] ERROR: uncommitted --help exited with code $HELP_EXIT" >&2
+  echo "[smoke] Output:" >&2
+  echo "$HELP_OUTPUT" >&2
+  exit 1
+fi
 
 # ── Step 5: Assert non-empty output ───────────────────────────────────────
 echo ""
