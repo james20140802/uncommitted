@@ -22,11 +22,16 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 TMPDIR_SMOKE=""
+TARBALL_PATH=""
 
 cleanup() {
   if [[ -n "$TMPDIR_SMOKE" && -d "$TMPDIR_SMOKE" ]]; then
     rm -rf "$TMPDIR_SMOKE"
     echo "[smoke] Cleaned up temp dir: $TMPDIR_SMOKE"
+  fi
+  if [[ -n "$TARBALL_PATH" && -f "$TARBALL_PATH" ]]; then
+    rm -f "$TARBALL_PATH"
+    echo "[smoke] Cleaned up tarball: $TARBALL_PATH"
   fi
 }
 trap cleanup EXIT
@@ -112,12 +117,6 @@ if ! echo "$HELP_OUTPUT" | grep -qi "uncommitted"; then
   echo "[smoke] ERROR: 'uncommitted' not found in --help output" >&2
   exit 1
 fi
-
-# ── Step 6: Remove tarball from repo root ─────────────────────────────────
-echo ""
-echo "[smoke] Step 6: Remove tarball from repo root"
-rm -f "$TARBALL_PATH"
-echo "[smoke] Tarball removed"
 
 echo ""
 echo "[smoke] === SMOKE TEST PASSED ==="
