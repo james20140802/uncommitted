@@ -102,7 +102,28 @@ describe("macOS scheduler plist helpers", () => {
       executablePath
     });
 
+    // Binary executable path: must appear as ProgramArguments[0], no interpreter prepended
     expect(plist.xml).toContain(`<string>${executablePath}</string>`);
+    expect(plist.xml).not.toContain(`<string>${process.execPath}</string>`);
+  });
+
+  it("prepends process.execPath as interpreter when executablePath is a .js file", () => {
+    const homeDir = "/tmp/uncommitted-scheduler-home";
+    const executablePath = "/Users/user/.nvm/versions/node/v22.0.0/lib/node_modules/uncommitted/dist/cli.js";
+
+    const plist = buildLaunchAgentPlist({
+      homeDir,
+      scheduleTime: "23:30",
+      executablePath
+    });
+
+    // node interpreter must be ProgramArguments[0], script path must be ProgramArguments[1]
+    const nodeLine = `<string>${process.execPath}</string>`;
+    const scriptLine = `<string>${executablePath}</string>`;
+    expect(plist.xml).toContain(nodeLine);
+    expect(plist.xml).toContain(scriptLine);
+    // node must appear before the script path in the XML
+    expect(plist.xml.indexOf(nodeLine)).toBeLessThan(plist.xml.indexOf(scriptLine));
   });
 
   it("rejects invalid schedule times with a short actionable error", () => {
