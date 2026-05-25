@@ -1,3 +1,5 @@
+> **CI packaging:** For the GitHub Actions release artifact workflow, see [`CI-WORKFLOW.md`](CI-WORKFLOW.md).
+
 # Uncommitted MVP Release Checklist
 
 > **Not published to public npm.** This is a manual local release flow for the MVP tag.

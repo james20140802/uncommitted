@@ -1,0 +1,68 @@
+# .github/workflows/release-artifact.yml
+name: Release Artifact
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+concurrency:
+  group: release-artifact-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-package:
+    name: Build, validate, and package CLI
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.10.0
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright Chromium
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Build
+        run: pnpm build
+
+      - name: Test
+        run: pnpm test
+
+      - name: Pack
+        run: pnpm pack
+
+      - name: Sanitize ref name for artifact
+        id: sanitize
+        run: echo "ref=$(echo '${{ github.ref_name }}' | tr '/' '-')" >> $GITHUB_OUTPUT
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: uncommitted-cli-${{ steps.sanitize.outputs.ref }}
+          path: '*.tgz'
+          if-no-files-found: error
+          retention-days: 30
