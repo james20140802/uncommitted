@@ -66,7 +66,7 @@ uncommitted --help
 uncommitted init
 ```
 
-See [`docs/release/MVP-CHECKLIST.md`](docs/release/MVP-CHECKLIST.md) for the full pre-tag release checklist.
+See [`docs/release/MVP-CHECKLIST.md`](docs/release/MVP-CHECKLIST.md) for the full pre-tag release checklist and [`docs/release/CI-WORKFLOW.md`](docs/release/CI-WORKFLOW.md) for the GitHub Actions release artifact workflow.
 
 ## MVP Direction
 
