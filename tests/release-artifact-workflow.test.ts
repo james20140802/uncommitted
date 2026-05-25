@@ -72,4 +72,19 @@ describe("release-artifact.yml", () => {
     const content = readFileSync(workflowPath, "utf8");
     expect(content).toContain("concurrency:");
   });
+
+  it("sets if-no-files-found to error on artifact upload", () => {
+    const content = readFileSync(workflowPath, "utf8");
+    expect(content).toContain("if-no-files-found: error");
+  });
+
+  it("sets retention-days to 30 on artifact upload", () => {
+    const content = readFileSync(workflowPath, "utf8");
+    expect(content).toContain("retention-days: 30");
+  });
+
+  it("sets cancel-in-progress on concurrency", () => {
+    const content = readFileSync(workflowPath, "utf8");
+    expect(content).toContain("cancel-in-progress: true");
+  });
 });
