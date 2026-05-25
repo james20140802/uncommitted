@@ -25,7 +25,7 @@ The CI workflow is **not** a substitute for the local pre-flight checks — run 
 ### Manual dispatch (recommended)
 
 1. Go to the repo on GitHub → **Actions** → **Release Artifact**
-2. Click **Run workflow** → select branch or tag → **Run workflow**
+2. Click **Run workflow**, choose the branch or tag from the dropdown, then click **Run workflow**
 
 ### Tag push (automatic)
 
@@ -43,7 +43,7 @@ The workflow starts automatically for any tag matching the `v*` pattern.
 The workflow (`.github/workflows/release-artifact.yml`) runs these steps in order:
 
 1. Checkout the repo
-2. Install pnpm 10.10.0 and Node.js 22 (mirrors `ci.yml` setup)
+2. Install pnpm 10.10.0 and Node.js 22
 3. `pnpm install --frozen-lockfile`
 4. Install Playwright Chromium (required for renderer tests)
 5. `pnpm lint`
