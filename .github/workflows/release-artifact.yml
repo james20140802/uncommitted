@@ -55,10 +55,14 @@ jobs:
       - name: Pack
         run: pnpm pack
 
+      - name: Sanitize ref name for artifact
+        id: sanitize
+        run: echo "ref=$(echo '${{ github.ref_name }}' | tr '/' '-')" >> $GITHUB_OUTPUT
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: uncommitted-cli-${{ github.ref_name }}
+          name: uncommitted-cli-${{ steps.sanitize.outputs.ref }}
           path: '*.tgz'
           if-no-files-found: error
           retention-days: 30

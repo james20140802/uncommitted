@@ -87,4 +87,14 @@ describe("release-artifact.yml", () => {
     const content = readFileSync(workflowPath, "utf8");
     expect(content).toContain("cancel-in-progress: true");
   });
+
+  it("sanitizes ref name before using it as artifact name", () => {
+    const content = readFileSync(workflowPath, "utf8");
+    // Raw github.ref_name must not appear directly in the artifact name field —
+    // slashes in branch names (e.g. feature/foo) cause upload-artifact to fail.
+    expect(content).not.toContain("name: uncommitted-cli-${{ github.ref_name }}");
+    // Sanitized value must be used instead
+    expect(content).toContain("GITHUB_OUTPUT");
+    expect(content).toContain("tr '/' '-'");
+  });
 });
