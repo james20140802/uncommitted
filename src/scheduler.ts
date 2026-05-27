@@ -96,6 +96,7 @@ export type SchedulerLogPaths = {
 export type LaunchAgentPlistOptions = SchedulerPathOptions & {
   scheduleTime: string;
   executablePath?: string;
+  environmentVariables?: Record<string, string>;
 };
 
 export type LaunchAgentPlist = {
@@ -119,6 +120,32 @@ export type InstallSchedulerOptions = SchedulerPathOptions & {
 const launchdLabel = "com.uncommitted.schedule";
 const defaultExecutableName = "uncommitted";
 const scheduleCommand = ["schedule", "run-now"] as const;
+
+export const KNOWN_PROVIDER_ENV_KEYS = [
+  "OPENAI_API_KEY",
+  "OPENROUTER_API_KEY",
+  "UNCOMMITTED_AI_TIMEOUT_MS"
+] as const;
+
+/**
+ * Reads only the known provider env keys from `source`, omits keys whose
+ * value is undefined or empty string, and returns the remaining as a
+ * Record<string, string>.
+ */
+export function captureProviderEnv(
+  source: NodeJS.ProcessEnv = process.env
+): Record<string, string> {
+  const result: Record<string, string> = {};
+
+  for (const key of KNOWN_PROVIDER_ENV_KEYS) {
+    const value = source[key];
+    if (value !== undefined && value.trim() !== "") {
+      result[key] = value;
+    }
+  }
+
+  return result;
+}
 
 export function getLaunchdLabel(): string {
   return launchdLabel;
@@ -175,7 +202,8 @@ export function buildLaunchAgentPlist(
     hour,
     minute,
     stdoutLogPath: logs.stdout,
-    stderrLogPath: logs.stderr
+    stderrLogPath: logs.stderr,
+    environmentVariables: options.environmentVariables
   });
 
   return {
@@ -231,10 +259,29 @@ function renderLaunchAgentPlistXml(options: {
   minute: number;
   stdoutLogPath: string;
   stderrLogPath: string;
+  environmentVariables?: Record<string, string>;
 }): string {
   const programArgumentXml = options.programArguments
     .map((argument) => `    <string>${escapePlistString(argument)}</string>`)
     .join("\n");
+
+  const envVars = options.environmentVariables;
+  const hasEnvVars = envVars !== undefined && Object.keys(envVars).length > 0;
+  const environmentVariablesXml = hasEnvVars
+    ? [
+        "  <key>EnvironmentVariables</key>",
+        "  <dict>",
+        ...Object.keys(envVars)
+          .sort()
+          .map(
+            (key) =>
+              `    <key>${escapePlistString(key)}</key>\n    <string>${escapePlistString(envVars[key])}</string>`
+          ),
+        "  </dict>"
+      ].join("\n") + "\n"
+    : "";
+
+  const afterInterval = hasEnvVars ? `\n${environmentVariablesXml}` : "";
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -252,7 +299,7 @@ ${programArgumentXml}
     <integer>${options.hour}</integer>
     <key>Minute</key>
     <integer>${options.minute}</integer>
-  </dict>
+  </dict>${afterInterval}
   <key>StandardOutPath</key>
   <string>${escapePlistString(options.stdoutLogPath)}</string>
   <key>StandardErrorPath</key>
