@@ -231,7 +231,7 @@ export async function installScheduler(
   await mkdir(dirname(logs.stdout), { recursive: true });
 
   await mkdir(dirname(plist.plistPath), { recursive: true });
-  await writeFile(plist.plistPath, plist.xml, "utf8");
+  await writeFile(plist.plistPath, plist.xml, { encoding: "utf8", mode: 0o600 });
 
   // We use bootout/bootstrap for modern macOS launchctl (10.11+)
   // bootout might fail if not already loaded, so we ignore that error.
