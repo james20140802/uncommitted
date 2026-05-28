@@ -8,6 +8,8 @@ dist/
 GEMINI.md
 .agents/
 .codex/
+.claude/
 docs/plans
+docs/superpowers/
 .codex-workflows-manifest.json
 .linear-prism-manifest.json
