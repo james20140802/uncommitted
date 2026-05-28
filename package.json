@@ -1,5 +1,5 @@
 {
-  "name": "uncommitted",
+  "name": "@sangchu04/uncommitted",
   "version": "0.1.0",
   "description": "Local-first CLI for generating AI coworker diary drafts from Git activity and manual notes.",
   "type": "module",

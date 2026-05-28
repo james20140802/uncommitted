@@ -3,9 +3,6 @@ name: Release Artifact
 
 on:
   workflow_dispatch:
-  push:
-    tags:
-      - 'v*'
 
 concurrency:
   group: release-artifact-${{ github.ref }}

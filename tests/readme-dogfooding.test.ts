@@ -33,8 +33,8 @@ describe("README dogfooding install section (UNC-108)", () => {
     expect(readme).toMatch(/MVP Install.*Dogfooding/i);
   });
 
-  it("states that the package is NOT published to public npm", () => {
-    expect(readme).toMatch(/not published to public npm/i);
+  it("provides an npm install command for the scoped package", () => {
+    expect(readme).toMatch(/npm install.*@sangchu04\/uncommitted/i);
   });
 
   it("mentions Node prerequisite version matching engines.node (>=22)", () => {

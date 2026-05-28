@@ -20,10 +20,10 @@ describe("release-artifact.yml", () => {
     expect(content).toContain("workflow_dispatch");
   });
 
-  it("supports v* tag push trigger", () => {
+  it("does not have a tag push trigger (release.yml owns tag-based publishing)", () => {
     const content = readFileSync(workflowPath, "utf8");
-    expect(content).toContain("tags:");
-    expect(content).toContain("- 'v*'");
+    expect(content).not.toContain("tags:");
+    expect(content).not.toContain("- 'v*'");
   });
 
   it("pins pnpm to 10.10.0", () => {

@@ -2,8 +2,8 @@
 
 # Uncommitted MVP Release Checklist
 
-> **Not published to public npm.** This is a manual local release flow for the MVP tag.
-> No auto-publish to npm or Instagram occurs at any step.
+> This checklist covers the local steps before pushing a version tag. Pushing a `v*` tag triggers the automated `release.yml` workflow, which publishes the package to npm.
+> No auto-publish to Instagram occurs at any step.
 
 Use this checklist before creating the MVP git tag. Every command is copy-pasteable from a macOS terminal at the repo root.
 
@@ -55,7 +55,7 @@ pnpm release:smoke
 
 This script (`scripts/release/pack-smoke.sh`) does:
 1. Clean build (`rm -rf dist && pnpm build`)
-2. `npm pack` → `uncommitted-x.y.z.tgz`
+2. `npm pack` → `sangchu04-uncommitted-x.y.z.tgz`
 3. Install tarball into an isolated temp dir via `pnpm add file:...tgz`
 4. Run `uncommitted --help` and assert non-empty output containing "uncommitted"
 5. Clean up temp dir and tarball
@@ -100,13 +100,13 @@ Install the tarball into a temp project and run end-to-end smoke commands:
 # Build and pack
 pnpm build
 npm pack
-# → uncommitted-x.y.z.tgz
+# → sangchu04-uncommitted-x.y.z.tgz
 
 # Install into a temp dir
 TMPDIR=$(mktemp -d)
 echo '{"name":"smoke","version":"1.0.0","private":true}' > "$TMPDIR/package.json"
 cd "$TMPDIR"
-pnpm add "file:/path/to/repo/uncommitted-x.y.z.tgz"
+pnpm add "file:/path/to/repo/sangchu04-uncommitted-x.y.z.tgz"
 
 # Smoke commands
 node node_modules/.bin/uncommitted --help
@@ -114,7 +114,7 @@ node node_modules/.bin/uncommitted init --help
 
 # Clean up
 cd /path/to/repo
-rm -rf "$TMPDIR" uncommitted-x.y.z.tgz
+rm -rf "$TMPDIR" sangchu04-uncommitted-x.y.z.tgz
 ```
 
 - [ ] `uncommitted --help` outputs usage text
@@ -166,7 +166,45 @@ git log --oneline -3   # verify tag appears
 
 ---
 
-## 7. Rollback Notes
+## 7. Publish (Automated via Tag Push)
+
+Pushing a `v*` tag to origin triggers the `release.yml` GitHub Actions workflow, which:
+
+1. Builds, lints, typechecks, and tests the package
+2. Packs the tarball (`pnpm pack`)
+3. Creates a GitHub Release with auto-generated release notes and attaches the tarball
+4. Publishes the package to npm as `@sangchu04/uncommitted`
+
+### Prerequisites
+
+- The `NPM_TOKEN` secret must be registered in the GitHub repository settings (Settings → Secrets and variables → Actions).
+
+### Push the tag
+
+```sh
+git push origin v0.1.1
+```
+
+The `release.yml` workflow runs automatically. Monitor it at:
+`https://github.com/james20140802/uncommitted/actions`
+
+### Verify the publish
+
+```sh
+npm view @sangchu04/uncommitted
+# or install and verify:
+npm install -g @sangchu04/uncommitted
+uncommitted --help
+```
+
+- [ ] `NPM_TOKEN` secret is set in GitHub repo settings
+- [ ] Tag pushed: `git push origin v0.1.x`
+- [ ] `release.yml` workflow completes successfully
+- [ ] `npm view @sangchu04/uncommitted` shows the new version
+
+---
+
+## 8. Rollback Notes
 
 ### Revert an annotated tag (if tagged too early)
 
@@ -187,7 +225,7 @@ git reset --soft HEAD~1     # unstage, keep changes
 ### Delete a generated tarball
 
 ```sh
-rm -f uncommitted-0.1.1.tgz
+rm -f sangchu04-uncommitted-0.1.1.tgz
 ```
 
 ### Restore a previous version
@@ -209,5 +247,8 @@ pnpm build                             # rebuild dist/ at old version
 [ ] Dogfooding: tarball installs and runs --help from temp dir
 [ ] Version bumped in package.json and committed
 [ ] Annotated tag created
-[ ] No auto-publish to npm or Instagram
+[ ] NPM_TOKEN secret set in GitHub repo settings
+[ ] Tag pushed to origin; release.yml workflow completes
+[ ] npm view @sangchu04/uncommitted shows new version
+[ ] No auto-publish to Instagram
 ```

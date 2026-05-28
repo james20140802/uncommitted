@@ -22,19 +22,13 @@ The CI workflow is **not** a substitute for the local pre-flight checks — run 
 
 ## Triggers
 
-### Manual dispatch (recommended)
+### Manual dispatch (only trigger)
 
 1. Go to the repo on GitHub → **Actions** → **Release Artifact**
 2. Click **Run workflow**, choose the branch or tag from the dropdown, then click **Run workflow**
 
-### Tag push (automatic)
-
-```bash
-git tag -a v0.1.1 -m "MVP v0.1.1"
-git push origin v0.1.1
-```
-
-The workflow starts automatically for any tag matching the `v*` pattern.
+> **Note:** Pushing a `v*` tag triggers `release.yml` (the publish workflow), not this artifact-only workflow.
+> Use this workflow when you need a standalone CI artifact without publishing to npm.
 
 ---
 
@@ -50,7 +44,7 @@ The workflow (`.github/workflows/release-artifact.yml`) runs these steps in orde
 6. `pnpm typecheck`
 7. `pnpm build`
 8. `pnpm test`
-9. `pnpm pack` — produces `uncommitted-x.y.z.tgz`
+9. `pnpm pack` — produces `sangchu04-uncommitted-x.y.z.tgz`
 10. Upload the `.tgz` via `actions/upload-artifact`
 
 Packaging only runs if all validation steps pass.
