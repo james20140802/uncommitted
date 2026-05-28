@@ -50,7 +50,7 @@ The workflow (`.github/workflows/release-artifact.yml`) runs these steps in orde
 6. `pnpm typecheck`
 7. `pnpm build`
 8. `pnpm test`
-9. `pnpm pack` — produces `uncommitted-x.y.z.tgz`
+9. `pnpm pack` — produces `sangchu04-uncommitted-x.y.z.tgz`
 10. Upload the `.tgz` via `actions/upload-artifact`
 
 Packaging only runs if all validation steps pass.

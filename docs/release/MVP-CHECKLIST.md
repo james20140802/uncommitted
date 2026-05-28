@@ -55,7 +55,7 @@ pnpm release:smoke
 
 This script (`scripts/release/pack-smoke.sh`) does:
 1. Clean build (`rm -rf dist && pnpm build`)
-2. `npm pack` → `uncommitted-x.y.z.tgz`
+2. `npm pack` → `sangchu04-uncommitted-x.y.z.tgz`
 3. Install tarball into an isolated temp dir via `pnpm add file:...tgz`
 4. Run `uncommitted --help` and assert non-empty output containing "uncommitted"
 5. Clean up temp dir and tarball
@@ -100,13 +100,13 @@ Install the tarball into a temp project and run end-to-end smoke commands:
 # Build and pack
 pnpm build
 npm pack
-# → uncommitted-x.y.z.tgz
+# → sangchu04-uncommitted-x.y.z.tgz
 
 # Install into a temp dir
 TMPDIR=$(mktemp -d)
 echo '{"name":"smoke","version":"1.0.0","private":true}' > "$TMPDIR/package.json"
 cd "$TMPDIR"
-pnpm add "file:/path/to/repo/uncommitted-x.y.z.tgz"
+pnpm add "file:/path/to/repo/sangchu04-uncommitted-x.y.z.tgz"
 
 # Smoke commands
 node node_modules/.bin/uncommitted --help
@@ -114,7 +114,7 @@ node node_modules/.bin/uncommitted init --help
 
 # Clean up
 cd /path/to/repo
-rm -rf "$TMPDIR" uncommitted-x.y.z.tgz
+rm -rf "$TMPDIR" sangchu04-uncommitted-x.y.z.tgz
 ```
 
 - [ ] `uncommitted --help` outputs usage text
@@ -225,7 +225,7 @@ git reset --soft HEAD~1     # unstage, keep changes
 ### Delete a generated tarball
 
 ```sh
-rm -f uncommitted-0.1.1.tgz
+rm -f sangchu04-uncommitted-0.1.1.tgz
 ```
 
 ### Restore a previous version
