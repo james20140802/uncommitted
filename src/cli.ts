@@ -41,6 +41,7 @@ import { loadLatestDraftPreview } from "./preview-loader.js";
 import { formatPreview } from "./preview-formatter.js";
 import {
   buildLaunchAgentPlist,
+  captureProviderEnv,
   installScheduler,
   type LaunchctlExecutor,
   type LaunchctlRawRunner
@@ -215,7 +216,8 @@ async function runSchedule(
       const plist = buildLaunchAgentPlist({
         homeDir: options.homeDir,
         scheduleTime,
-        executablePath
+        executablePath,
+        environmentVariables: captureProviderEnv()
       });
 
       await installScheduler(plist, {

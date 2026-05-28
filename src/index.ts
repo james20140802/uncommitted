@@ -140,7 +140,9 @@ export type {
 } from "./safety-report.js";
 export {
   buildLaunchAgentPlist,
+  captureProviderEnv,
   getLaunchdLabel,
+  KNOWN_PROVIDER_ENV_KEYS,
   parseScheduleTime,
   resolveLaunchAgentPlistPath,
   resolveSchedulerLogPaths

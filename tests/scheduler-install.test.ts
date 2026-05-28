@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -34,6 +34,30 @@ describe("scheduler install", () => {
       ["bootout", "gui/501", plist.plistPath],
       ["bootstrap", "gui/501", plist.plistPath]
     ]);
+
+    vi.unstubAllGlobals();
+  });
+
+  it("writes plist with owner-only (0600) permissions", async () => {
+    vi.stubGlobal("process", {
+      ...process,
+      platform: "darwin",
+      getuid: () => 501
+    });
+
+    const homeDir = await mkdtemp(join(tmpdir(), "uncommitted-install-perms-"));
+    const plist = buildLaunchAgentPlist({
+      homeDir,
+      scheduleTime: "23:30"
+    });
+
+    await installScheduler(plist, {
+      homeDir,
+      executor: async () => ({ stdout: "", stderr: "" })
+    });
+
+    const { mode } = await stat(plist.plistPath);
+    expect(mode & 0o777).toBe(0o600);
 
     vi.unstubAllGlobals();
   });
