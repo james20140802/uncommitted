@@ -22,15 +22,20 @@ pnpm dev -- --help
 
 ## MVP Install (Dogfooding)
 
-> **Not published to public npm.** This is a manual local install path for macOS dogfooding only.
-
 ### Prerequisites
 
 - macOS (Apple Silicon or Intel)
 - Node.js **>=22.13.0** (`node --version` to verify)
 - pnpm **10.10.0** (`pnpm --version` to verify; install via `npm i -g pnpm@10.10.0`)
 
-### Option A — tarball install (recommended)
+### Install via npm (recommended)
+
+```sh
+npm install -g @sangchu04/uncommitted
+uncommitted --help
+```
+
+### Option B — tarball install (from source)
 
 ```sh
 # 1. Clone and enter the repo
@@ -51,7 +56,7 @@ pnpm add -g file:./uncommitted-0.1.0.tgz
 uncommitted --help
 ```
 
-### Option B — pnpm link (dev convenience)
+### Option C — pnpm link (dev convenience)
 
 ```sh
 # From the repo root (after pnpm install && pnpm build):

@@ -22,8 +22,8 @@ const pkgPath = join(__dirname, "..", "package.json");
 const pkg = require(pkgPath) as Record<string, any>;
 
 describe("package.json metadata (UNC-105)", () => {
-  it("name is 'uncommitted'", () => {
-    expect(pkg.name).toBe("uncommitted");
+  it("name is '@sangchu04/uncommitted'", () => {
+    expect(pkg.name).toBe("@sangchu04/uncommitted");
   });
 
   it("version is present and follows semver pattern", () => {

@@ -2,8 +2,8 @@
 
 # Uncommitted MVP Release Checklist
 
-> **Not published to public npm.** This is a manual local release flow for the MVP tag.
-> No auto-publish to npm or Instagram occurs at any step.
+> This checklist covers the local steps before pushing a version tag. Pushing a `v*` tag triggers the automated `release.yml` workflow, which publishes the package to npm.
+> No auto-publish to Instagram occurs at any step.
 
 Use this checklist before creating the MVP git tag. Every command is copy-pasteable from a macOS terminal at the repo root.
 
@@ -166,7 +166,45 @@ git log --oneline -3   # verify tag appears
 
 ---
 
-## 7. Rollback Notes
+## 7. Publish (Automated via Tag Push)
+
+Pushing a `v*` tag to origin triggers the `release.yml` GitHub Actions workflow, which:
+
+1. Builds, lints, typechecks, and tests the package
+2. Packs the tarball (`pnpm pack`)
+3. Creates a GitHub Release with auto-generated release notes and attaches the tarball
+4. Publishes the package to npm as `@sangchu04/uncommitted`
+
+### Prerequisites
+
+- The `NPM_TOKEN` secret must be registered in the GitHub repository settings (Settings → Secrets and variables → Actions).
+
+### Push the tag
+
+```sh
+git push origin v0.1.1
+```
+
+The `release.yml` workflow runs automatically. Monitor it at:
+`https://github.com/james20140802/uncommitted/actions`
+
+### Verify the publish
+
+```sh
+npm view @sangchu04/uncommitted
+# or install and verify:
+npm install -g @sangchu04/uncommitted
+uncommitted --help
+```
+
+- [ ] `NPM_TOKEN` secret is set in GitHub repo settings
+- [ ] Tag pushed: `git push origin v0.1.x`
+- [ ] `release.yml` workflow completes successfully
+- [ ] `npm view @sangchu04/uncommitted` shows the new version
+
+---
+
+## 8. Rollback Notes
 
 ### Revert an annotated tag (if tagged too early)
 
@@ -209,5 +247,8 @@ pnpm build                             # rebuild dist/ at old version
 [ ] Dogfooding: tarball installs and runs --help from temp dir
 [ ] Version bumped in package.json and committed
 [ ] Annotated tag created
-[ ] No auto-publish to npm or Instagram
+[ ] NPM_TOKEN secret set in GitHub repo settings
+[ ] Tag pushed to origin; release.yml workflow completes
+[ ] npm view @sangchu04/uncommitted shows new version
+[ ] No auto-publish to Instagram
 ```
