@@ -19,6 +19,10 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "release:smoke": "bash scripts/release/pack-smoke.sh"
   },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/james20140802/uncommitted"
+  },
   "engines": {
     "node": ">=22.13.0"
   },
