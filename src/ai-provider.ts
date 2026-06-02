@@ -277,6 +277,24 @@ export function createAiProvider(
     });
   }
 
+  if (config.provider === "anthropic") {
+    const apiKey = resolveEnvValue(options, "ANTHROPIC_API_KEY");
+
+    if (!apiKey) {
+      throw new AiGenerationError(
+        "ANTHROPIC_API_KEY is not set.",
+        "provider-unavailable"
+      );
+    }
+
+    return new AnthropicProvider({
+      apiKey,
+      model: "claude-sonnet-4-6",
+      timeoutMs: resolveProviderTimeoutMs(options),
+      transport: options.transport ?? defaultFetchTransport
+    });
+  }
+
   throw new AiGenerationError(
     `AI provider is not implemented yet: ${config.provider}.`,
     "provider-unavailable"
@@ -410,6 +428,68 @@ class OpenAiCompatibleProvider implements AiProvider {
       }
 
       return { responseJson: extractChatCompletionContent(await readResponseJson(response)) };
+    } catch (error) {
+      if (error instanceof AiGenerationError) {
+        throw error;
+      }
+
+      if (isAbortError(error)) {
+        throw new AiGenerationError(
+          "AI provider timed out. Try again later.",
+          "provider-failed"
+        );
+      }
+
+      throw new AiGenerationError(
+        "AI provider failed. Check provider configuration.",
+        "provider-failed"
+      );
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+}
+
+class AnthropicProvider implements AiProvider {
+  public readonly name = "anthropic" as const;
+  public readonly model: string;
+
+  constructor(
+    private readonly options: {
+      apiKey: string;
+      model: string;
+      timeoutMs: number;
+      transport: AiProviderHttpTransport;
+    }
+  ) {
+    this.model = options.model;
+  }
+
+  async generateStructured(
+    request: AiStructuredGenerationRequest
+  ): Promise<AiProviderRawResponse> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), this.options.timeoutMs);
+
+    try {
+      const response = await this.options.transport("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "x-api-key": this.options.apiKey,
+          "anthropic-version": "2023-06-01",
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(createAnthropicMessagesBody(request, this.options.model)),
+        signal: controller.signal
+      });
+
+      if (!response.ok) {
+        throwProviderHttpError(response.status);
+      }
+
+      return {
+        responseJson: extractAnthropicToolUseContent(await readResponseJson(response))
+      };
     } catch (error) {
       if (error instanceof AiGenerationError) {
         throw error;
@@ -595,6 +675,70 @@ function extractChatCompletionContent(value: unknown): string {
   }
 
   return content;
+}
+
+function createAnthropicMessagesBody(
+  request: AiStructuredGenerationRequest,
+  model: string
+): JsonObject {
+  const { toolName, schema } = createAnthropicToolDefinition(request.task);
+
+  return {
+    model,
+    max_tokens: 4096,
+    system: [
+      request.instructions,
+      "The response_format JSON schema is authoritative.",
+      "Return only one valid JSON object.",
+      "Do not wrap the JSON in Markdown or prose."
+    ].join("\n"),
+    messages: [
+      {
+        role: "user",
+        content: JSON.stringify({ task: request.task, input: request.input })
+      }
+    ],
+    tools: [
+      {
+        name: toolName,
+        description: "Return the structured output for this task.",
+        input_schema: schema
+      }
+    ],
+    tool_choice: { type: "tool", name: toolName }
+  };
+}
+
+function createAnthropicToolDefinition(task: AiGenerationTask): {
+  toolName: string;
+  schema: JsonObject;
+} {
+  if (task === "story-plan") {
+    return { toolName: "uncommitted_story_format_plan", schema: createStoryFormatPlanSchema() };
+  }
+
+  if (task === "caption") {
+    return { toolName: "uncommitted_caption", schema: createCaptionSchema() };
+  }
+
+  return { toolName: "uncommitted_diary_draft", schema: createDiaryDraftSchema() };
+}
+
+function extractAnthropicToolUseContent(value: unknown): string {
+  if (!isRecord(value) || !Array.isArray(value.content) || value.content.length === 0) {
+    throwInvalidProviderJson();
+  }
+
+  const toolUseBlock = (value.content as unknown[]).find(
+    (block): block is Record<string, unknown> =>
+      isRecord(block) && block.type === "tool_use"
+  );
+
+  if (!toolUseBlock || !isRecord(toolUseBlock.input)) {
+    throwInvalidProviderJson();
+  }
+
+  return JSON.stringify(toolUseBlock.input);
 }
 
 async function readResponseJson(

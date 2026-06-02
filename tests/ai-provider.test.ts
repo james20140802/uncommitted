@@ -249,7 +249,7 @@ describe("AI provider abstraction", () => {
   it("fails clearly for configured providers that do not have adapters yet", () => {
     expect(() =>
       createAiProvider({
-        provider: "anthropic",
+        provider: "google",
         persona: "dry reviewer",
         roastLevel: 3
       })
@@ -257,9 +257,298 @@ describe("AI provider abstraction", () => {
       expect.objectContaining({
         code: "provider-unavailable",
         exitCode: 4,
-        message: "AI provider is not implemented yet: anthropic."
+        message: "AI provider is not implemented yet: google."
       })
     );
+  });
+
+  it("creates an Anthropic provider with environment credentials and safe JSON requests", async () => {
+    const calls: Array<{ url: string; request: AiProviderHttpRequest }> = [];
+    const provider = createAiProvider(
+      {
+        provider: "anthropic",
+        persona: "dry reviewer",
+        roastLevel: 3
+      },
+      {
+        env: { ANTHROPIC_API_KEY: "sk-ant-test-secret" },
+        transport: createTransport(calls, {
+          content: [
+            {
+              type: "tool_use",
+              name: "uncommitted_story_format_plan",
+              input: { title: "Anthropic provider day", beats: ["Configured", "Generated"] }
+            }
+          ],
+          stop_reason: "tool_use"
+        })
+      }
+    );
+    const request = createAiGenerationRequest({
+      task: "story-plan",
+      instructions: "Return a compact JSON object.",
+      summary: createQuietSummary()
+    });
+
+    await expect(generateStructured(provider, request)).resolves.toEqual({
+      schemaVersion: 1,
+      provider: "anthropic",
+      data: { title: "Anthropic provider day", beats: ["Configured", "Generated"] }
+    });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.url).toBe("https://api.anthropic.com/v1/messages");
+    expect(calls[0]?.request.headers["x-api-key"]).toBe("sk-ant-test-secret");
+    expect(calls[0]?.request.headers["anthropic-version"]).toBe("2023-06-01");
+    expect(calls[0]?.request.headers["Content-Type"]).toBe("application/json");
+
+    const body = JSON.parse(calls[0]?.request.body ?? "{}") as {
+      model?: string;
+      max_tokens?: number;
+      system?: string;
+      messages?: Array<{ role: string; content: string }>;
+      tools?: Array<{ name: string; description: string; input_schema: unknown }>;
+      tool_choice?: { type: string; name: string };
+    };
+
+    expect(body.model).toBe("claude-sonnet-4-6");
+    expect(typeof body.max_tokens).toBe("number");
+    expect(body.max_tokens).toBeGreaterThan(0);
+    expect(typeof body.system).toBe("string");
+    expect(body.messages).toHaveLength(1);
+    expect(body.messages?.[0]?.role).toBe("user");
+    expect(typeof body.messages?.[0]?.content).toBe("string");
+    expect(body.tools).toHaveLength(1);
+    expect(body.tools?.[0]?.name).toBe("uncommitted_story_format_plan");
+    expect(typeof body.tools?.[0]?.input_schema).toBe("object");
+    expect(body.tool_choice).toEqual({ type: "tool", name: "uncommitted_story_format_plan" });
+    expect(JSON.stringify(body)).not.toContain("sk-ant-test-secret");
+  });
+
+  it("creates an Anthropic provider that uses the diary draft schema for the draft task", async () => {
+    const calls: Array<{ url: string; request: AiProviderHttpRequest }> = [];
+    const provider = createAiProvider(
+      {
+        provider: "anthropic",
+        persona: "dry reviewer",
+        roastLevel: 3
+      },
+      {
+        env: { ANTHROPIC_API_KEY: "sk-ant-test-secret" },
+        transport: createTransport(calls, {
+          content: [
+            {
+              type: "tool_use",
+              name: "uncommitted_diary_draft",
+              input: { title: "Draft day", slides: [], altText: "A quiet day." }
+            }
+          ],
+          stop_reason: "tool_use"
+        })
+      }
+    );
+
+    await generateStructured(
+      provider,
+      createAiGenerationRequest({
+        task: "draft",
+        instructions: "Return JSON.",
+        summary: createQuietSummary()
+      })
+    );
+
+    const body = JSON.parse(calls[0]?.request.body ?? "{}") as {
+      tools?: Array<{ name: string }>;
+      tool_choice?: { type: string; name: string };
+    };
+
+    expect(body.tools?.[0]?.name).toBe("uncommitted_diary_draft");
+    expect(body.tool_choice?.name).toBe("uncommitted_diary_draft");
+  });
+
+  it("fails clearly when ANTHROPIC_API_KEY is missing", () => {
+    expect(() =>
+      createAiProvider(
+        {
+          provider: "anthropic",
+          persona: "dry reviewer",
+          roastLevel: 3
+        },
+        { env: {} }
+      )
+    ).toThrow(
+      expect.objectContaining({
+        code: "provider-unavailable",
+        exitCode: 4,
+        message: "ANTHROPIC_API_KEY is not set."
+      })
+    );
+  });
+
+  it("normalizes Anthropic HTTP failures without leaking response bodies", async () => {
+    const provider = createAiProvider(
+      {
+        provider: "anthropic",
+        persona: "dry reviewer",
+        roastLevel: 3
+      },
+      {
+        env: { ANTHROPIC_API_KEY: "sk-ant-test-secret" },
+        transport: createTransport(
+          [],
+          { error: { type: "authentication_error", message: "invalid x-api-key sk-ant-test-secret" } },
+          401
+        )
+      }
+    );
+
+    await expect(
+      generateStructured(
+        provider,
+        createAiGenerationRequest({
+          task: "draft",
+          instructions: "Return JSON.",
+          summary: createQuietSummary()
+        })
+      )
+    ).rejects.toMatchObject({
+      code: "provider-failed",
+      exitCode: 4,
+      message: "AI provider authentication failed. Check API key."
+    });
+  });
+
+  it("normalizes Anthropic rate-limit failures", async () => {
+    const provider = createAiProvider(
+      {
+        provider: "anthropic",
+        persona: "dry reviewer",
+        roastLevel: 3
+      },
+      {
+        env: { ANTHROPIC_API_KEY: "sk-ant-test-secret" },
+        transport: createTransport([], { error: "rate limit exceeded" }, 429)
+      }
+    );
+
+    await expect(
+      generateStructured(
+        provider,
+        createAiGenerationRequest({
+          task: "draft",
+          instructions: "Return JSON.",
+          summary: createQuietSummary()
+        })
+      )
+    ).rejects.toMatchObject({
+      code: "provider-failed",
+      exitCode: 4,
+      message: "AI provider rate limit exceeded. Try again later."
+    });
+  });
+
+  it("normalizes Anthropic timeout via env override", async () => {
+    const provider = createAiProvider(
+      {
+        provider: "anthropic",
+        persona: "dry reviewer",
+        roastLevel: 3
+      },
+      {
+        env: {
+          ANTHROPIC_API_KEY: "sk-ant-test-secret",
+          UNCOMMITTED_AI_TIMEOUT_MS: "1"
+        },
+        transport: async (_url, request) => {
+          return await new Promise<AiProviderHttpResponse>((_resolve, reject) => {
+            request.signal?.addEventListener("abort", () => {
+              const error = new Error("aborted");
+              error.name = "AbortError";
+              reject(error);
+            });
+          });
+        }
+      }
+    );
+
+    await expect(
+      generateStructured(
+        provider,
+        createAiGenerationRequest({
+          task: "draft",
+          instructions: "Return JSON.",
+          summary: createQuietSummary()
+        })
+      )
+    ).rejects.toMatchObject({
+      code: "provider-failed",
+      exitCode: 4,
+      message: "AI provider timed out. Try again later."
+    });
+  });
+
+  it("fails before downstream generation when Anthropic response has no tool_use block", async () => {
+    const provider = createAiProvider(
+      {
+        provider: "anthropic",
+        persona: "dry reviewer",
+        roastLevel: 3
+      },
+      {
+        env: { ANTHROPIC_API_KEY: "sk-ant-test-secret" },
+        transport: createTransport([], {
+          content: [{ type: "text", text: "no tool used" }],
+          stop_reason: "end_turn"
+        })
+      }
+    );
+
+    await expect(
+      generateStructured(
+        provider,
+        createAiGenerationRequest({
+          task: "story-plan",
+          instructions: "Return JSON.",
+          summary: createQuietSummary()
+        })
+      )
+    ).rejects.toMatchObject({
+      code: "malformed-response",
+      exitCode: 4,
+      message: "AI provider returned invalid JSON."
+    });
+  });
+
+  it("fails when Anthropic tool_use input is not valid JSON-serializable structure", async () => {
+    const provider = createAiProvider(
+      {
+        provider: "anthropic",
+        persona: "dry reviewer",
+        roastLevel: 3
+      },
+      {
+        env: { ANTHROPIC_API_KEY: "sk-ant-test-secret" },
+        transport: createTransport([], {
+          content: [{ type: "tool_use", name: "x", input: "not an object" }],
+          stop_reason: "tool_use"
+        })
+      }
+    );
+
+    await expect(
+      generateStructured(
+        provider,
+        createAiGenerationRequest({
+          task: "story-plan",
+          instructions: "Return JSON.",
+          summary: createQuietSummary()
+        })
+      )
+    ).rejects.toMatchObject({
+      code: "malformed-response",
+      exitCode: 4,
+      message: "AI provider returned invalid JSON."
+    });
   });
 
   it("normalizes OpenAI-compatible HTTP failures without leaking response bodies", async () => {
