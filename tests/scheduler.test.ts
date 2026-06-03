@@ -268,6 +268,7 @@ describe("captureProviderEnv", () => {
     const result = captureProviderEnv({
       OPENAI_API_KEY: "sk-test",
       OPENROUTER_API_KEY: "sk-or-test",
+      ANTHROPIC_API_KEY: "sk-ant-test",
       UNCOMMITTED_AI_TIMEOUT_MS: "5000",
       HOME: "/home/user",
       SOME_OTHER_VAR: "value"
@@ -276,6 +277,7 @@ describe("captureProviderEnv", () => {
     expect(result).toEqual({
       OPENAI_API_KEY: "sk-test",
       OPENROUTER_API_KEY: "sk-or-test",
+      ANTHROPIC_API_KEY: "sk-ant-test",
       UNCOMMITTED_AI_TIMEOUT_MS: "5000"
     });
     expect(result).not.toHaveProperty("HOME");

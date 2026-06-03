@@ -124,6 +124,7 @@ const scheduleCommand = ["schedule", "run-now"] as const;
 export const KNOWN_PROVIDER_ENV_KEYS = [
   "OPENAI_API_KEY",
   "OPENROUTER_API_KEY",
+  "ANTHROPIC_API_KEY",
   "UNCOMMITTED_AI_TIMEOUT_MS"
 ] as const;
 
