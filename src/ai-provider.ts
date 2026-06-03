@@ -702,6 +702,7 @@ function createAnthropicMessagesBody(
       {
         name: toolName,
         description: "Return the structured output for this task.",
+        strict: true,
         input_schema: schema
       }
     ],

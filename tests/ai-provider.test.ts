@@ -307,7 +307,12 @@ describe("AI provider abstraction", () => {
       max_tokens?: number;
       system?: string;
       messages?: Array<{ role: string; content: string }>;
-      tools?: Array<{ name: string; description: string; input_schema: unknown }>;
+      tools?: Array<{
+        name: string;
+        description: string;
+        strict?: boolean;
+        input_schema: unknown;
+      }>;
       tool_choice?: { type: string; name: string };
     };
 
@@ -320,6 +325,7 @@ describe("AI provider abstraction", () => {
     expect(typeof body.messages?.[0]?.content).toBe("string");
     expect(body.tools).toHaveLength(1);
     expect(body.tools?.[0]?.name).toBe("uncommitted_story_format_plan");
+    expect(body.tools?.[0]?.strict).toBe(true);
     expect(typeof body.tools?.[0]?.input_schema).toBe("object");
     expect(body.tool_choice).toEqual({ type: "tool", name: "uncommitted_story_format_plan" });
     expect(JSON.stringify(body)).not.toContain("sk-ant-test-secret");
