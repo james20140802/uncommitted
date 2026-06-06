@@ -202,6 +202,34 @@ describe("runFeedbackCommand (feedback latest)", () => {
     expect(saved!.fun).toBe(2);
   });
 
+  it("displays Format and Activity Level when story.json stores them under metadata.*", async () => {
+    const { io, stdout } = createIo();
+    const draftRoot = makeTmpDir();
+    const evalsDir = makeTmpDir();
+    await mkdir(draftRoot, { recursive: true });
+
+    const revision = await createDraftRevision({ draftRoot, targetDate: "2026-05-20" });
+    // IMPORTANT: nested-only — formatName/activityLevel exclusively under `metadata.*`
+    await writeDraftArtifactJson(revision, "story.json", {
+      schemaVersion: 1,
+      metadata: {
+        formatName: "Backstage Cue Book",
+        activityLevel: "high"
+      }
+    });
+    await writeLatestDraftPointer(revision, new Date().toISOString());
+
+    const exitCode = await runFeedbackCommand(
+      { subcommand: "latest" },
+      io,
+      { draftRoot, evalsDir, prompter: makePrompter() }
+    );
+
+    expect(exitCode).toBe(0);
+    expect(stdout.some((line) => line.includes("Format: Backstage Cue Book"))).toBe(true);
+    expect(stdout.some((line) => line.includes("Activity Level: high"))).toBe(true);
+  });
+
   it("returns exit code 1 for unknown subcommand", async () => {
     const { io, stderr } = createIo();
     const draftRoot = makeTmpDir();

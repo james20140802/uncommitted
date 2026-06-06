@@ -416,22 +416,48 @@ type StoryMeta = {
 };
 
 async function readStoryMeta(outputDir: string): Promise<StoryMeta> {
+  // Canonical source: story.json.metadata.{formatName,activityLevel}.
+  // Defensive fallback 1: story.json top-level (older drafts).
+  // Defensive fallback 2: metadata.json top-level (alternate writer).
   try {
     const raw = await readFile(join(outputDir, "story.json"), "utf8");
     const parsed = JSON.parse(raw) as unknown;
 
     if (isRecord(parsed)) {
+      const nested = isRecord(parsed.metadata) ? parsed.metadata : undefined;
+
+      const formatName =
+        pickString(nested?.formatName) ?? pickString(parsed.formatName);
+      const activityLevel =
+        pickString(nested?.activityLevel) ?? pickString(parsed.activityLevel);
+
+      if (formatName !== undefined || activityLevel !== undefined) {
+        return { formatName, activityLevel };
+      }
+    }
+  } catch {
+    // story.json missing or unparseable — fall through to metadata.json fallback.
+  }
+
+  try {
+    const raw = await readFile(join(outputDir, "metadata.json"), "utf8");
+    const parsed = JSON.parse(raw) as unknown;
+
+    if (isRecord(parsed)) {
       return {
-        formatName: typeof parsed.formatName === "string" ? parsed.formatName : undefined,
-        activityLevel:
-          typeof parsed.activityLevel === "string" ? parsed.activityLevel : undefined
+        formatName: pickString(parsed.formatName),
+        activityLevel: pickString(parsed.activityLevel)
       };
     }
   } catch {
-    // story.json missing or unparseable — non-fatal, proceed without metadata
+    // metadata.json missing or unparseable — non-fatal.
   }
 
   return {};
+}
+
+function pickString(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
 function clampScore(value: number): 1 | 2 | 3 | 4 | 5 {
