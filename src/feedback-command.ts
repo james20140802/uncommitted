@@ -260,8 +260,9 @@ async function runFeedbackLatest(
     }
   }
 
-  // 3. Read story.json for formatName / activityLevel
+  // 3. Read story.json for formatName / activityLevel, and caption.txt for the preview
   const storyMeta = await readStoryMeta(outputDir);
+  const captionPreview = await readCaptionPreview(outputDir);
 
   // 4. Display draft metadata
   io.stdout(`Draft: ${targetDate} / ${revision}`);
@@ -272,6 +273,11 @@ async function runFeedbackLatest(
 
   if (storyMeta.activityLevel) {
     io.stdout(`Activity Level: ${storyMeta.activityLevel}`);
+  }
+
+  if (captionPreview) {
+    io.stdout("Caption:");
+    io.stdout(captionPreview);
   }
 
   io.stdout("");
@@ -454,6 +460,24 @@ async function readStoryMeta(outputDir: string): Promise<StoryMeta> {
   }
 
   return {};
+}
+
+// Instagram's preview truncates around 280 chars; keep parity for a recognizable cue.
+const CAPTION_PREVIEW_LIMIT = 280;
+
+async function readCaptionPreview(outputDir: string): Promise<string | undefined> {
+  try {
+    const raw = await readFile(join(outputDir, "caption.txt"), "utf8");
+    const trimmed = raw.trim();
+    if (trimmed.length === 0) return undefined;
+
+    const chars = Array.from(trimmed);
+    if (chars.length <= CAPTION_PREVIEW_LIMIT) return trimmed;
+    return chars.slice(0, CAPTION_PREVIEW_LIMIT).join("") + "…";
+  } catch {
+    // caption.txt missing or unreadable — non-fatal, just no Caption section.
+    return undefined;
+  }
 }
 
 function pickString(value: unknown): string | undefined {

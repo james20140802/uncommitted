@@ -1,4 +1,4 @@
-import { mkdir } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -228,6 +228,85 @@ describe("runFeedbackCommand (feedback latest)", () => {
     expect(exitCode).toBe(0);
     expect(stdout.some((line) => line.includes("Format: Backstage Cue Book"))).toBe(true);
     expect(stdout.some((line) => line.includes("Activity Level: high"))).toBe(true);
+  });
+
+  it("renders caption.txt verbatim when it fits under the preview limit", async () => {
+    const { io, stdout } = createIo();
+    const draftRoot = makeTmpDir();
+    const evalsDir = makeTmpDir();
+    await mkdir(draftRoot, { recursive: true });
+
+    const outputDir = await setupDraft(draftRoot);
+    await writeFile(join(outputDir, "caption.txt"), "마이페이지에 프로필 편집을 추가했다.", "utf8");
+
+    const exitCode = await runFeedbackCommand(
+      { subcommand: "latest" },
+      io,
+      { draftRoot, evalsDir, prompter: makePrompter() }
+    );
+
+    expect(exitCode).toBe(0);
+    expect(stdout.some((line) => line === "Caption:")).toBe(true);
+    expect(stdout.some((line) => line.includes("마이페이지에 프로필 편집을 추가했다."))).toBe(true);
+  });
+
+  it("truncates a long caption with an ellipsis", async () => {
+    const { io, stdout } = createIo();
+    const draftRoot = makeTmpDir();
+    const evalsDir = makeTmpDir();
+    await mkdir(draftRoot, { recursive: true });
+
+    const outputDir = await setupDraft(draftRoot);
+    const longCaption = "가".repeat(400);
+    await writeFile(join(outputDir, "caption.txt"), longCaption, "utf8");
+
+    const exitCode = await runFeedbackCommand(
+      { subcommand: "latest" },
+      io,
+      { draftRoot, evalsDir, prompter: makePrompter() }
+    );
+
+    expect(exitCode).toBe(0);
+    const captionLine = stdout.find((line) => line.startsWith("가"));
+    expect(captionLine).toBeDefined();
+    expect(captionLine!.endsWith("…")).toBe(true);
+    // 280 chars + the ellipsis character
+    expect(Array.from(captionLine!).length).toBe(281);
+  });
+
+  it("omits the Caption section when caption.txt is missing or empty", async () => {
+    const { io, stdout } = createIo();
+    const draftRoot = makeTmpDir();
+    const evalsDir = makeTmpDir();
+    await mkdir(draftRoot, { recursive: true });
+
+    await setupDraft(draftRoot);
+
+    const exitCode = await runFeedbackCommand(
+      { subcommand: "latest" },
+      io,
+      { draftRoot, evalsDir, prompter: makePrompter() }
+    );
+
+    expect(exitCode).toBe(0);
+    expect(stdout.some((line) => line === "Caption:")).toBe(false);
+
+    // Also: empty/whitespace file → still no Caption section
+    const { io: io2, stdout: stdout2 } = createIo();
+    const draftRoot2 = makeTmpDir();
+    const evalsDir2 = makeTmpDir();
+    await mkdir(draftRoot2, { recursive: true });
+    const outputDir2 = await setupDraft(draftRoot2);
+    await writeFile(join(outputDir2, "caption.txt"), "   \n  \n", "utf8");
+
+    const exitCode2 = await runFeedbackCommand(
+      { subcommand: "latest" },
+      io2,
+      { draftRoot: draftRoot2, evalsDir: evalsDir2, prompter: makePrompter() }
+    );
+
+    expect(exitCode2).toBe(0);
+    expect(stdout2.some((line) => line === "Caption:")).toBe(false);
   });
 
   it("returns exit code 1 for unknown subcommand", async () => {
