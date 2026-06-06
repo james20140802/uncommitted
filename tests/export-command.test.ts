@@ -185,7 +185,26 @@ describe("export-command (UNC-92: scaffold)", () => {
     });
 
     expect(result.exportDir).not.toBe(outputDir);
-    expect(result.exportDir).toContain(draftRoot);
+    // Export lives sibling to drafts/, not inside it.
+    expect(result.exportDir).not.toContain(`${draftRoot}/exports`);
+    expect(result.exportDir.startsWith(draftRoot + "/")).toBe(false);
+  });
+
+  it("writes exports to <uncommittedRoot>/exports/instagram/<date>/<rev> (sibling of drafts/)", async () => {
+    // Set up <uncommittedRoot>/drafts/<date>/<rev>
+    const uncommittedRoot = await createTempDir();
+    const draftRoot = join(uncommittedRoot, "drafts");
+    await mkdir(draftRoot, { recursive: true });
+    await scaffoldDraft(draftRoot, { targetDate: "2026-05-18", revision: "rev-001" });
+
+    const result = await runExportCommand(
+      ["instagram"],
+      { draftRoot, now: () => "2026-05-18T10:30:00.000Z" }
+    );
+
+    const expectedExportDir = join(uncommittedRoot, "exports", "instagram", "2026-05-18", "rev-001");
+    expect(result.exportDir).toBe(expectedExportDir);
+    expect(result.exportDir.startsWith(draftRoot + "/")).toBe(false);
   });
 
   it("accepts 'instagram latest' alias", async () => {
@@ -409,7 +428,9 @@ describe("export-command (UNC-95: error handling)", () => {
   });
 
   it("does not create an export folder when carousel is missing", async () => {
-    const draftRoot = await createTempDir();
+    // Use isolated uncommittedRoot so dirname(draftRoot) is not a shared temp dir
+    const uncommittedRoot = await createTempDir();
+    const draftRoot = join(uncommittedRoot, "drafts");
     const targetDate = "2026-05-18";
     const revision = "rev-001";
     const outputDir = join(draftRoot, targetDate, revision);
@@ -454,7 +475,8 @@ describe("export-command (UNC-95: error handling)", () => {
       // expected
     }
 
-    const exportBase = join(draftRoot, "exports", "instagram");
+    // After UNC-128: exports live sibling to draftRoot (at uncommittedRoot/exports/instagram).
+    const exportBase = join(uncommittedRoot, "exports", "instagram");
     await expect(readdir(exportBase)).rejects.toThrow();
   });
 });
@@ -521,7 +543,10 @@ describe("export-command (UNC-94: safety policy)", () => {
   });
 
   it("blocked draft does not create an export folder", async () => {
-    const draftRoot = await createTempDir();
+    // Use isolated uncommittedRoot so dirname(draftRoot) is not a shared temp dir
+    const uncommittedRoot = await createTempDir();
+    const draftRoot = join(uncommittedRoot, "drafts");
+    await mkdir(draftRoot, { recursive: true });
     await scaffoldDraftWithSafety(draftRoot, "blocked");
 
     try {
@@ -530,7 +555,8 @@ describe("export-command (UNC-94: safety policy)", () => {
       // expected
     }
 
-    const exportBase = join(draftRoot, "exports", "instagram");
+    // After UNC-128: exports live sibling to draftRoot (at uncommittedRoot/exports/instagram).
+    const exportBase = join(uncommittedRoot, "exports", "instagram");
     await expect(readdir(exportBase)).rejects.toThrow();
   });
 
