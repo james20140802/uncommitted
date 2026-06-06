@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { constants } from "node:fs";
 import { access, readFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import process from "node:process";
 import { promisify } from "node:util";
 import { resolveConfigPaths } from "./config-paths.js";
@@ -58,7 +59,8 @@ const directoryLabels: Record<string, string> = {
   historyDir: "Format history directory",
   globalDraftsDir: "Global drafts directory",
   logsDir: "Logs directory",
-  defaultDraftRoot: "Configured draft root"
+  defaultDraftRoot: "Configured draft root",
+  exportRoot: "Export root"
 };
 
 const directoryIds: Record<string, string> = {
@@ -66,7 +68,8 @@ const directoryIds: Record<string, string> = {
   historyDir: "directory-history",
   globalDraftsDir: "directory-global-drafts",
   logsDir: "directory-logs",
-  defaultDraftRoot: "directory-draft-root"
+  defaultDraftRoot: "directory-draft-root",
+  exportRoot: "directory-export-root"
 };
 
 export async function runDoctorCommand(
@@ -91,14 +94,21 @@ export async function createDoctorReport(
     draftRoot: config?.draftRoot
   });
 
+  const directoryChecks = await createDirectoryChecks(
+    configuredPaths,
+    options.checkAccess ?? defaultCheckAccess
+  );
+  const legacyExportCheck = await createLegacyExportCheck(
+    configuredPaths,
+    options.checkAccess ?? defaultCheckAccess
+  );
+
   const checks: DoctorCheck[] = [
     check,
     createNodeCheck(options.nodeVersion ?? process.version),
     await createGitCheck(options.checkCommand ?? defaultCheckCommand),
-    ...(await createDirectoryChecks(
-      configuredPaths,
-      options.checkAccess ?? defaultCheckAccess
-    ))
+    ...directoryChecks,
+    ...(legacyExportCheck ? [legacyExportCheck] : [])
   ];
 
   if (config) {
@@ -234,12 +244,15 @@ async function createDirectoryChecks(
   paths: ReturnType<typeof resolveConfigPaths>,
   checkAccess: (path: string, mode: number) => Promise<boolean>
 ): Promise<DoctorCheck[]> {
+  const exportRoot = join(dirname(paths.defaultDraftRoot), "exports", "instagram");
+
   const pathEntries = [
     ["configDir", paths.configDir],
     ["historyDir", paths.historyDir],
     ["globalDraftsDir", paths.globalDraftsDir],
     ["logsDir", paths.logsDir],
-    ["defaultDraftRoot", paths.defaultDraftRoot]
+    ["defaultDraftRoot", paths.defaultDraftRoot],
+    ["exportRoot", exportRoot]
   ] as const;
 
   return await Promise.all(
@@ -263,6 +276,26 @@ async function createDirectoryChecks(
       };
     })
   );
+}
+
+async function createLegacyExportCheck(
+  paths: ReturnType<typeof resolveConfigPaths>,
+  checkAccess: (path: string, mode: number) => Promise<boolean>
+): Promise<DoctorCheck | null> {
+  const legacyDir = join(paths.defaultDraftRoot, "exports");
+  const exists = await checkAccess(legacyDir, constants.F_OK);
+
+  if (!exists) return null;
+
+  return {
+    id: "directory-legacy-exports",
+    label: "Legacy export directory",
+    status: "warn",
+    message:
+      `Legacy export directory detected at ${legacyDir}. Move its contents to ` +
+      `${join(dirname(paths.defaultDraftRoot), "exports", "instagram")} or delete it; ` +
+      `Uncommitted no longer writes here.`
+  };
 }
 
 function createAiApiKeyCheck(
