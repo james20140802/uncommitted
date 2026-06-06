@@ -76,3 +76,34 @@ See [`docs/release/MVP-CHECKLIST.md`](docs/release/MVP-CHECKLIST.md) for the ful
 ## MVP Direction
 
 The MVP is macOS-first and outputs local drafts, metadata, captions, safety reports, and 4:5 Instagram carousel PNGs. It does not auto-publish.
+
+## Exports
+
+`uncommitted export instagram` writes Instagram-ready output to:
+
+```
+~/Uncommitted/exports/instagram/<date>/<rev>/
+```
+
+This sits **sibling to `drafts/`**, not inside it. Prior versions wrote to `~/Uncommitted/drafts/exports/instagram/...`; that legacy location is no longer used.
+
+### Migrating from the legacy export location
+
+If you previously ran `uncommitted export instagram` and have content under `~/Uncommitted/drafts/exports/...`, Uncommitted will **not** auto-migrate it. To clean up:
+
+1. Run `uncommitted doctor` — it will surface a `Legacy export directory` warning when the old path exists, including the source and target paths.
+2. Either move the contents to the new path:
+
+   ```sh
+   mv ~/Uncommitted/drafts/exports/instagram ~/Uncommitted/exports/instagram
+   ```
+
+   or delete the legacy directory:
+
+   ```sh
+   rm -rf ~/Uncommitted/drafts/exports
+   ```
+
+3. Re-run `uncommitted doctor` to confirm the warning is gone.
+
+Future exports always write to the new sibling location; there is no silent fallback to the legacy path.
