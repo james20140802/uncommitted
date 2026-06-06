@@ -1256,6 +1256,16 @@ describe("cli", () => {
   });
 });
 
+it("`feedback --help` lists --date in the usage block", async () => {
+  const { io, stdout } = createIo();
+  const exitCode = await runCli(["feedback", "--help"], io);
+
+  expect(exitCode).toBe(0);
+  const out = stdout.join("\n");
+  expect(out).toContain("uncommitted feedback");
+  expect(out).toContain("--date <YYYY-MM-DD>");
+});
+
 async function initGitRepo(repoDir: string): Promise<void> {
   await execFileAsync("git", ["init", repoDir]);
   await git(repoDir, ["config", "user.name", "Fixture Dev"]);

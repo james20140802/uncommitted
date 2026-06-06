@@ -185,7 +185,7 @@ export async function runFeedbackCommand(
   }
 
   io.stderr(
-    `Usage: uncommitted feedback <latest|report> [options]`
+    `Usage: uncommitted feedback <latest|report> [options]\nRun \`uncommitted feedback --help\` for the full option list (including --date YYYY-MM-DD).`
   );
   return 1;
 }
