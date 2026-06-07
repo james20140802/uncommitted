@@ -421,11 +421,36 @@ async function readPreviewDraftRoot(
   return resolveConfigPaths({ homeDir }).defaultDraftRoot;
 }
 
+const FEEDBACK_HELP_TEXT = `Usage: uncommitted feedback <latest|report> [options]
+
+Subcommands:
+  latest          Record feedback for the latest draft (default if omitted).
+  report          Print an aggregate feedback report.
+
+Options:
+  --date <YYYY-MM-DD>   Target a specific draft date (latest revision under that date).
+  --days <N>            For report: number of days to aggregate (default 7).
+  --fun <1-5>           Non-interactive: Fun score.
+  --share <1-5>         Non-interactive: Share score.
+  --accuracy <1-5>      Non-interactive: Accuracy score.
+  --safety-concern      Non-interactive: mark safety concern.
+  --would-post          Non-interactive: would post to Instagram.
+  --reasons <a,b>       Non-interactive: comma-separated reason slugs.
+  --note "..."          Non-interactive: free-form note.
+  --yes, -y             Non-interactive: auto-confirm overwrites.
+  -h, --help            Show this help.
+`;
+
 async function runFeedback(
   args: string[],
   io: CliIo,
   options: CliOptions
 ): Promise<number> {
+  if (args.includes("--help") || args.includes("-h")) {
+    io.stdout(FEEDBACK_HELP_TEXT);
+    return 0;
+  }
+
   // Parse args: `feedback [latest|report] [--date YYYY-MM-DD] [--days N]
   //   [--fun N] [--share N] [--accuracy N] [--would-post] [--safety-concern]
   //   [--reasons a,b] [--note "..."] [--yes]`

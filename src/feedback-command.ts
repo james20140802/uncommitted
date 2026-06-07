@@ -185,7 +185,7 @@ export async function runFeedbackCommand(
   }
 
   io.stderr(
-    `Usage: uncommitted feedback <latest|report> [options]`
+    `Usage: uncommitted feedback <latest|report> [options]\nRun \`uncommitted feedback --help\` for the full option list (including --date YYYY-MM-DD).`
   );
   return 1;
 }
@@ -260,8 +260,9 @@ async function runFeedbackLatest(
     }
   }
 
-  // 3. Read story.json for formatName / activityLevel
+  // 3. Read story.json for formatName / activityLevel, and caption.txt for the preview
   const storyMeta = await readStoryMeta(outputDir);
+  const captionPreview = await readCaptionPreview(outputDir);
 
   // 4. Display draft metadata
   io.stdout(`Draft: ${targetDate} / ${revision}`);
@@ -272,6 +273,11 @@ async function runFeedbackLatest(
 
   if (storyMeta.activityLevel) {
     io.stdout(`Activity Level: ${storyMeta.activityLevel}`);
+  }
+
+  if (captionPreview) {
+    io.stdout("Caption:");
+    io.stdout(captionPreview);
   }
 
   io.stdout("");
@@ -416,22 +422,66 @@ type StoryMeta = {
 };
 
 async function readStoryMeta(outputDir: string): Promise<StoryMeta> {
+  // Canonical source: story.json.metadata.{formatName,activityLevel}.
+  // Defensive fallback 1: story.json top-level (older drafts).
+  // Defensive fallback 2: metadata.json top-level (alternate writer).
   try {
     const raw = await readFile(join(outputDir, "story.json"), "utf8");
     const parsed = JSON.parse(raw) as unknown;
 
     if (isRecord(parsed)) {
+      const nested = isRecord(parsed.metadata) ? parsed.metadata : undefined;
+
+      const formatName =
+        pickString(nested?.formatName) ?? pickString(parsed.formatName);
+      const activityLevel =
+        pickString(nested?.activityLevel) ?? pickString(parsed.activityLevel);
+
+      if (formatName !== undefined || activityLevel !== undefined) {
+        return { formatName, activityLevel };
+      }
+    }
+  } catch {
+    // story.json missing or unparseable — fall through to metadata.json fallback.
+  }
+
+  try {
+    const raw = await readFile(join(outputDir, "metadata.json"), "utf8");
+    const parsed = JSON.parse(raw) as unknown;
+
+    if (isRecord(parsed)) {
       return {
-        formatName: typeof parsed.formatName === "string" ? parsed.formatName : undefined,
-        activityLevel:
-          typeof parsed.activityLevel === "string" ? parsed.activityLevel : undefined
+        formatName: pickString(parsed.formatName),
+        activityLevel: pickString(parsed.activityLevel)
       };
     }
   } catch {
-    // story.json missing or unparseable — non-fatal, proceed without metadata
+    // metadata.json missing or unparseable — non-fatal.
   }
 
   return {};
+}
+
+// Instagram's preview truncates around 280 chars; keep parity for a recognizable cue.
+const CAPTION_PREVIEW_LIMIT = 280;
+
+async function readCaptionPreview(outputDir: string): Promise<string | undefined> {
+  try {
+    const raw = await readFile(join(outputDir, "caption.txt"), "utf8");
+    const trimmed = raw.trim();
+    if (trimmed.length === 0) return undefined;
+
+    const chars = Array.from(trimmed);
+    if (chars.length <= CAPTION_PREVIEW_LIMIT) return trimmed;
+    return chars.slice(0, CAPTION_PREVIEW_LIMIT).join("") + "…";
+  } catch {
+    // caption.txt missing or unreadable — non-fatal, just no Caption section.
+    return undefined;
+  }
+}
+
+function pickString(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
 function clampScore(value: number): 1 | 2 | 3 | 4 | 5 {
