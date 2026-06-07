@@ -69,10 +69,49 @@ export async function loadLatestDraftPreview(
     );
   }
 
-  // 2. Read caption.txt (optional — null if missing)
+  return loadDraftArtifacts(outputDir, targetDate, revision);
+}
+
+/**
+ * Load preview artifacts for a specific revision directory.
+ *
+ * Mirrors {@link loadLatestDraftPreview} starting from the caption/JSON
+ * artifact reads, but takes the resolved `outputDir`, `targetDate`, and
+ * `revision` directly (callers resolve these via `draft-revision-resolver`).
+ *
+ * Guards that `outputDir` resolves inside `draftRoot`; otherwise returns
+ * a `malformed` outcome citing the offending path.
+ */
+export async function loadDraftPreviewForRevision(
+  draftRoot: string,
+  outputDir: string,
+  targetDate: string,
+  revision: string
+): Promise<PreviewLoaderResult> {
+  if (!isPathInside(draftRoot, outputDir)) {
+    return malformed(
+      outputDir,
+      "Draft revision path is outside the draft root."
+    );
+  }
+
+  return loadDraftArtifacts(outputDir, targetDate, revision);
+}
+
+/**
+ * Shared core: read caption.txt + the three required JSON artifacts +
+ * scan the carousel directory. Used by both the latest-pointer entry
+ * point and the explicit revision entry point.
+ */
+async function loadDraftArtifacts(
+  outputDir: string,
+  targetDate: string,
+  revision: string
+): Promise<PreviewLoaderResult> {
+  // 1. Read caption.txt (optional — null if missing)
   const caption = await readCaptionOptional(outputDir);
 
-  // 3. Parse required JSON artifacts
+  // 2. Parse required JSON artifacts
   const storyResult = await readRequiredJson(outputDir, "story.json");
   if (storyResult.outcome === "malformed") return storyResult;
   if (!isRecord(storyResult.value)) {
@@ -94,7 +133,7 @@ export async function loadLatestDraftPreview(
     );
   }
 
-  // 4. Scan carousel directory for *.png files
+  // 3. Scan carousel directory for *.png files
   const carouselPngs = await readCarouselPngs(outputDir);
 
   return {
