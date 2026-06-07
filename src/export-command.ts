@@ -1,5 +1,5 @@
 import { copyFile, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { DraftStorageError, readLatestDraftPointer } from "./draft-storage.js";
 import type { SafetyStatus } from "./safety-report.js";
 
@@ -106,8 +106,10 @@ export async function runExportCommand(
   const carouselPngs = await collectCarouselPngs(sourceDraftPath);
 
   // 6. Create export folder
+  // Per UNC-123: exports live sibling to drafts/, derived from the parent of draftRoot.
+  const uncommittedRoot = dirname(draftRoot);
   const exportDir = join(
-    draftRoot,
+    uncommittedRoot,
     "exports",
     "instagram",
     pointer.targetDate,

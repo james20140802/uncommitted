@@ -1,5 +1,5 @@
 import { constants } from "node:fs";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -168,6 +168,117 @@ describe("doctor command", () => {
     );
     expect(getDoctorExitCode(report)).toBe(1);
   });
+
+  it("includes an Export root directory check pointing at sibling exports/instagram", async () => {
+    const homeDir = await createHomeWithConfig();
+    const exportRoot = join(homeDir, "Uncommitted", "exports", "instagram");
+    await mkdir(exportRoot, { recursive: true });
+
+    const report = await createDoctorReport({
+      homeDir,
+      env: {},
+      nodeVersion: "v22.13.0",
+      checkCommand: async () => ({ ok: true, detail: "git version 2.49.0" })
+    });
+
+    const exportRootCheck = report.checks.find((c) => c.id === "directory-export-root");
+    expect(exportRootCheck).toBeDefined();
+    expect(exportRootCheck?.label).toBe("Export root");
+    expect(exportRootCheck?.message).toContain(
+      join(homeDir, "Uncommitted", "exports", "instagram")
+    );
+  });
+
+  it("passes the Export root check before first export instead of failing", async () => {
+    const homeDir = await createHomeWithConfig();
+    // The export root is created lazily on first `export instagram`, so a
+    // freshly-initialized environment has no exports/ directory yet.
+    await rm(join(homeDir, "Uncommitted", "exports"), {
+      recursive: true,
+      force: true
+    });
+
+    const report = await createDoctorReport({
+      homeDir,
+      env: {},
+      nodeVersion: "v22.13.0",
+      checkCommand: async () => ({ ok: true, detail: "git version 2.49.0" })
+    });
+
+    const exportRootCheck = report.checks.find(
+      (c) => c.id === "directory-export-root"
+    );
+    expect(exportRootCheck).toBeDefined();
+    expect(exportRootCheck?.status).toBe("pass");
+    expect(getDoctorExitCode(report)).toBe(0);
+  });
+
+  it("fails the Export root check when the parent path is not writable", async () => {
+    const homeDir = await createHomeWithConfig();
+    const exportRoot = join(homeDir, "Uncommitted", "exports", "instagram");
+    const uncommittedRoot = join(homeDir, "Uncommitted");
+
+    const report = await createDoctorReport({
+      homeDir,
+      env: {},
+      nodeVersion: "v22.13.0",
+      checkCommand: async () => ({ ok: true, detail: "git version 2.49.0" }),
+      checkAccess: async (path, mode) => {
+        if (path === exportRoot) {
+          return false;
+        }
+
+        if (path === uncommittedRoot && mode === constants.W_OK) {
+          return false;
+        }
+
+        return true;
+      }
+    });
+
+    const exportRootCheck = report.checks.find(
+      (c) => c.id === "directory-export-root"
+    );
+    expect(exportRootCheck).toBeDefined();
+    expect(exportRootCheck?.status).toBe("fail");
+    expect(getDoctorExitCode(report)).toBe(1);
+  });
+
+  it("emits a legacy-export-dir warning when <draftRoot>/exports exists", async () => {
+    const homeDir = await createHomeWithConfig();
+    const exportRoot = join(homeDir, "Uncommitted", "exports", "instagram");
+    await mkdir(exportRoot, { recursive: true });
+    const legacyDir = join(homeDir, "Uncommitted", "drafts", "exports");
+    await mkdir(legacyDir, { recursive: true });
+
+    const report = await createDoctorReport({
+      homeDir,
+      env: {},
+      nodeVersion: "v22.13.0",
+      checkCommand: async () => ({ ok: true, detail: "git version 2.49.0" })
+    });
+
+    const legacyCheck = report.checks.find((c) => c.id === "directory-legacy-exports");
+    expect(legacyCheck).toBeDefined();
+    expect(legacyCheck?.status).toBe("warn");
+    expect(legacyCheck?.message).toContain("Legacy export directory");
+  });
+
+  it("omits the legacy-export-dir warning when <draftRoot>/exports is absent", async () => {
+    const homeDir = await createHomeWithConfig();
+    const exportRoot = join(homeDir, "Uncommitted", "exports", "instagram");
+    await mkdir(exportRoot, { recursive: true });
+
+    const report = await createDoctorReport({
+      homeDir,
+      env: {},
+      nodeVersion: "v22.13.0",
+      checkCommand: async () => ({ ok: true, detail: "git version 2.49.0" })
+    });
+
+    const legacyCheck = report.checks.find((c) => c.id === "directory-legacy-exports");
+    expect(legacyCheck).toBeUndefined();
+  });
 });
 
 async function createHomeWithConfig(
@@ -181,6 +292,7 @@ async function createHomeWithConfig(
   await mkdir(join(configDir, "drafts"), { recursive: true });
   await mkdir(join(configDir, "logs"), { recursive: true });
   await mkdir(draftRoot, { recursive: true });
+  await mkdir(join(homeDir, "Uncommitted", "exports", "instagram"), { recursive: true });
   await writeFile(
     join(configDir, "config.json"),
     `${JSON.stringify({

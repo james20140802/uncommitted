@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { constants } from "node:fs";
 import { access, readFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import process from "node:process";
 import { promisify } from "node:util";
 import { resolveConfigPaths } from "./config-paths.js";
@@ -58,7 +59,8 @@ const directoryLabels: Record<string, string> = {
   historyDir: "Format history directory",
   globalDraftsDir: "Global drafts directory",
   logsDir: "Logs directory",
-  defaultDraftRoot: "Configured draft root"
+  defaultDraftRoot: "Configured draft root",
+  exportRoot: "Export root"
 };
 
 const directoryIds: Record<string, string> = {
@@ -66,7 +68,8 @@ const directoryIds: Record<string, string> = {
   historyDir: "directory-history",
   globalDraftsDir: "directory-global-drafts",
   logsDir: "directory-logs",
-  defaultDraftRoot: "directory-draft-root"
+  defaultDraftRoot: "directory-draft-root",
+  exportRoot: "directory-export-root"
 };
 
 export async function runDoctorCommand(
@@ -91,14 +94,26 @@ export async function createDoctorReport(
     draftRoot: config?.draftRoot
   });
 
+  const directoryChecks = await createDirectoryChecks(
+    configuredPaths,
+    options.checkAccess ?? defaultCheckAccess
+  );
+  const exportRootCheck = await createExportRootCheck(
+    configuredPaths,
+    options.checkAccess ?? defaultCheckAccess
+  );
+  const legacyExportCheck = await createLegacyExportCheck(
+    configuredPaths,
+    options.checkAccess ?? defaultCheckAccess
+  );
+
   const checks: DoctorCheck[] = [
     check,
     createNodeCheck(options.nodeVersion ?? process.version),
     await createGitCheck(options.checkCommand ?? defaultCheckCommand),
-    ...(await createDirectoryChecks(
-      configuredPaths,
-      options.checkAccess ?? defaultCheckAccess
-    ))
+    ...directoryChecks,
+    exportRootCheck,
+    ...(legacyExportCheck ? [legacyExportCheck] : [])
   ];
 
   if (config) {
@@ -263,6 +278,80 @@ async function createDirectoryChecks(
       };
     })
   );
+}
+
+async function createExportRootCheck(
+  paths: ReturnType<typeof resolveConfigPaths>,
+  checkAccess: (path: string, mode: number) => Promise<boolean>
+): Promise<DoctorCheck> {
+  const uncommittedRoot = dirname(paths.defaultDraftRoot);
+  const exportRoot = join(uncommittedRoot, "exports", "instagram");
+  const id = directoryIds.exportRoot;
+  const label = directoryLabels.exportRoot;
+
+  // The export root is created lazily on first `export instagram`, so a
+  // freshly-initialized environment legitimately has no export root yet.
+  // Don't fail doctor before the first export: when the directory is absent,
+  // confirm the parent path it will be created under is writable instead.
+  const exists = await checkAccess(exportRoot, constants.F_OK);
+
+  if (!exists) {
+    const parentWritable = await checkAccess(uncommittedRoot, constants.W_OK);
+
+    if (!parentWritable) {
+      return {
+        id,
+        label,
+        status: "fail",
+        message: `Cannot create export root; parent is not writable: ${uncommittedRoot}`
+      };
+    }
+
+    return {
+      id,
+      label,
+      status: "pass",
+      message: `Export root will be created on first export: ${exportRoot}`
+    };
+  }
+
+  const writable = await checkAccess(exportRoot, constants.W_OK);
+
+  if (!writable) {
+    return {
+      id,
+      label,
+      status: "fail",
+      message: `Directory is not writable: ${exportRoot}`
+    };
+  }
+
+  return {
+    id,
+    label,
+    status: "pass",
+    message: `Directory is writable: ${exportRoot}`
+  };
+}
+
+async function createLegacyExportCheck(
+  paths: ReturnType<typeof resolveConfigPaths>,
+  checkAccess: (path: string, mode: number) => Promise<boolean>
+): Promise<DoctorCheck | null> {
+  const legacyDir = join(paths.defaultDraftRoot, "exports");
+  const exists = await checkAccess(legacyDir, constants.F_OK);
+
+  if (!exists) return null;
+
+  return {
+    id: "directory-legacy-exports",
+    label: "Legacy export directory",
+    status: "warn",
+    message:
+      `Legacy export directory detected at ${legacyDir}. Move its contents to ` +
+      `${join(dirname(paths.defaultDraftRoot), "exports", "instagram")} or delete it; ` +
+      `Uncommitted no longer writes here.`
+  };
 }
 
 function createAiApiKeyCheck(
