@@ -98,6 +98,10 @@ export async function createDoctorReport(
     configuredPaths,
     options.checkAccess ?? defaultCheckAccess
   );
+  const exportRootCheck = await createExportRootCheck(
+    configuredPaths,
+    options.checkAccess ?? defaultCheckAccess
+  );
   const legacyExportCheck = await createLegacyExportCheck(
     configuredPaths,
     options.checkAccess ?? defaultCheckAccess
@@ -108,6 +112,7 @@ export async function createDoctorReport(
     createNodeCheck(options.nodeVersion ?? process.version),
     await createGitCheck(options.checkCommand ?? defaultCheckCommand),
     ...directoryChecks,
+    exportRootCheck,
     ...(legacyExportCheck ? [legacyExportCheck] : [])
   ];
 
@@ -244,15 +249,12 @@ async function createDirectoryChecks(
   paths: ReturnType<typeof resolveConfigPaths>,
   checkAccess: (path: string, mode: number) => Promise<boolean>
 ): Promise<DoctorCheck[]> {
-  const exportRoot = join(dirname(paths.defaultDraftRoot), "exports", "instagram");
-
   const pathEntries = [
     ["configDir", paths.configDir],
     ["historyDir", paths.historyDir],
     ["globalDraftsDir", paths.globalDraftsDir],
     ["logsDir", paths.logsDir],
-    ["defaultDraftRoot", paths.defaultDraftRoot],
-    ["exportRoot", exportRoot]
+    ["defaultDraftRoot", paths.defaultDraftRoot]
   ] as const;
 
   return await Promise.all(
@@ -276,6 +278,60 @@ async function createDirectoryChecks(
       };
     })
   );
+}
+
+async function createExportRootCheck(
+  paths: ReturnType<typeof resolveConfigPaths>,
+  checkAccess: (path: string, mode: number) => Promise<boolean>
+): Promise<DoctorCheck> {
+  const uncommittedRoot = dirname(paths.defaultDraftRoot);
+  const exportRoot = join(uncommittedRoot, "exports", "instagram");
+  const id = directoryIds.exportRoot;
+  const label = directoryLabels.exportRoot;
+
+  // The export root is created lazily on first `export instagram`, so a
+  // freshly-initialized environment legitimately has no export root yet.
+  // Don't fail doctor before the first export: when the directory is absent,
+  // confirm the parent path it will be created under is writable instead.
+  const exists = await checkAccess(exportRoot, constants.F_OK);
+
+  if (!exists) {
+    const parentWritable = await checkAccess(uncommittedRoot, constants.W_OK);
+
+    if (!parentWritable) {
+      return {
+        id,
+        label,
+        status: "fail",
+        message: `Cannot create export root; parent is not writable: ${uncommittedRoot}`
+      };
+    }
+
+    return {
+      id,
+      label,
+      status: "pass",
+      message: `Export root will be created on first export: ${exportRoot}`
+    };
+  }
+
+  const writable = await checkAccess(exportRoot, constants.W_OK);
+
+  if (!writable) {
+    return {
+      id,
+      label,
+      status: "fail",
+      message: `Directory is not writable: ${exportRoot}`
+    };
+  }
+
+  return {
+    id,
+    label,
+    status: "pass",
+    message: `Directory is writable: ${exportRoot}`
+  };
 }
 
 async function createLegacyExportCheck(
