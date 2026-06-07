@@ -1,4 +1,4 @@
-import { readdir, readFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import {
@@ -11,6 +11,7 @@ import {
 import { saveFeedback } from "./feedback-storage.js";
 import { readLatestDraftPointer, DraftStorageError } from "./draft-storage.js";
 import { aggregateFeedback, formatFeedbackReport } from "./feedback-report.js";
+import { resolveLatestRevForDate } from "./draft-revision-resolver.js";
 import type { CliIo } from "./cli.js";
 
 // ---------------------------------------------------------------------------
@@ -374,46 +375,6 @@ function validateNonInteractiveInput(ni: NonInteractiveInput): string | null {
   }
 
   return null;
-}
-
-type RevisionResult = {
-  revision: string;
-  outputDir: string;
-};
-
-/**
- * Find the highest revision under draftRoot/targetDate/.
- * Returns null if no revisions exist.
- */
-async function resolveLatestRevForDate(
-  draftRoot: string,
-  targetDate: string
-): Promise<RevisionResult | null> {
-  const dateDir = join(draftRoot, targetDate);
-
-  try {
-    const entries = await readdir(dateDir);
-    const revisions = entries
-      .filter((e) => /^rev-\d{3}$/.test(e))
-      .sort((a, b) => b.localeCompare(a)); // descending
-
-    if (revisions.length === 0) {
-      return null;
-    }
-
-    const revision = revisions[0];
-    return { revision, outputDir: join(dateDir, revision) };
-  } catch (error) {
-    if (isNodeError(error) && error.code === "ENOENT") {
-      return null;
-    }
-
-    throw error;
-  }
-}
-
-function isNodeError(error: unknown): error is NodeJS.ErrnoException {
-  return error instanceof Error && "code" in error;
 }
 
 type StoryMeta = {
