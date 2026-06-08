@@ -411,7 +411,10 @@ async function runPreview(
     const arg = args[i];
     if (arg === "--date") {
       const value = args[i + 1];
-      if (value === undefined) {
+      // Reject a missing value or an adjacent flag (e.g. `--date --rev`),
+      // which would otherwise be consumed as the value and fail later with a
+      // confusing format error. No valid date starts with "--".
+      if (value === undefined || value.startsWith("--")) {
         io.stderr(`--date requires a value (YYYY-MM-DD). ${PREVIEW_USAGE}`);
         return 1;
       }
@@ -421,7 +424,8 @@ async function runPreview(
     }
     if (arg === "--rev") {
       const value = args[i + 1];
-      if (value === undefined) {
+      // Same guard as --date: a following flag is not a valid rev-NNN value.
+      if (value === undefined || value.startsWith("--")) {
         io.stderr(`--rev requires a value (rev-NNN). ${PREVIEW_USAGE}`);
         return 1;
       }

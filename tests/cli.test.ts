@@ -1478,6 +1478,36 @@ describe("cli", () => {
       expect(stdout).toEqual([]);
       expect(stderr.join("\n")).toMatch(/--date/);
     });
+
+    it("(f5) --date immediately followed by another flag reports a missing value", async () => {
+      const { io, stdout, stderr } = createIo();
+      const { homeDir } = await setupTwoRevisions();
+
+      const exitCode = await runCli(
+        ["preview", "--date", "--rev", "rev-001"],
+        io,
+        { homeDir }
+      );
+
+      expect(exitCode).toBe(1);
+      expect(stdout).toEqual([]);
+      expect(stderr.join("\n")).toContain("--date requires a value");
+    });
+
+    it("(f6) --rev immediately followed by another flag reports a missing value", async () => {
+      const { io, stdout, stderr } = createIo();
+      const { homeDir } = await setupTwoRevisions();
+
+      const exitCode = await runCli(
+        ["preview", "--rev", "--date", "2026-06-01"],
+        io,
+        { homeDir }
+      );
+
+      expect(exitCode).toBe(1);
+      expect(stdout).toEqual([]);
+      expect(stderr.join("\n")).toContain("--rev requires a value");
+    });
   });
 });
 

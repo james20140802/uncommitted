@@ -88,6 +88,9 @@ export async function loadDraftPreviewForRevision(
   targetDate: string,
   revision: string
 ): Promise<PreviewLoaderResult> {
+  // Defense-in-depth: CLI callers pass a resolver-built path that is inside
+  // `draftRoot` by construction, so this never trips for them. The guard
+  // protects any non-resolver caller that might pass an arbitrary outputDir.
   if (!isPathInside(draftRoot, outputDir)) {
     return malformed(
       outputDir,
