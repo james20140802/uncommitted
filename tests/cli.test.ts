@@ -1254,6 +1254,261 @@ describe("cli", () => {
       expect(stderr.join("\n")).toContain("Usage: uncommitted preview latest");
     });
   });
+
+  describe("preview --date / --rev", () => {
+    const defaultStory = { schemaVersion: 1, title: "Test draft", slides: [] };
+    const defaultSafetyReport = {
+      schemaVersion: 1,
+      status: "safe",
+      risks: [],
+      redactionsApplied: [],
+      exportAllowed: true,
+      message: "Safety check passed."
+    };
+
+    function makeMetadata(targetDate: string): Record<string, unknown> {
+      return {
+        schemaVersion: 1,
+        targetDate,
+        generatedAt: `${targetDate}T00:00:00.000Z`,
+        activityLevel: "moderate",
+        formatName: "daily-summary",
+        storyFormatVoice: "casual",
+        storyFormatTone: "warm",
+        projectIds: ["proj-a"],
+        entryMode: "daily_global",
+        slideCount: 3
+      };
+    }
+
+    async function writeRevisionArtifacts(
+      outputDir: string,
+      targetDate: string,
+      caption: string
+    ): Promise<void> {
+      await mkdir(outputDir, { recursive: true });
+      await writeFile(
+        join(outputDir, "story.json"),
+        JSON.stringify(defaultStory, null, 2),
+        "utf8"
+      );
+      await writeFile(
+        join(outputDir, "metadata.json"),
+        JSON.stringify(makeMetadata(targetDate), null, 2),
+        "utf8"
+      );
+      await writeFile(
+        join(outputDir, "safety-report.json"),
+        JSON.stringify(defaultSafetyReport, null, 2),
+        "utf8"
+      );
+      await writeFile(join(outputDir, "caption.txt"), caption, "utf8");
+    }
+
+    async function setupTwoRevisions(): Promise<{
+      homeDir: string;
+      draftRoot: string;
+      rev001Dir: string;
+      rev002Dir: string;
+    }> {
+      const homeDir = await mkdtemp(
+        join(tmpdir(), "uncommitted-preview-date-rev-")
+      );
+      const draftRoot = join(homeDir, "Uncommitted", "drafts");
+      const rev001Dir = join(draftRoot, "2026-06-01", "rev-001");
+      const rev002Dir = join(draftRoot, "2026-06-01", "rev-002");
+      await writeRevisionArtifacts(rev001Dir, "2026-06-01", "Rev one caption\n");
+      await writeRevisionArtifacts(rev002Dir, "2026-06-01", "Rev two caption\n");
+      return { homeDir, draftRoot, rev001Dir, rev002Dir };
+    }
+
+    it("(a) --date <existing> selects the latest rev for that date", async () => {
+      const { io, stdout, stderr } = createIo();
+      const { homeDir } = await setupTwoRevisions();
+
+      const exitCode = await runCli(
+        ["preview", "--date", "2026-06-01"],
+        io,
+        { homeDir }
+      );
+
+      expect(exitCode).toBe(0);
+      expect(stderr).toEqual([]);
+      const out = stdout.join("\n");
+      expect(out).toContain("2026-06-01");
+      expect(out).toContain("rev-002");
+      expect(out).toContain("Rev two caption");
+    });
+
+    it("(b) --date <existing> --rev rev-001 hits the specific rev", async () => {
+      const { io, stdout, stderr } = createIo();
+      const { homeDir } = await setupTwoRevisions();
+
+      const exitCode = await runCli(
+        ["preview", "--date", "2026-06-01", "--rev", "rev-001"],
+        io,
+        { homeDir }
+      );
+
+      expect(exitCode).toBe(0);
+      expect(stderr).toEqual([]);
+      const out = stdout.join("\n");
+      expect(out).toContain("rev-001");
+      expect(out).toContain("Rev one caption");
+      expect(out).not.toContain("Rev two caption");
+    });
+
+    it("(c) --date <missing> exits 1 with literal 'No draft found for <date>'", async () => {
+      const { io, stdout, stderr } = createIo();
+      const { homeDir } = await setupTwoRevisions();
+
+      const exitCode = await runCli(
+        ["preview", "--date", "2026-05-01"],
+        io,
+        { homeDir }
+      );
+
+      expect(exitCode).toBe(1);
+      expect(stdout).toEqual([]);
+      expect(stderr.join("\n")).toContain("No draft found for 2026-05-01");
+    });
+
+    it("(d) --date <existing> --rev rev-999 exits 1 with literal 'No draft rev-999 found for <date>'", async () => {
+      const { io, stdout, stderr } = createIo();
+      const { homeDir } = await setupTwoRevisions();
+
+      const exitCode = await runCli(
+        ["preview", "--date", "2026-06-01", "--rev", "rev-999"],
+        io,
+        { homeDir }
+      );
+
+      expect(exitCode).toBe(1);
+      expect(stdout).toEqual([]);
+      expect(stderr.join("\n")).toContain(
+        "No draft rev-999 found for 2026-06-01"
+      );
+    });
+
+    it("(e) preview latest still works (backward compat)", async () => {
+      const { io, stdout, stderr } = createIo();
+      const { homeDir, draftRoot, rev002Dir } = await setupTwoRevisions();
+
+      // Make rev-002 the latest pointer.
+      const pointer = {
+        schemaVersion: 1,
+        targetDate: "2026-06-01",
+        revision: "rev-002",
+        path: rev002Dir,
+        updatedAt: "2026-06-01T00:00:00.000Z"
+      };
+      await writeFile(
+        join(draftRoot, "latest.json"),
+        JSON.stringify(pointer, null, 2),
+        "utf8"
+      );
+
+      const exitCode = await runCli(["preview", "latest"], io, { homeDir });
+
+      expect(exitCode).toBe(0);
+      expect(stderr).toEqual([]);
+      const out = stdout.join("\n");
+      expect(out).toContain("rev-002");
+      expect(out).toContain("Rev two caption");
+    });
+
+    it("(f1) --date with malformed value exits 1 with usage error", async () => {
+      const { io, stdout, stderr } = createIo();
+      const homeDir = await mkdtemp(
+        join(tmpdir(), "uncommitted-preview-bad-date-")
+      );
+
+      const exitCode = await runCli(
+        ["preview", "--date", "2026/06/02"],
+        io,
+        { homeDir }
+      );
+
+      expect(exitCode).toBe(1);
+      expect(stdout).toEqual([]);
+      expect(stderr.join("\n")).toMatch(/YYYY-MM-DD|--date/);
+    });
+
+    it("(f2) --rev with malformed value exits 1 with usage error", async () => {
+      const { io, stdout, stderr } = createIo();
+      const { homeDir } = await setupTwoRevisions();
+
+      const exitCode = await runCli(
+        ["preview", "--date", "2026-06-01", "--rev", "rev-1"],
+        io,
+        { homeDir }
+      );
+
+      expect(exitCode).toBe(1);
+      expect(stdout).toEqual([]);
+      expect(stderr.join("\n")).toMatch(/rev-NNN|--rev|Invalid revision/);
+    });
+
+    it("(f3) mixing positional 'latest' with --date exits 1 with usage error", async () => {
+      const { io, stdout, stderr } = createIo();
+      const { homeDir } = await setupTwoRevisions();
+
+      const exitCode = await runCli(
+        ["preview", "latest", "--date", "2026-06-01"],
+        io,
+        { homeDir }
+      );
+
+      expect(exitCode).toBe(1);
+      expect(stdout).toEqual([]);
+      expect(stderr.join("\n")).toMatch(/Usage|cannot combine|latest/i);
+    });
+
+    it("(f4) --rev without --date exits 1 with usage error mentioning --date", async () => {
+      const { io, stdout, stderr } = createIo();
+      const { homeDir } = await setupTwoRevisions();
+
+      const exitCode = await runCli(
+        ["preview", "--rev", "rev-001"],
+        io,
+        { homeDir }
+      );
+
+      expect(exitCode).toBe(1);
+      expect(stdout).toEqual([]);
+      expect(stderr.join("\n")).toMatch(/--date/);
+    });
+
+    it("(f5) --date immediately followed by another flag reports a missing value", async () => {
+      const { io, stdout, stderr } = createIo();
+      const { homeDir } = await setupTwoRevisions();
+
+      const exitCode = await runCli(
+        ["preview", "--date", "--rev", "rev-001"],
+        io,
+        { homeDir }
+      );
+
+      expect(exitCode).toBe(1);
+      expect(stdout).toEqual([]);
+      expect(stderr.join("\n")).toContain("--date requires a value");
+    });
+
+    it("(f6) --rev immediately followed by another flag reports a missing value", async () => {
+      const { io, stdout, stderr } = createIo();
+      const { homeDir } = await setupTwoRevisions();
+
+      const exitCode = await runCli(
+        ["preview", "--rev", "--date", "2026-06-01"],
+        io,
+        { homeDir }
+      );
+
+      expect(exitCode).toBe(1);
+      expect(stdout).toEqual([]);
+      expect(stderr.join("\n")).toContain("--rev requires a value");
+    });
+  });
 });
 
 it("`feedback --help` lists --date in the usage block", async () => {

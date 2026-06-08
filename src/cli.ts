@@ -37,8 +37,16 @@ import {
   RenderCommandError,
   runRenderCommand
 } from "./render-command.js";
-import { loadLatestDraftPreview } from "./preview-loader.js";
+import {
+  loadDraftPreviewForRevision,
+  loadLatestDraftPreview
+} from "./preview-loader.js";
 import { formatPreview } from "./preview-formatter.js";
+import {
+  RevisionFormatError,
+  resolveLatestRevForDate,
+  resolveSpecificRev
+} from "./draft-revision-resolver.js";
 import {
   buildLaunchAgentPlist,
   captureProviderEnv,
@@ -371,21 +379,108 @@ async function runRender(
   }
 }
 
+const PREVIEW_USAGE =
+  "Usage: uncommitted preview latest | uncommitted preview --date YYYY-MM-DD [--rev rev-NNN]";
+
 async function runPreview(
   args: string[],
   io: CliIo,
   options: CliOptions
 ): Promise<number> {
-  const [subcommand] = args;
+  // Backward-compat path: `preview latest` (no flags).
+  if (args.length === 1 && args[0] === "latest") {
+    const paths = resolveConfigPaths({ homeDir: options.homeDir });
+    const draftRoot = await readPreviewDraftRoot(paths.configFile, options.homeDir);
+    const result = await loadLatestDraftPreview(draftRoot);
 
-  if (subcommand !== "latest" || args.length !== 1) {
-    io.stderr("Usage: uncommitted preview latest");
+    if (result.outcome === "success") {
+      io.stdout(formatPreview(result));
+      return 0;
+    }
+
+    io.stderr(formatPreview(result));
+    return 1;
+  }
+
+  // New path: `preview --date YYYY-MM-DD [--rev rev-NNN]`.
+  // Parse flags + reject any other positional (including "latest" mixed with flags).
+  let targetDate: string | undefined;
+  let revision: string | undefined;
+
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === "--date") {
+      const value = args[i + 1];
+      // Reject a missing value or an adjacent flag (e.g. `--date --rev`),
+      // which would otherwise be consumed as the value and fail later with a
+      // confusing format error. No valid date starts with "--".
+      if (value === undefined || value.startsWith("--")) {
+        io.stderr(`--date requires a value (YYYY-MM-DD). ${PREVIEW_USAGE}`);
+        return 1;
+      }
+      targetDate = value;
+      i++;
+      continue;
+    }
+    if (arg === "--rev") {
+      const value = args[i + 1];
+      // Same guard as --date: a following flag is not a valid rev-NNN value.
+      if (value === undefined || value.startsWith("--")) {
+        io.stderr(`--rev requires a value (rev-NNN). ${PREVIEW_USAGE}`);
+        return 1;
+      }
+      revision = value;
+      i++;
+      continue;
+    }
+    // Any other token (including "latest" combined with flags, or unknown positionals).
+    io.stderr(PREVIEW_USAGE);
+    return 1;
+  }
+
+  if (targetDate === undefined) {
+    io.stderr(`--date is required when not using \`preview latest\`. ${PREVIEW_USAGE}`);
+    return 1;
+  }
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(targetDate)) {
+    io.stderr(`--date must be in YYYY-MM-DD format, got: ${targetDate}`);
     return 1;
   }
 
   const paths = resolveConfigPaths({ homeDir: options.homeDir });
   const draftRoot = await readPreviewDraftRoot(paths.configFile, options.homeDir);
-  const result = await loadLatestDraftPreview(draftRoot);
+
+  let resolved: { revision: string; outputDir: string } | null;
+  try {
+    if (revision === undefined) {
+      resolved = await resolveLatestRevForDate(draftRoot, targetDate);
+    } else {
+      resolved = await resolveSpecificRev(draftRoot, targetDate, revision);
+    }
+  } catch (error) {
+    if (error instanceof RevisionFormatError) {
+      io.stderr(`${error.message} ${PREVIEW_USAGE}`);
+      return 1;
+    }
+    throw error;
+  }
+
+  if (resolved === null) {
+    if (revision === undefined) {
+      io.stderr(`No draft found for ${targetDate}.`);
+    } else {
+      io.stderr(`No draft ${revision} found for ${targetDate}.`);
+    }
+    return 1;
+  }
+
+  const result = await loadDraftPreviewForRevision(
+    draftRoot,
+    resolved.outputDir,
+    targetDate,
+    resolved.revision
+  );
 
   if (result.outcome === "success") {
     io.stdout(formatPreview(result));

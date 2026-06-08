@@ -3,7 +3,10 @@ import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { loadLatestDraftPreview } from "../src/preview-loader.js";
+import {
+  loadDraftPreviewForRevision,
+  loadLatestDraftPreview
+} from "../src/preview-loader.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -326,5 +329,80 @@ describe("loadLatestDraftPreview", () => {
     await writeLatestPointer(draftRoot, "2026-05-19", "rev-001", outputDir);
 
     await expect(loadLatestDraftPreview(draftRoot)).rejects.toThrow();
+  });
+});
+
+describe("loadDraftPreviewForRevision", () => {
+  it("returns success for an arbitrary revision under the draft root", async () => {
+    const draftRoot = await createDraftRoot();
+    const outputDir = await writeDraftRevision(draftRoot, "2026-05-17", "rev-002", {
+      caption: "Older rev caption\n",
+      story: defaultStory,
+      metadata: defaultMetadata,
+      safetyReport: defaultSafetyReport,
+      carouselPngs: ["01.png"]
+    });
+
+    const result = await loadDraftPreviewForRevision(
+      draftRoot,
+      outputDir,
+      "2026-05-17",
+      "rev-002"
+    );
+
+    expect(result.outcome).toBe("success");
+    if (result.outcome === "success") {
+      expect(result.targetDate).toBe("2026-05-17");
+      expect(result.revision).toBe("rev-002");
+      expect(result.caption).toBe("Older rev caption\n");
+      expect(result.carouselPngs).toEqual(["carousel/01.png"]);
+    }
+  });
+
+  it("returns malformed when outputDir escapes draftRoot", async () => {
+    const draftRoot = await createDraftRoot();
+    const outsideRoot = await createDraftRoot();
+    const outsideDir = await writeDraftRevision(
+      outsideRoot,
+      "2026-05-17",
+      "rev-001",
+      {
+        caption: "outside\n",
+        story: defaultStory,
+        metadata: defaultMetadata,
+        safetyReport: defaultSafetyReport
+      }
+    );
+
+    const result = await loadDraftPreviewForRevision(
+      draftRoot,
+      outsideDir,
+      "2026-05-17",
+      "rev-001"
+    );
+
+    expect(result.outcome).toBe("malformed");
+  });
+
+  it("returns malformed when metadata.json is missing", async () => {
+    const draftRoot = await createDraftRoot();
+    const outputDir = await writeDraftRevision(draftRoot, "2026-05-17", "rev-001", {
+      caption: "no metadata\n",
+      story: defaultStory,
+      // no metadata
+      safetyReport: defaultSafetyReport
+    });
+
+    const result = await loadDraftPreviewForRevision(
+      draftRoot,
+      outputDir,
+      "2026-05-17",
+      "rev-001"
+    );
+
+    expect(result.outcome).toBe("malformed");
+    if (result.outcome === "malformed") {
+      expect(result.file).toContain("metadata.json");
+    }
   });
 });
