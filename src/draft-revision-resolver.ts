@@ -1,4 +1,4 @@
-import { readdir } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 /**
@@ -27,7 +27,15 @@ export class RevisionFormatError extends Error {
 const REVISION_PATTERN = /^rev-\d{3}$/;
 
 /**
- * Find the highest revision under `draftRoot/targetDate/`.
+ * Resolve the latest revision under `draftRoot/targetDate/`.
+ *
+ * Prefers the per-date latest pointer (`<targetDate>/latest.json`), which the
+ * storage layer writes only after a generation finishes writing all artifacts,
+ * so it records the last *complete* draft. This guards against a crashed
+ * generation that leaves a higher `rev-NNN` directory behind: a plain directory
+ * scan would wrongly select that incomplete revision. Falls back to the highest
+ * `rev-NNN` on disk when the pointer is absent or malformed.
+ *
  * Returns `null` when the date directory is missing or contains no
  * `rev-NNN` entries.
  */
@@ -36,6 +44,11 @@ export async function resolveLatestRevForDate(
   targetDate: string
 ): Promise<RevisionResult | null> {
   const dateDir = join(draftRoot, targetDate);
+
+  const pointed = await readDatePointerRevision(dateDir);
+  if (pointed !== null) {
+    return { revision: pointed, outputDir: join(dateDir, pointed) };
+  }
 
   try {
     const entries = await readdir(dateDir);
@@ -55,6 +68,40 @@ export async function resolveLatestRevForDate(
     }
     throw error;
   }
+}
+
+/**
+ * Read the revision recorded by `<dateDir>/latest.json`, the per-date latest
+ * pointer. Returns `null` when the pointer is absent or malformed so callers
+ * fall back to a directory scan.
+ */
+async function readDatePointerRevision(
+  dateDir: string
+): Promise<string | null> {
+  let raw: string;
+  try {
+    raw = await readFile(join(dateDir, "latest.json"), "utf8");
+  } catch {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (
+      typeof parsed === "object" &&
+      parsed !== null &&
+      typeof (parsed as Record<string, unknown>).revision === "string"
+    ) {
+      const revision = (parsed as Record<string, unknown>).revision as string;
+      if (REVISION_PATTERN.test(revision)) {
+        return revision;
+      }
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
 }
 
 /**

@@ -31,6 +31,29 @@ async function makeRevDir(
   return outputDir;
 }
 
+// Mirror the shape draft-storage writes to `<date>/latest.json` after a
+// generation finishes writing all artifacts.
+async function writeDateLatestPointer(
+  draftRoot: string,
+  targetDate: string,
+  revision: string
+): Promise<void> {
+  const dateDir = join(draftRoot, targetDate);
+  await mkdir(dateDir, { recursive: true });
+  const pointer = {
+    schemaVersion: 1,
+    targetDate,
+    revision,
+    path: join(dateDir, revision),
+    updatedAt: "2026-06-01T00:00:00.000Z"
+  };
+  await writeFile(
+    join(dateDir, "latest.json"),
+    `${JSON.stringify(pointer, null, 2)}\n`,
+    "utf8"
+  );
+}
+
 // ---------------------------------------------------------------------------
 // resolveLatestRevForDate
 // ---------------------------------------------------------------------------
@@ -68,6 +91,39 @@ describe("resolveLatestRevForDate", () => {
     const result = await resolveLatestRevForDate(draftRoot, "2026-06-01");
 
     expect(result).toBeNull();
+  });
+
+  it("prefers the date latest pointer over a higher incomplete rev dir", async () => {
+    const draftRoot = await createDraftRoot();
+    // rev-001 is the last completed draft the date pointer records.
+    const completeDir = await makeRevDir(draftRoot, "2026-06-01", "rev-001");
+    // rev-002 dir exists (e.g. a crashed generation) but never became latest.
+    await makeRevDir(draftRoot, "2026-06-01", "rev-002");
+    await writeDateLatestPointer(draftRoot, "2026-06-01", "rev-001");
+
+    const result = await resolveLatestRevForDate(draftRoot, "2026-06-01");
+
+    expect(result).not.toBeNull();
+    expect(result!.revision).toBe("rev-001");
+    expect(result!.outputDir).toBe(completeDir);
+  });
+
+  it("falls back to the highest rev when the date pointer is malformed", async () => {
+    const draftRoot = await createDraftRoot();
+    await makeRevDir(draftRoot, "2026-06-01", "rev-001");
+    const expectedDir = await makeRevDir(draftRoot, "2026-06-01", "rev-002");
+    // A corrupt pointer must not strand the resolver.
+    await writeFile(
+      join(draftRoot, "2026-06-01", "latest.json"),
+      "{ not json",
+      "utf8"
+    );
+
+    const result = await resolveLatestRevForDate(draftRoot, "2026-06-01");
+
+    expect(result).not.toBeNull();
+    expect(result!.revision).toBe("rev-002");
+    expect(result!.outputDir).toBe(expectedDir);
   });
 });
 
