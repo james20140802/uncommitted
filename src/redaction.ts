@@ -41,10 +41,13 @@ export function sanitizeText(value: string): RedactionResult {
   const categories = new Set<RedactionCategory>();
   let sanitized = value;
 
-  if (/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i.test(sanitized)) {
+  // Quantifiers are bounded (RFC-5321-ish limits) to keep matching linear and
+  // avoid the polynomial-ReDoS CodeQL flags on the unbounded form. Real emails
+  // match identically.
+  if (/[A-Z0-9._%+-]{1,64}@[A-Z0-9.-]{1,255}\.[A-Z]{2,24}/i.test(sanitized)) {
     categories.add("emails");
     sanitized = sanitized.replace(
-      /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi,
+      /[A-Z0-9._%+-]{1,64}@[A-Z0-9.-]{1,255}\.[A-Z]{2,24}/gi,
       "[redacted-email]"
     );
   }

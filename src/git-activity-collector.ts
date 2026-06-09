@@ -360,10 +360,12 @@ function redactSensitiveText(value: string): RedactionResult {
   const categories = new Set<RedactionCategory>();
   let sanitized = value;
 
-  if (/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i.test(sanitized)) {
+  // Bounded quantifiers (see redaction.ts) keep email matching linear and
+  // clear the polynomial-ReDoS warning; real emails match identically.
+  if (/[A-Z0-9._%+-]{1,64}@[A-Z0-9.-]{1,255}\.[A-Z]{2,24}/i.test(sanitized)) {
     categories.add("emails");
     sanitized = sanitized.replace(
-      /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi,
+      /[A-Z0-9._%+-]{1,64}@[A-Z0-9.-]{1,255}\.[A-Z]{2,24}/gi,
       "[redacted-email]"
     );
   }
