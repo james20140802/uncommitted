@@ -63,6 +63,12 @@ export type {
   DoctorReport,
   DoctorStatus
 } from "./doctor-command.js";
+export { isActivitySignal } from "./event-source.js";
+export type {
+  ActivitySignal,
+  ActivitySignalKind,
+  EventSource
+} from "./event-source.js";
 export {
   ensureConfigDirectories,
   expandHomePath,
