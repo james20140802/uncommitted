@@ -70,6 +70,13 @@ export type {
   EventSource
 } from "./event-source.js";
 export {
+  collectGitActivitySignals,
+  GitActivityEventSource
+} from "./git-activity-collector.js";
+export type {
+  CollectGitActivitySignalsOptions
+} from "./git-activity-collector.js";
+export {
   ensureConfigDirectories,
   expandHomePath,
   resolveConfigPaths

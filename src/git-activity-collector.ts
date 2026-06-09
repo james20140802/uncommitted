@@ -3,6 +3,7 @@ import { constants } from "node:fs";
 import { access, realpath } from "node:fs/promises";
 import { basename } from "node:path";
 import { promisify } from "node:util";
+import type { ActivitySignal, EventSource } from "./event-source.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -164,9 +165,9 @@ function parseGitLog(stdout: string): ParsedCommit[] {
       currentCommit = {
         hash: fields[0],
         shortHash: fields[1],
-        authorName: redactSensitiveText(fields[2]),
+        authorName: redactSensitiveText(fields[2]).value,
         authoredAt: fields[3],
-        subject: redactSensitiveText(fields[4]),
+        subject: redactSensitiveText(fields[4]).value,
         stats: {
           filesChanged: 0,
           insertions: 0,
@@ -339,15 +340,127 @@ function getDateWindow(targetDate: string): { start: string; end: string } {
   };
 }
 
-function redactSensitiveText(value: string): string {
-  return value
-    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[redacted-email]")
-    .replace(
+type RedactionCategory =
+  | "emails"
+  | "local absolute paths"
+  | "private URLs"
+  | "raw code snippets";
+
+type RedactionResult = {
+  value: string;
+  categories: RedactionCategory[];
+};
+
+const REDACTION_CATEGORY_ORDER: RedactionCategory[] = [
+  "emails",
+  "local absolute paths",
+  "private URLs",
+  "raw code snippets"
+];
+
+function redactSensitiveText(value: string): RedactionResult {
+  const categories = new Set<RedactionCategory>();
+  let sanitized = value;
+
+  if (/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i.test(sanitized)) {
+    categories.add("emails");
+    sanitized = sanitized.replace(
+      /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi,
+      "[redacted-email]"
+    );
+  }
+
+  if (/\b(?:https?|ssh|git):\/\/\S+|git@[\w.-]+:[^\s]+/.test(sanitized)) {
+    categories.add("private URLs");
+    sanitized = sanitized.replace(
       /\b(?:https?|ssh|git):\/\/\S+|git@[\w.-]+:[^\s]+/g,
       "[redacted-url]"
-    )
-    .replace(
+    );
+  }
+
+  if (/(^|[\s(["'])\/[^\s)"']+/.test(sanitized)) {
+    categories.add("local absolute paths");
+    sanitized = sanitized.replace(
       /(^|[\s(["'])\/[^\s)"']+/g,
       "$1[redacted-path]"
     );
+  }
+
+  return {
+    value: sanitized,
+    categories: REDACTION_CATEGORY_ORDER.filter((category) => categories.has(category))
+  };
+}
+
+export type CollectGitActivitySignalsOptions = {
+  projectId: string;
+  projectRoot: string;
+  targetDate: string;
+};
+
+export async function collectGitActivitySignals(
+  options: CollectGitActivitySignalsOptions
+): Promise<ActivitySignal[]> {
+  const activity = await collectGitActivity({
+    projectRoot: options.projectRoot,
+    targetDate: options.targetDate
+  });
+
+  const signals: ActivitySignal[] = [];
+
+  for (const commit of activity.commits) {
+    // commit.subject was already redacted in parseGitLog; re-run redaction
+    // categorization on the SOURCE subject to surface safetyNotes accurately.
+    // Since the redacted string is what we ship, derive categories from the
+    // mismatch between commit.subject and the redaction markers it now
+    // contains. Easier and more precise: keep the original subject around.
+    // For simplicity here, we re-derive categories from the redacted subject
+    // by detecting the presence of [redacted-*] markers.
+    const safetyNotes = deriveSafetyNotesFromRedactedText(commit.subject);
+
+    signals.push({
+      projectId: options.projectId,
+      timestamp: commit.authoredAt,
+      kind: "commit",
+      summary: commit.subject,
+      safetyNotes
+    });
+  }
+
+  const dirtyTimestamp = `${options.targetDate}T00:00:00.000Z`;
+
+  for (const file of activity.dirty.files) {
+    const { value: redactedPath, categories } = redactSensitiveText(file.path);
+    signals.push({
+      projectId: options.projectId,
+      timestamp: dirtyTimestamp,
+      kind: "dirty-file",
+      summary: `${file.status}: ${redactedPath}`,
+      safetyNotes: categories
+    });
+  }
+
+  return signals;
+}
+
+export class GitActivityEventSource implements EventSource {
+  constructor(private readonly options: CollectGitActivitySignalsOptions) {}
+
+  collect(): Promise<ActivitySignal[]> {
+    return collectGitActivitySignals(this.options);
+  }
+}
+
+function deriveSafetyNotesFromRedactedText(value: string): RedactionCategory[] {
+  const categories = new Set<RedactionCategory>();
+  if (value.includes("[redacted-email]")) {
+    categories.add("emails");
+  }
+  if (value.includes("[redacted-path]")) {
+    categories.add("local absolute paths");
+  }
+  if (value.includes("[redacted-url]")) {
+    categories.add("private URLs");
+  }
+  return REDACTION_CATEGORY_ORDER.filter((category) => categories.has(category));
 }
