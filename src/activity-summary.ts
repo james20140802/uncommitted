@@ -2,6 +2,11 @@ import type { GitActivityEvent } from "./collect-git-command.js";
 import type { ActivitySignal } from "./event-source.js";
 import type { DirtyFileStatus, DirtyStatusTotals } from "./git-activity-collector.js";
 import type { ManualNoteEvent } from "./note-command.js";
+import {
+  categorizeRedactedSubject,
+  REDACTION_CATEGORY_ORDER,
+  sanitizeText
+} from "./redaction.js";
 
 export type ActivityLevel = "none" | "low" | "medium" | "high";
 
@@ -89,11 +94,6 @@ export type ActivitySynthesis = {
   themes: Exclude<ActivityTheme, "mixed" | "quiet">[];
 };
 
-type SanitizedText = {
-  value: string;
-  privateItems: string[];
-};
-
 type ProjectAccumulator = {
   projectId: string;
   projectName: string;
@@ -115,13 +115,6 @@ const dirtyStatuses: DirtyFileStatus[] = [
   "copied",
   "untracked",
   "other"
-];
-
-const privateItemOrder = [
-  "emails",
-  "local absolute paths",
-  "private URLs",
-  "raw code snippets"
 ];
 
 export function buildActivitySummary(
@@ -154,7 +147,7 @@ export function buildActivitySummary(
 
     for (const commit of event.activity.commits) {
       const sanitizedSubject = sanitizeText(commit.subject);
-      addPrivateItems(privateItems, sanitizedSubject.privateItems);
+      addPrivateItems(privateItems, sanitizedSubject.categories);
 
       totalCommits += 1;
       filesChanged += commit.stats.filesChanged;
@@ -173,7 +166,7 @@ export function buildActivitySummary(
 
     for (const file of event.activity.dirty.files) {
       const sanitizedPath = sanitizeText(file.path);
-      addPrivateItems(privateItems, sanitizedPath.privateItems);
+      addPrivateItems(privateItems, sanitizedPath.categories);
       project.uncommittedChangeCount += 1;
       uncommittedTotals[file.status] += 1;
       uncommittedFiles.push({
@@ -187,8 +180,8 @@ export function buildActivitySummary(
 
   for (const note of manualNotesForDate) {
     const sanitizedNote = sanitizeText(note.text);
-    addPrivateItems(privateItems, sanitizedNote.privateItems);
-    hasManualPrivateItems ||= sanitizedNote.privateItems.length > 0;
+    addPrivateItems(privateItems, sanitizedNote.categories);
+    hasManualPrivateItems ||= sanitizedNote.categories.length > 0;
 
     const project = getProject(projects, note.projectId, note.projectId);
     project.manualNoteCount += 1;
@@ -313,10 +306,12 @@ export function buildActivitySummary(
  *    legacy `smallWins.push(sanitizedSubject.value)` rule in the git path).
  *  - "note" signals: summary is classified for smallWin / blocker /
  *    unfinished using the existing looksLike* predicates.
- *  - "dirty-file" signals: skipped for smallWins/blockers/threads. The
- *    uncommitted-files thread aggregate is derived separately from the
- *    source-shaped uncommittedChanges output, not from signals.
- *  - Themes: every signal's summary is fed through classifyThemes.
+ *  - "dirty-file" signals: skipped entirely — no themes, smallWins,
+ *    blockers, or threads. Their "<status>: <path>" summary is file-status
+ *    context only and must not infer intent (e.g. a "src/fix-bug.ts" path
+ *    must not set a debugging theme). The uncommitted-files thread aggregate
+ *    is derived separately from the source-shaped uncommittedChanges output.
+ *  - Themes: every non-dirty signal's summary is fed through classifyThemes.
  */
 export function deriveSynthesisFromSignals(
   signals: ActivitySignal[]
@@ -327,12 +322,15 @@ export function deriveSynthesisFromSignals(
   const themes = new Set<Exclude<ActivityTheme, "mixed" | "quiet">>();
 
   for (const signal of signals) {
-    for (const theme of classifyThemes(signal.summary)) {
-      themes.add(theme);
-    }
-
+    // dirty-file summaries are "<status>: <path>" — file-status context only,
+    // never intent. Skip them entirely (no themes, wins, blockers, threads) so
+    // an uncommitted path like "src/fix-bug.ts" can't invent a dominant theme.
     if (signal.kind === "dirty-file") {
       continue;
+    }
+
+    for (const theme of classifyThemes(signal.summary)) {
+      themes.add(theme);
     }
 
     if (signal.kind === "commit") {
@@ -360,7 +358,13 @@ export function deriveSynthesisFromSignals(
   };
 }
 
-function buildSignalsFromInput(input: {
+/**
+ * Normalize source-shaped inputs (git events + manual notes) into the
+ * ActivitySignal stream consumed by deriveSynthesisFromSignals. Commit
+ * signals are built with the same shared redaction path as
+ * collectGitActivitySignals, so the two git producers stay equivalent.
+ */
+export function buildSignalsFromInput(input: {
   targetDate: string;
   gitEvents: GitActivityEvent[];
   manualNotes: ManualNoteEvent[];
@@ -370,13 +374,17 @@ function buildSignalsFromInput(input: {
 
   for (const event of input.gitEvents) {
     for (const commit of event.activity.commits) {
-      const sanitized = sanitizeText(commit.subject);
+      // commit.subject already went through collectGitActivity's 3-rule
+      // redaction; recover those categories from markers and strip any raw
+      // code the collector left intact. Mirrors collectGitActivitySignals so
+      // both producers emit identical commit signals.
+      const sanitized = categorizeRedactedSubject(commit.subject);
       signals.push({
         projectId: event.project.id,
         timestamp: commit.authoredAt,
         kind: "commit",
         summary: sanitized.value,
-        safetyNotes: sanitized.privateItems
+        safetyNotes: sanitized.categories
       });
     }
 
@@ -387,7 +395,7 @@ function buildSignalsFromInput(input: {
         timestamp: dirtyTimestamp,
         kind: "dirty-file",
         summary: `${file.status}: ${sanitized.value}`,
-        safetyNotes: sanitized.privateItems
+        safetyNotes: sanitized.categories
       });
     }
   }
@@ -399,7 +407,7 @@ function buildSignalsFromInput(input: {
       timestamp: note.timestamp,
       kind: "note",
       summary: sanitized.value,
-      safetyNotes: sanitized.privateItems
+      safetyNotes: sanitized.categories
     });
   }
 
@@ -637,68 +645,14 @@ function buildPublicSafetyNotes(options: {
   return notes;
 }
 
-function sanitizeText(value: string): SanitizedText {
-  const privateItems = new Set<string>();
-  let sanitized = value;
-
-  if (/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i.test(sanitized)) {
-    privateItems.add("emails");
-    sanitized = sanitized.replace(
-      /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi,
-      "[redacted-email]"
-    );
-  }
-
-  if (/(^|[\s(["'])\/[^\s)"']+/.test(sanitized)) {
-    privateItems.add("local absolute paths");
-    sanitized = sanitized.replace(
-      /(^|[\s(["'])\/[^\s)"']+/g,
-      "$1[redacted-path]"
-    );
-  }
-
-  if (/\b(?:https?|ssh|git):\/\/\S+|git@[\w.-]+:[^\s]+/.test(sanitized)) {
-    privateItems.add("private URLs");
-    sanitized = sanitized.replace(
-      /\b(?:https?|ssh|git):\/\/\S+|git@[\w.-]+:[^\s]+/g,
-      "[redacted-url]"
-    );
-  }
-
-  if (containsRawCodeSnippet(sanitized)) {
-    privateItems.add("raw code snippets");
-    sanitized = redactRawCodeSnippets(sanitized);
-  }
-
-  return {
-    value: sanitized,
-    privateItems: sortPrivateItems(privateItems)
-  };
-}
-
 function addPrivateItems(target: Set<string>, items: string[]): void {
   for (const item of items) {
     target.add(item);
   }
 }
 
-function containsRawCodeSnippet(value: string): boolean {
-  return redactRawCodeSnippets(value) !== value;
-}
-
-function redactRawCodeSnippets(value: string): string {
-  return value
-    .replace(/\bdiff --git\b[^\n]*/g, "[redacted-code]")
-    .replace(/`[^`]+`/g, "[redacted-code]")
-    .replace(
-      /\b(?:const|let|var)\s+[A-Za-z_$][\w$]*\s*=\s*(?:process\.env\.[A-Z0-9_]+|["'][^"']*["']|[A-Za-z0-9_$.[\]]+)/g,
-      "[redacted-code]"
-    )
-    .replace(/\bprocess\.env\.[A-Z0-9_]+\b/g, "[redacted-code]");
-}
-
 function sortPrivateItems(items: Set<string>): string[] {
-  return privateItemOrder.filter((item) => items.has(item));
+  return REDACTION_CATEGORY_ORDER.filter((item) => items.has(item));
 }
 
 function sortThemes(

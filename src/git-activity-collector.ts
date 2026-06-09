@@ -4,6 +4,13 @@ import { access, realpath } from "node:fs/promises";
 import { basename } from "node:path";
 import { promisify } from "node:util";
 import type { ActivitySignal, EventSource } from "./event-source.js";
+import {
+  categorizeRedactedSubject,
+  REDACTION_CATEGORY_ORDER,
+  sanitizeText,
+  type RedactionCategory,
+  type RedactionResult
+} from "./redaction.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -340,24 +347,15 @@ function getDateWindow(targetDate: string): { start: string; end: string } {
   };
 }
 
-type RedactionCategory =
-  | "emails"
-  | "local absolute paths"
-  | "private URLs"
-  | "raw code snippets";
-
-type RedactionResult = {
-  value: string;
-  categories: RedactionCategory[];
-};
-
-const REDACTION_CATEGORY_ORDER: RedactionCategory[] = [
-  "emails",
-  "local absolute paths",
-  "private URLs",
-  "raw code snippets"
-];
-
+/**
+ * 3-rule redaction applied to legacy collectGitActivity output (commit
+ * subjects + author names): emails, absolute paths, private URLs. Raw-code
+ * redaction is intentionally NOT applied here — buildActivitySummary runs the
+ * full canonical sanitizeText on these subjects downstream, and adding the
+ * 4th rule here would strip raw code before that pass and drop "raw code
+ * snippets" from privateItemsToAvoid. Signal builders use the shared
+ * categorizeRedactedSubject to add raw-code handling on top of this output.
+ */
 function redactSensitiveText(value: string): RedactionResult {
   const categories = new Set<RedactionCategory>();
   let sanitized = value;
@@ -409,34 +407,29 @@ export async function collectGitActivitySignals(
   const signals: ActivitySignal[] = [];
 
   for (const commit of activity.commits) {
-    // commit.subject was already redacted in parseGitLog; re-run redaction
-    // categorization on the SOURCE subject to surface safetyNotes accurately.
-    // Since the redacted string is what we ship, derive categories from the
-    // mismatch between commit.subject and the redaction markers it now
-    // contains. Easier and more precise: keep the original subject around.
-    // For simplicity here, we re-derive categories from the redacted subject
-    // by detecting the presence of [redacted-*] markers.
-    const safetyNotes = deriveSafetyNotesFromRedactedText(commit.subject);
-
+    // commit.subject was already 3-rule redacted in parseGitLog; recover those
+    // categories and strip any raw code that pass left intact so the shipped
+    // signal honors the "already sanitized" contract.
+    const sanitized = categorizeRedactedSubject(commit.subject);
     signals.push({
       projectId: options.projectId,
       timestamp: commit.authoredAt,
       kind: "commit",
-      summary: commit.subject,
-      safetyNotes
+      summary: sanitized.value,
+      safetyNotes: sanitized.categories
     });
   }
 
   const dirtyTimestamp = `${options.targetDate}T00:00:00.000Z`;
 
   for (const file of activity.dirty.files) {
-    const { value: redactedPath, categories } = redactSensitiveText(file.path);
+    const sanitized = sanitizeText(file.path);
     signals.push({
       projectId: options.projectId,
       timestamp: dirtyTimestamp,
       kind: "dirty-file",
-      summary: `${file.status}: ${redactedPath}`,
-      safetyNotes: categories
+      summary: `${file.status}: ${sanitized.value}`,
+      safetyNotes: sanitized.categories
     });
   }
 
@@ -449,18 +442,4 @@ export class GitActivityEventSource implements EventSource {
   collect(): Promise<ActivitySignal[]> {
     return collectGitActivitySignals(this.options);
   }
-}
-
-function deriveSafetyNotesFromRedactedText(value: string): RedactionCategory[] {
-  const categories = new Set<RedactionCategory>();
-  if (value.includes("[redacted-email]")) {
-    categories.add("emails");
-  }
-  if (value.includes("[redacted-path]")) {
-    categories.add("local absolute paths");
-  }
-  if (value.includes("[redacted-url]")) {
-    categories.add("private URLs");
-  }
-  return REDACTION_CATEGORY_ORDER.filter((category) => categories.has(category));
 }

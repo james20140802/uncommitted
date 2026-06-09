@@ -12,6 +12,8 @@ import {
   GitActivityEventSource
 } from "../src/git-activity-collector.js";
 import { isActivitySignal } from "../src/event-source.js";
+import { buildSignalsFromInput } from "../src/activity-summary.js";
+import type { GitActivityEvent } from "../src/collect-git-command.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -260,6 +262,63 @@ describe("collectGitActivitySignals", () => {
     }).collect();
 
     expect(viaSource).toEqual(direct);
+  });
+
+  it("redacts raw code / env-var references in commit signals (already-sanitized contract)", async () => {
+    // collectGitActivity only redacts emails/paths/URLs; without the shared
+    // raw-code pass the new EventSource would ship a subject that leaks code
+    // or secret variable names to downstream AI/public consumers.
+    const { gitRoot, targetDate } = await createRepoWithCommits([
+      { subject: "wire up const token = process.env.SECRET handler" }
+    ]);
+
+    const signals = await collectGitActivitySignals({
+      projectId: "cli",
+      projectRoot: gitRoot,
+      targetDate
+    });
+
+    const commitSignal = signals.find((signal) => signal.kind === "commit");
+    expect(commitSignal).toBeDefined();
+    expect(commitSignal!.summary).not.toContain("process.env.SECRET");
+    expect(commitSignal!.summary).not.toContain("const token");
+    expect(commitSignal!.summary).toContain("[redacted-code]");
+    expect(commitSignal!.safetyNotes).toContain("raw code snippets");
+  });
+
+  it("emits signals identical to buildSignalsFromInput for the same repo state (producer equivalence)", async () => {
+    const { gitRoot, targetDate } = await createRepoWithCommits([
+      { subject: "wire up const token = process.env.SECRET" },
+      { subject: "store creds at /Users/me/keys and ping dev@example.com" }
+    ]);
+    // Leave an uncommitted file so the dirty-file branch is exercised too.
+    await writeFile(join(gitRoot, "draft-notes.md"), "wip\n", "utf8");
+
+    const fromCollector = await collectGitActivitySignals({
+      projectId: "cli",
+      projectRoot: gitRoot,
+      targetDate
+    });
+
+    const activity = await collectGitActivity({
+      projectRoot: gitRoot,
+      targetDate
+    });
+    const event: GitActivityEvent = {
+      schemaVersion: 1,
+      source: "git",
+      targetDate,
+      collectedAt: `${targetDate}T12:00:00.000Z`,
+      project: { id: "cli", name: "cli" },
+      activity
+    };
+    const fromSummary = buildSignalsFromInput({
+      targetDate,
+      gitEvents: [event],
+      manualNotes: []
+    });
+
+    expect(fromCollector).toEqual(fromSummary);
   });
 
   it("leaves the existing collectGitActivity output unchanged (regression guard)", async () => {

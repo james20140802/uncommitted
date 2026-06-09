@@ -377,7 +377,7 @@ describe("activity summary — signal-driven synthesis (UNC-135)", () => {
     expect(synthesis.smallWins).toEqual([]); // no "add/built/fixed/..." in summary
   });
 
-  it("ignores dirty-file signals for smallWins (they are not wins) but counts their themes", () => {
+  it("ignores dirty-file signals for smallWins (they are not wins)", () => {
     const signals: ActivitySignal[] = [
       {
         projectId: "cli",
@@ -390,7 +390,34 @@ describe("activity summary — signal-driven synthesis (UNC-135)", () => {
 
     const synthesis = deriveSynthesisFromSignals(signals);
     expect(synthesis.smallWins).toEqual([]);
-    // dirty files do not trigger any of the existing theme keywords, so themes empty
+  });
+
+  it("does not infer themes from dirty-file path summaries", () => {
+    // A day with only uncommitted files whose paths carry theme keywords
+    // must not set a dominant theme — uncommitted changes are file-status
+    // context only, never intent (matches the legacy commit+note-only theme
+    // rollup). Regression guard for the EventSource synthesis refactor.
+    const signals: ActivitySignal[] = [
+      {
+        projectId: "cli",
+        timestamp: "2026-05-12T00:00:00.000Z",
+        kind: "dirty-file",
+        summary: "modified: src/fix-bug.ts",
+        safetyNotes: []
+      },
+      {
+        projectId: "cli",
+        timestamp: "2026-05-12T00:00:00.000Z",
+        kind: "dirty-file",
+        summary: "untracked: todo.md",
+        safetyNotes: []
+      }
+    ];
+
+    const synthesis = deriveSynthesisFromSignals(signals);
     expect(synthesis.themes).toEqual([]);
+    expect(synthesis.smallWins).toEqual([]);
+    expect(synthesis.blockersOrConfusion).toEqual([]);
+    expect(synthesis.unfinishedThreads).toEqual([]);
   });
 });

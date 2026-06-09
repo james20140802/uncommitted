@@ -23,7 +23,10 @@ export type ActivitySignalKind =
   | "pr"
   | "note"
   | "dirty-file"
-  | (string & {}); // extensible union — future sources may add their own kinds
+  // `(string & {})` keeps editor autocomplete for the known kinds above while
+  // still accepting any other string, so future sources (claude/codex/etc.)
+  // can introduce new kinds without a breaking change to this union.
+  | (string & {});
 
 export type ActivitySignal = {
   projectId: string;
