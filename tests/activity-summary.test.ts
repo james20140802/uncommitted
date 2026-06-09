@@ -4,6 +4,8 @@ import {
   isActivitySummary,
   type ActivitySummaryInput
 } from "../src/activity-summary.js";
+import { deriveSynthesisFromSignals } from "../src/activity-summary.js";
+import type { ActivitySignal } from "../src/event-source.js";
 
 describe("activity summary", () => {
   it("summarizes an active Git day with safe project, commit, and dirty signals", () => {
@@ -320,3 +322,75 @@ function createCommit(options: {
     }
   };
 }
+
+describe("activity summary — signal-driven synthesis (UNC-135)", () => {
+  it("derives smallWins, unfinishedThreads, possibleJokes, dominantTheme from kind+summary alone", () => {
+    const signals: ActivitySignal[] = [
+      {
+        projectId: "cli",
+        timestamp: "2026-05-12T10:00:00.000Z",
+        kind: "commit",
+        summary: "implement collect git command",
+        safetyNotes: []
+      },
+      {
+        projectId: "cli",
+        timestamp: "2026-05-12T11:00:00.000Z",
+        kind: "commit",
+        summary: "fix flaky collector path handling",
+        safetyNotes: []
+      },
+      {
+        projectId: "cli",
+        timestamp: "2026-05-12T12:00:00.000Z",
+        kind: "note",
+        summary: "TODO revisit edge case tomorrow",
+        safetyNotes: []
+      }
+    ];
+
+    const synthesis = deriveSynthesisFromSignals(signals);
+
+    expect(synthesis.smallWins).toEqual(
+      expect.arrayContaining([
+        "implement collect git command",
+        "fix flaky collector path handling"
+      ])
+    );
+    expect(synthesis.unfinishedThreads).toContain("TODO revisit edge case tomorrow");
+    expect(synthesis.themes).toEqual(expect.arrayContaining(["coding", "debugging"]));
+  });
+
+  it("treats an unknown future kind as opaque — uses summary text only, no branching", () => {
+    const signals: ActivitySignal[] = [
+      {
+        projectId: "cli",
+        timestamp: "2026-05-12T10:00:00.000Z",
+        kind: "claude-session" as ActivitySignal["kind"],
+        summary: "refactor note parsing for clarity",
+        safetyNotes: []
+      }
+    ];
+
+    const synthesis = deriveSynthesisFromSignals(signals);
+    expect(synthesis.themes).toContain("refactoring");
+    expect(synthesis.smallWins).toEqual([]); // no "add/built/fixed/..." in summary
+  });
+
+  it("ignores dirty-file signals for smallWins (they are not wins) but counts their themes", () => {
+    const signals: ActivitySignal[] = [
+      {
+        projectId: "cli",
+        timestamp: "2026-05-12T00:00:00.000Z",
+        kind: "dirty-file",
+        summary: "modified: src/foo.ts",
+        safetyNotes: []
+      }
+    ];
+
+    const synthesis = deriveSynthesisFromSignals(signals);
+    expect(synthesis.smallWins).toEqual([]);
+    // dirty files do not trigger any of the existing theme keywords, so themes empty
+    expect(synthesis.themes).toEqual([]);
+  });
+});
