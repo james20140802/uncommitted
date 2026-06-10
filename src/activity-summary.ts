@@ -1,6 +1,12 @@
 import type { GitActivityEvent } from "./collect-git-command.js";
+import type { ActivitySignal } from "./event-source.js";
 import type { DirtyFileStatus, DirtyStatusTotals } from "./git-activity-collector.js";
 import type { ManualNoteEvent } from "./note-command.js";
+import {
+  categorizeRedactedSubject,
+  REDACTION_CATEGORY_ORDER,
+  sanitizeText
+} from "./redaction.js";
 
 export type ActivityLevel = "none" | "low" | "medium" | "high";
 
@@ -81,9 +87,11 @@ export type ActivitySummary = {
   uncertaintyNotes: string[];
 };
 
-type SanitizedText = {
-  value: string;
-  privateItems: string[];
+export type ActivitySynthesis = {
+  smallWins: string[];
+  blockersOrConfusion: string[];
+  unfinishedThreads: string[];
+  themes: Exclude<ActivityTheme, "mixed" | "quiet">[];
 };
 
 type ProjectAccumulator = {
@@ -109,13 +117,6 @@ const dirtyStatuses: DirtyFileStatus[] = [
   "other"
 ];
 
-const privateItemOrder = [
-  "emails",
-  "local absolute paths",
-  "private URLs",
-  "raw code snippets"
-];
-
 export function buildActivitySummary(
   input: ActivitySummaryInput
 ): ActivitySummary {
@@ -124,17 +125,15 @@ export function buildActivitySummary(
       event.targetDate === input.targetDate &&
       event.activity.targetDate === input.targetDate
   );
+  const manualNotesForDate = input.manualNotes.filter(
+    (note) => note.date === input.targetDate
+  );
   const privateItems = new Set<string>();
   const projects = new Map<string, ProjectAccumulator>();
   const subjects: string[] = [];
-  const commitThemes = new Set<Exclude<ActivityTheme, "mixed" | "quiet">>();
   const uncommittedFiles: UncommittedChangeSummary["files"] = [];
   const uncommittedTotals = createEmptyDirtyTotals();
   const manualNotes: ManualContextSummary["notes"] = [];
-  const manualThemes = new Set<Exclude<ActivityTheme, "mixed" | "quiet">>();
-  const smallWins: string[] = [];
-  const blockersOrConfusion: string[] = [];
-  const unfinishedThreads: string[] = [];
   let hasManualPrivateItems = false;
 
   let totalCommits = 0;
@@ -148,7 +147,7 @@ export function buildActivitySummary(
 
     for (const commit of event.activity.commits) {
       const sanitizedSubject = sanitizeText(commit.subject);
-      addPrivateItems(privateItems, sanitizedSubject.privateItems);
+      addPrivateItems(privateItems, sanitizedSubject.categories);
 
       totalCommits += 1;
       filesChanged += commit.stats.filesChanged;
@@ -159,17 +158,15 @@ export function buildActivitySummary(
       project.insertions += commit.stats.insertions;
       project.deletions += commit.stats.deletions;
       subjects.push(sanitizedSubject.value);
-      smallWins.push(sanitizedSubject.value);
 
       for (const theme of classifyThemes(sanitizedSubject.value)) {
-        commitThemes.add(theme);
         project.themes.add(theme);
       }
     }
 
     for (const file of event.activity.dirty.files) {
       const sanitizedPath = sanitizeText(file.path);
-      addPrivateItems(privateItems, sanitizedPath.privateItems);
+      addPrivateItems(privateItems, sanitizedPath.categories);
       project.uncommittedChangeCount += 1;
       uncommittedTotals[file.status] += 1;
       uncommittedFiles.push({
@@ -181,10 +178,10 @@ export function buildActivitySummary(
     }
   }
 
-  for (const note of input.manualNotes.filter((note) => note.date === input.targetDate)) {
+  for (const note of manualNotesForDate) {
     const sanitizedNote = sanitizeText(note.text);
-    addPrivateItems(privateItems, sanitizedNote.privateItems);
-    hasManualPrivateItems ||= sanitizedNote.privateItems.length > 0;
+    addPrivateItems(privateItems, sanitizedNote.categories);
+    hasManualPrivateItems ||= sanitizedNote.categories.length > 0;
 
     const project = getProject(projects, note.projectId, note.projectId);
     project.manualNoteCount += 1;
@@ -194,30 +191,29 @@ export function buildActivitySummary(
       text: sanitizedNote.value
     });
 
-    const noteThemes = classifyThemes(sanitizedNote.value);
-    for (const theme of noteThemes) {
-      manualThemes.add(theme);
+    for (const theme of classifyThemes(sanitizedNote.value)) {
       project.themes.add(theme);
-    }
-
-    if (looksLikeSmallWin(sanitizedNote.value)) {
-      smallWins.push(sanitizedNote.value);
-    }
-
-    if (looksLikeBlocker(sanitizedNote.value)) {
-      blockersOrConfusion.push(sanitizedNote.value);
-    }
-
-    if (looksUnfinished(sanitizedNote.value)) {
-      unfinishedThreads.push(sanitizedNote.value);
     }
   }
 
+  // Build a normalized signal stream from the source-shaped inputs,
+  // then derive the 4 source-agnostic synthesis fields generically.
+  const signals = buildSignalsFromInput({
+    targetDate: input.targetDate,
+    gitEvents,
+    manualNotes: manualNotesForDate
+  });
+  const synthesis = deriveSynthesisFromSignals(signals);
+
+  // The uncommitted-files unfinished thread is a source-shaped aggregate
+  // (count + project name), so it stays sourced from the per-project
+  // accumulator and is prepended to the signal-derived list (matches the
+  // legacy `unshift` ordering: uncommitted entries appear first).
+  const unfinishedThreads = [...synthesis.unfinishedThreads];
   for (const project of projects.values()) {
     if (project.uncommittedChangeCount === 0) {
       continue;
     }
-
     unfinishedThreads.unshift(
       `${project.uncommittedChangeCount} ${project.uncommittedChangeCount === 1 ? "uncommitted file remains" : "uncommitted files remain"} in ${project.projectName}.`
     );
@@ -229,13 +225,22 @@ export function buildActivitySummary(
     uncommittedFiles.length +
     manualNotes.length * 2;
   const activityLevel = classifyActivityLevel(score);
-  const allThemes = sortThemes(new Set([...commitThemes, ...manualThemes]));
-  const dominantTheme = deriveDominantTheme(activityLevel, allThemes);
+  const dominantTheme = deriveDominantTheme(activityLevel, synthesis.themes);
+
+  // commitSignals.themes is a git-only rollup — re-classify just the
+  // accumulated commit subjects (synthesis.themes mixes commit + note themes).
+  const commitOnlyThemeSet = new Set<Exclude<ActivityTheme, "mixed" | "quiet">>();
+  for (const subject of subjects) {
+    for (const theme of classifyThemes(subject)) {
+      commitOnlyThemeSet.add(theme);
+    }
+  }
+
   const uncertaintyNotes = buildUncertaintyNotes(input, {
     gitEventCount: gitEvents.length,
     totalCommits,
     manualNoteCount: manualNotes.length,
-    themeCount: allThemes.length,
+    themeCount: synthesis.themes.length,
     uncommittedChangeCount: uncommittedFiles.length
   });
   const publicSafetyNotes = buildPublicSafetyNotes({
@@ -256,7 +261,7 @@ export function buildActivitySummary(
       insertions,
       deletions,
       subjects,
-      themes: sortThemes(commitThemes)
+      themes: sortThemes(commitOnlyThemeSet)
     },
     uncommittedChanges: {
       totalFiles: uncommittedFiles.length,
@@ -267,17 +272,146 @@ export function buildActivitySummary(
       noteCount: manualNotes.length,
       notes: manualNotes
     },
-    smallWins,
-    blockersOrConfusion,
+    smallWins: synthesis.smallWins,
+    blockersOrConfusion: synthesis.blockersOrConfusion,
     unfinishedThreads,
     possibleJokes: buildPossibleJokes(activityLevel, {
-      hasBlockers: blockersOrConfusion.length > 0,
+      hasBlockers: synthesis.blockersOrConfusion.length > 0,
       hasUncommittedChanges: uncommittedFiles.length > 0
     }),
     publicSafetyNotes,
     privateItemsToAvoid: sortPrivateItems(privateItems),
     uncertaintyNotes
   };
+}
+
+/**
+ * Source-agnostic synthesis of an ActivitySignal stream.
+ *
+ * Derives only the 4 fields that have no source-shape dependency:
+ *   - themes (used by dominantTheme)
+ *   - smallWins
+ *   - unfinishedThreads
+ *   - blockersOrConfusion
+ *
+ * possibleJokes is derived separately because it depends on aggregate
+ * presence/absence flags (hasBlockers, hasUncommittedChanges) rather than
+ * on individual signals.
+ *
+ * Behavior is keyed on (kind, summary), never on source type. Unknown
+ * kinds are treated as opaque — only the summary text drives synthesis.
+ *
+ * Rules:
+ *  - "commit" signals: summary is always added to smallWins (matches the
+ *    legacy `smallWins.push(sanitizedSubject.value)` rule in the git path).
+ *  - "note" signals: summary is classified for smallWin / blocker /
+ *    unfinished using the existing looksLike* predicates.
+ *  - "dirty-file" signals: skipped entirely — no themes, smallWins,
+ *    blockers, or threads. Their "<status>: <path>" summary is file-status
+ *    context only and must not infer intent (e.g. a "src/fix-bug.ts" path
+ *    must not set a debugging theme). The uncommitted-files thread aggregate
+ *    is derived separately from the source-shaped uncommittedChanges output.
+ *  - Themes: every non-dirty signal's summary is fed through classifyThemes.
+ */
+export function deriveSynthesisFromSignals(
+  signals: ActivitySignal[]
+): ActivitySynthesis {
+  const smallWins: string[] = [];
+  const blockersOrConfusion: string[] = [];
+  const unfinishedThreads: string[] = [];
+  const themes = new Set<Exclude<ActivityTheme, "mixed" | "quiet">>();
+
+  for (const signal of signals) {
+    // dirty-file summaries are "<status>: <path>" — file-status context only,
+    // never intent. Skip them entirely (no themes, wins, blockers, threads) so
+    // an uncommitted path like "src/fix-bug.ts" can't invent a dominant theme.
+    if (signal.kind === "dirty-file") {
+      continue;
+    }
+
+    for (const theme of classifyThemes(signal.summary)) {
+      themes.add(theme);
+    }
+
+    if (signal.kind === "commit") {
+      smallWins.push(signal.summary);
+      continue;
+    }
+
+    // All other kinds (note, pr, future) are pattern-classified.
+    if (looksLikeSmallWin(signal.summary)) {
+      smallWins.push(signal.summary);
+    }
+    if (looksLikeBlocker(signal.summary)) {
+      blockersOrConfusion.push(signal.summary);
+    }
+    if (looksUnfinished(signal.summary)) {
+      unfinishedThreads.push(signal.summary);
+    }
+  }
+
+  return {
+    smallWins,
+    blockersOrConfusion,
+    unfinishedThreads,
+    themes: sortThemes(themes)
+  };
+}
+
+/**
+ * Normalize source-shaped inputs (git events + manual notes) into the
+ * ActivitySignal stream consumed by deriveSynthesisFromSignals. Commit
+ * signals are built with the same shared redaction path as
+ * collectGitActivitySignals, so the two git producers stay equivalent.
+ */
+export function buildSignalsFromInput(input: {
+  targetDate: string;
+  gitEvents: GitActivityEvent[];
+  manualNotes: ManualNoteEvent[];
+}): ActivitySignal[] {
+  const signals: ActivitySignal[] = [];
+  const dirtyTimestamp = `${input.targetDate}T00:00:00.000Z`;
+
+  for (const event of input.gitEvents) {
+    for (const commit of event.activity.commits) {
+      // commit.subject already went through collectGitActivity's 3-rule
+      // redaction; recover those categories from markers and strip any raw
+      // code the collector left intact. Mirrors collectGitActivitySignals so
+      // both producers emit identical commit signals.
+      const sanitized = categorizeRedactedSubject(commit.subject);
+      signals.push({
+        projectId: event.project.id,
+        timestamp: commit.authoredAt,
+        kind: "commit",
+        summary: sanitized.value,
+        safetyNotes: sanitized.categories
+      });
+    }
+
+    for (const file of event.activity.dirty.files) {
+      const sanitized = sanitizeText(file.path);
+      signals.push({
+        projectId: event.project.id,
+        timestamp: dirtyTimestamp,
+        kind: "dirty-file",
+        summary: `${file.status}: ${sanitized.value}`,
+        safetyNotes: sanitized.categories
+      });
+    }
+  }
+
+  for (const note of input.manualNotes) {
+    const sanitized = sanitizeText(note.text);
+    signals.push({
+      projectId: note.projectId,
+      timestamp: note.timestamp,
+      kind: "note",
+      summary: sanitized.value,
+      safetyNotes: sanitized.categories
+    });
+  }
+
+  return signals;
 }
 
 export function isActivitySummary(value: unknown): value is ActivitySummary {
@@ -511,68 +645,14 @@ function buildPublicSafetyNotes(options: {
   return notes;
 }
 
-function sanitizeText(value: string): SanitizedText {
-  const privateItems = new Set<string>();
-  let sanitized = value;
-
-  if (/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i.test(sanitized)) {
-    privateItems.add("emails");
-    sanitized = sanitized.replace(
-      /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi,
-      "[redacted-email]"
-    );
-  }
-
-  if (/(^|[\s(["'])\/[^\s)"']+/.test(sanitized)) {
-    privateItems.add("local absolute paths");
-    sanitized = sanitized.replace(
-      /(^|[\s(["'])\/[^\s)"']+/g,
-      "$1[redacted-path]"
-    );
-  }
-
-  if (/\b(?:https?|ssh|git):\/\/\S+|git@[\w.-]+:[^\s]+/.test(sanitized)) {
-    privateItems.add("private URLs");
-    sanitized = sanitized.replace(
-      /\b(?:https?|ssh|git):\/\/\S+|git@[\w.-]+:[^\s]+/g,
-      "[redacted-url]"
-    );
-  }
-
-  if (containsRawCodeSnippet(sanitized)) {
-    privateItems.add("raw code snippets");
-    sanitized = redactRawCodeSnippets(sanitized);
-  }
-
-  return {
-    value: sanitized,
-    privateItems: sortPrivateItems(privateItems)
-  };
-}
-
 function addPrivateItems(target: Set<string>, items: string[]): void {
   for (const item of items) {
     target.add(item);
   }
 }
 
-function containsRawCodeSnippet(value: string): boolean {
-  return redactRawCodeSnippets(value) !== value;
-}
-
-function redactRawCodeSnippets(value: string): string {
-  return value
-    .replace(/\bdiff --git\b[^\n]*/g, "[redacted-code]")
-    .replace(/`[^`]+`/g, "[redacted-code]")
-    .replace(
-      /\b(?:const|let|var)\s+[A-Za-z_$][\w$]*\s*=\s*(?:process\.env\.[A-Z0-9_]+|["'][^"']*["']|[A-Za-z0-9_$.[\]]+)/g,
-      "[redacted-code]"
-    )
-    .replace(/\bprocess\.env\.[A-Z0-9_]+\b/g, "[redacted-code]");
-}
-
 function sortPrivateItems(items: Set<string>): string[] {
-  return privateItemOrder.filter((item) => items.has(item));
+  return REDACTION_CATEGORY_ORDER.filter((item) => items.has(item));
 }
 
 function sortThemes(

@@ -3,6 +3,14 @@ import { constants } from "node:fs";
 import { access, realpath } from "node:fs/promises";
 import { basename } from "node:path";
 import { promisify } from "node:util";
+import type { ActivitySignal, EventSource } from "./event-source.js";
+import {
+  categorizeRedactedSubject,
+  REDACTION_CATEGORY_ORDER,
+  sanitizeText,
+  type RedactionCategory,
+  type RedactionResult
+} from "./redaction.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -164,9 +172,9 @@ function parseGitLog(stdout: string): ParsedCommit[] {
       currentCommit = {
         hash: fields[0],
         shortHash: fields[1],
-        authorName: redactSensitiveText(fields[2]),
+        authorName: redactSensitiveText(fields[2]).value,
         authoredAt: fields[3],
-        subject: redactSensitiveText(fields[4]),
+        subject: redactSensitiveText(fields[4]).value,
         stats: {
           filesChanged: 0,
           insertions: 0,
@@ -339,15 +347,101 @@ function getDateWindow(targetDate: string): { start: string; end: string } {
   };
 }
 
-function redactSensitiveText(value: string): string {
-  return value
-    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[redacted-email]")
-    .replace(
+/**
+ * 3-rule redaction applied to legacy collectGitActivity output (commit
+ * subjects + author names): emails, absolute paths, private URLs. Raw-code
+ * redaction is intentionally NOT applied here — buildActivitySummary runs the
+ * full canonical sanitizeText on these subjects downstream, and adding the
+ * 4th rule here would strip raw code before that pass and drop "raw code
+ * snippets" from privateItemsToAvoid. Signal builders use the shared
+ * categorizeRedactedSubject to add raw-code handling on top of this output.
+ */
+function redactSensitiveText(value: string): RedactionResult {
+  const categories = new Set<RedactionCategory>();
+  let sanitized = value;
+
+  // Bounded quantifiers (see redaction.ts) keep email matching linear and
+  // clear the polynomial-ReDoS warning; real emails match identically.
+  if (/[A-Z0-9._%+-]{1,64}@[A-Z0-9.-]{1,255}\.[A-Z]{2,24}/i.test(sanitized)) {
+    categories.add("emails");
+    sanitized = sanitized.replace(
+      /[A-Z0-9._%+-]{1,64}@[A-Z0-9.-]{1,255}\.[A-Z]{2,24}/gi,
+      "[redacted-email]"
+    );
+  }
+
+  if (/\b(?:https?|ssh|git):\/\/\S+|git@[\w.-]+:[^\s]+/.test(sanitized)) {
+    categories.add("private URLs");
+    sanitized = sanitized.replace(
       /\b(?:https?|ssh|git):\/\/\S+|git@[\w.-]+:[^\s]+/g,
       "[redacted-url]"
-    )
-    .replace(
+    );
+  }
+
+  if (/(^|[\s(["'])\/[^\s)"']+/.test(sanitized)) {
+    categories.add("local absolute paths");
+    sanitized = sanitized.replace(
       /(^|[\s(["'])\/[^\s)"']+/g,
       "$1[redacted-path]"
     );
+  }
+
+  return {
+    value: sanitized,
+    categories: REDACTION_CATEGORY_ORDER.filter((category) => categories.has(category))
+  };
+}
+
+export type CollectGitActivitySignalsOptions = {
+  projectId: string;
+  projectRoot: string;
+  targetDate: string;
+};
+
+export async function collectGitActivitySignals(
+  options: CollectGitActivitySignalsOptions
+): Promise<ActivitySignal[]> {
+  const activity = await collectGitActivity({
+    projectRoot: options.projectRoot,
+    targetDate: options.targetDate
+  });
+
+  const signals: ActivitySignal[] = [];
+
+  for (const commit of activity.commits) {
+    // commit.subject was already 3-rule redacted in parseGitLog; recover those
+    // categories and strip any raw code that pass left intact so the shipped
+    // signal honors the "already sanitized" contract.
+    const sanitized = categorizeRedactedSubject(commit.subject);
+    signals.push({
+      projectId: options.projectId,
+      timestamp: commit.authoredAt,
+      kind: "commit",
+      summary: sanitized.value,
+      safetyNotes: sanitized.categories
+    });
+  }
+
+  const dirtyTimestamp = `${options.targetDate}T00:00:00.000Z`;
+
+  for (const file of activity.dirty.files) {
+    const sanitized = sanitizeText(file.path);
+    signals.push({
+      projectId: options.projectId,
+      timestamp: dirtyTimestamp,
+      kind: "dirty-file",
+      summary: `${file.status}: ${sanitized.value}`,
+      safetyNotes: sanitized.categories
+    });
+  }
+
+  return signals;
+}
+
+export class GitActivityEventSource implements EventSource {
+  constructor(private readonly options: CollectGitActivitySignalsOptions) {}
+
+  collect(): Promise<ActivitySignal[]> {
+    return collectGitActivitySignals(this.options);
+  }
 }

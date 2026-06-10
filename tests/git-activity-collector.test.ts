@@ -7,8 +7,13 @@ import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 import {
   collectGitActivity,
-  GitActivityCollectionError
+  collectGitActivitySignals,
+  GitActivityCollectionError,
+  GitActivityEventSource
 } from "../src/git-activity-collector.js";
+import { isActivitySignal } from "../src/event-source.js";
+import { buildSignalsFromInput } from "../src/activity-summary.js";
+import type { GitActivityEvent } from "../src/collect-git-command.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -180,6 +185,200 @@ describe("Git activity collector", () => {
     ).rejects.toBeInstanceOf(GitActivityCollectionError);
   });
 });
+
+describe("collectGitActivitySignals", () => {
+  it("emits one commit signal per commit with subject as summary and authoredAt as timestamp", async () => {
+    const { gitRoot, targetDate } = await createRepoWithCommits([
+      { subject: "implement collect git command" },
+      { subject: "fix flaky collector path handling" }
+    ]);
+
+    const signals = await collectGitActivitySignals({
+      projectId: "cli",
+      projectRoot: gitRoot,
+      targetDate
+    });
+
+    const commitSignals = signals.filter((signal) => signal.kind === "commit");
+    expect(commitSignals).toHaveLength(2);
+    for (const signal of commitSignals) {
+      expect(isActivitySignal(signal)).toBe(true);
+      expect(signal.projectId).toBe("cli");
+      expect(signal.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+      expect(typeof signal.summary).toBe("string");
+      expect(signal.summary.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("emits one dirty-file signal per uncommitted file with '<status>: <path>' summary", async () => {
+    const { gitRoot, targetDate } = await createRepoWithDirtyFile({
+      path: "src/foo.ts",
+      content: "// dirty\n"
+    });
+
+    const signals = await collectGitActivitySignals({
+      projectId: "cli",
+      projectRoot: gitRoot,
+      targetDate
+    });
+
+    const dirtySignals = signals.filter((signal) => signal.kind === "dirty-file");
+    expect(dirtySignals).toHaveLength(1);
+    expect(dirtySignals[0].summary).toMatch(/^(modified|added|untracked): /);
+    expect(dirtySignals[0].timestamp).toBe(`${targetDate}T00:00:00.000Z`);
+  });
+
+  it("populates safetyNotes with redaction categories that fired on the summary", async () => {
+    const { gitRoot, targetDate } = await createRepoWithCommits([
+      { subject: "store creds at /Users/me/keys/prod.txt" }
+    ]);
+
+    const signals = await collectGitActivitySignals({
+      projectId: "cli",
+      projectRoot: gitRoot,
+      targetDate
+    });
+
+    const commitSignal = signals.find((signal) => signal.kind === "commit");
+    expect(commitSignal).toBeDefined();
+    expect(commitSignal!.summary).not.toContain("/Users/me/keys/prod.txt");
+    expect(commitSignal!.safetyNotes).toContain("local absolute paths");
+  });
+
+  it("GitActivityEventSource.collect() returns the same signals as collectGitActivitySignals", async () => {
+    const { gitRoot, targetDate } = await createRepoWithCommits([
+      { subject: "first commit" }
+    ]);
+
+    const direct = await collectGitActivitySignals({
+      projectId: "cli",
+      projectRoot: gitRoot,
+      targetDate
+    });
+    const viaSource = await new GitActivityEventSource({
+      projectId: "cli",
+      projectRoot: gitRoot,
+      targetDate
+    }).collect();
+
+    expect(viaSource).toEqual(direct);
+  });
+
+  it("redacts raw code / env-var references in commit signals (already-sanitized contract)", async () => {
+    // collectGitActivity only redacts emails/paths/URLs; without the shared
+    // raw-code pass the new EventSource would ship a subject that leaks code
+    // or secret variable names to downstream AI/public consumers.
+    const { gitRoot, targetDate } = await createRepoWithCommits([
+      { subject: "wire up const token = process.env.SECRET handler" }
+    ]);
+
+    const signals = await collectGitActivitySignals({
+      projectId: "cli",
+      projectRoot: gitRoot,
+      targetDate
+    });
+
+    const commitSignal = signals.find((signal) => signal.kind === "commit");
+    expect(commitSignal).toBeDefined();
+    expect(commitSignal!.summary).not.toContain("process.env.SECRET");
+    expect(commitSignal!.summary).not.toContain("const token");
+    expect(commitSignal!.summary).toContain("[redacted-code]");
+    expect(commitSignal!.safetyNotes).toContain("raw code snippets");
+  });
+
+  it("emits signals identical to buildSignalsFromInput for the same repo state (producer equivalence)", async () => {
+    const { gitRoot, targetDate } = await createRepoWithCommits([
+      { subject: "wire up const token = process.env.SECRET" },
+      { subject: "store creds at /Users/me/keys and ping dev@example.com" }
+    ]);
+    // Leave an uncommitted file so the dirty-file branch is exercised too.
+    await writeFile(join(gitRoot, "draft-notes.md"), "wip\n", "utf8");
+
+    const fromCollector = await collectGitActivitySignals({
+      projectId: "cli",
+      projectRoot: gitRoot,
+      targetDate
+    });
+
+    const activity = await collectGitActivity({
+      projectRoot: gitRoot,
+      targetDate
+    });
+    const event: GitActivityEvent = {
+      schemaVersion: 1,
+      source: "git",
+      targetDate,
+      collectedAt: `${targetDate}T12:00:00.000Z`,
+      project: { id: "cli", name: "cli" },
+      activity
+    };
+    const fromSummary = buildSignalsFromInput({
+      targetDate,
+      gitEvents: [event],
+      manualNotes: []
+    });
+
+    expect(fromCollector).toEqual(fromSummary);
+  });
+
+  it("leaves the existing collectGitActivity output unchanged (regression guard)", async () => {
+    const { gitRoot, targetDate } = await createRepoWithCommits([
+      { subject: "first commit" }
+    ]);
+
+    const activity = await collectGitActivity({
+      projectRoot: gitRoot,
+      targetDate
+    });
+
+    expect(activity.schemaVersion).toBe(1);
+    expect(activity.commits).toHaveLength(1);
+    expect(activity.totals.commits).toBe(1);
+  });
+});
+
+type CommitFixture = {
+  subject: string;
+};
+
+async function createRepoWithCommits(
+  commits: CommitFixture[]
+): Promise<{ gitRoot: string; targetDate: string }> {
+  const repoDir = await initGitRepo("signals-commits-repo");
+  const targetDate = "2026-05-05";
+  const baseHour = 10;
+
+  for (const [index, fixture] of commits.entries()) {
+    const fileName = `commit-${index}.txt`;
+    await writeFile(join(repoDir, fileName), `entry ${index}\n`, "utf8");
+    await git(repoDir, ["add", fileName]);
+    const hour = String(baseHour + index).padStart(2, "0");
+    await commit(repoDir, fixture.subject, `${targetDate}T${hour}:00:00Z`);
+  }
+
+  return { gitRoot: repoDir, targetDate };
+}
+
+async function createRepoWithDirtyFile(input: {
+  path: string;
+  content: string;
+}): Promise<{ gitRoot: string; targetDate: string }> {
+  const repoDir = await initGitRepo("signals-dirty-repo");
+  const targetDate = "2026-05-05";
+
+  await writeFile(join(repoDir, "base.txt"), "base\n", "utf8");
+  await git(repoDir, ["add", "base.txt"]);
+  await commit(repoDir, "base commit", `${targetDate}T09:00:00Z`);
+
+  const filePath = join(repoDir, input.path);
+  const dirIndex = input.path.lastIndexOf("/");
+  if (dirIndex !== -1) {
+    await mkdir(join(repoDir, input.path.slice(0, dirIndex)), { recursive: true });
+  }
+  await writeFile(filePath, input.content, "utf8");
+
+  return { gitRoot: repoDir, targetDate };
+}
 
 async function initGitRepo(name: string): Promise<string> {
   const repoDir = await createTempRoot(name);
