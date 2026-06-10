@@ -4,7 +4,7 @@ import {
   isActivitySummary,
   type ActivitySummaryInput
 } from "../src/activity-summary.js";
-import { deriveSynthesisFromSignals } from "../src/activity-summary.js";
+import { deriveSynthesisFromSignals } from "../src/activity-synthesis.js";
 import type { ActivitySignal } from "../src/event-source.js";
 
 describe("activity summary", () => {
