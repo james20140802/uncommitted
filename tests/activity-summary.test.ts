@@ -5,6 +5,7 @@ import {
   type ActivitySummaryInput
 } from "../src/activity-summary.js";
 import { deriveSynthesisFromSignals } from "../src/activity-synthesis.js";
+import { deriveSynthesisFromSignals as deriveSynthesisFromSummaryModule } from "../src/activity-summary.js";
 import type { ActivitySignal } from "../src/event-source.js";
 
 describe("activity summary", () => {
@@ -419,5 +420,11 @@ describe("activity summary — signal-driven synthesis (UNC-135)", () => {
     expect(synthesis.smallWins).toEqual([]);
     expect(synthesis.blockersOrConfusion).toEqual([]);
     expect(synthesis.unfinishedThreads).toEqual([]);
+  });
+
+  it("re-exports deriveSynthesisFromSignals from activity-summary for backward-compatible deep imports", () => {
+    // Guards the pre-refactor public deep-import path
+    // `import { deriveSynthesisFromSignals } from ".../activity-summary.js"`.
+    expect(deriveSynthesisFromSummaryModule).toBe(deriveSynthesisFromSignals);
   });
 });

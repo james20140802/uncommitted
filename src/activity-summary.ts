@@ -6,6 +6,9 @@ import {
 } from "./activity-synthesis.js";
 
 export type { ActivitySynthesis };
+// Preserve the pre-refactor deep-import path: `deriveSynthesisFromSignals` was a
+// public export of this module before its move to ./activity-synthesis.js.
+export { deriveSynthesisFromSignals };
 import type { GitActivityEvent } from "./collect-git-command.js";
 import type { ActivitySignal } from "./event-source.js";
 import type { DirtyFileStatus, DirtyStatusTotals } from "./git-activity-collector.js";
