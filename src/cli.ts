@@ -7,6 +7,10 @@ import {
   collectGitForRegisteredProjects,
   CollectGitCommandError
 } from "./collect-git-command.js";
+import {
+  collectClaudeForRegisteredProjects,
+  CollectClaudeCommandError
+} from "./collect-claude-command.js";
 import { AiGenerationError, type AiProvider } from "./ai-provider.js";
 import { commands, isKnownCommand } from "./commands.js";
 import { formatDoctorReport, runDoctorCommand } from "./doctor-command.js";
@@ -72,6 +76,7 @@ export type CliIo = {
 export type CliOptions = {
   cwd?: string;
   homeDir?: string;
+  claudeHome?: string;
   draftRoot?: string;
   now?: () => string;
   aiProvider?: AiProvider;
@@ -747,20 +752,56 @@ async function runCollect(
   io: CliIo,
   options: CliOptions
 ): Promise<number> {
-  if (args.length !== 1 || args[0] !== "git") {
-    io.stderr("Usage: uncommitted collect git");
+  if (args.length !== 1 || (args[0] !== "git" && args[0] !== "claude")) {
+    io.stderr("Usage: uncommitted collect <git|claude>");
     return 1;
   }
 
+  if (args[0] === "git") {
+    try {
+      const result = await collectGitForRegisteredProjects(options);
+
+      if (result.successes.length > 0) {
+        io.stdout(`Collected Git activity for ${formatProjectCount(result.successes.length)}.`);
+
+        for (const success of result.successes) {
+          io.stdout(
+            `${success.projectId}: ${success.activity.totals.commits} commits, ${success.activity.dirty.files.length} dirty files.`
+          );
+        }
+      }
+
+      for (const failure of result.failures) {
+        io.stderr(`Failed to collect ${failure.projectId}: ${failure.message}`);
+      }
+
+      return result.failures.length > 0 ? 3 : 0;
+    } catch (error) {
+      if (error instanceof CollectGitCommandError) {
+        io.stderr(error.message);
+        return error.code === "invalid-projects-file" ? 2 : 3;
+      }
+
+      throw error;
+    }
+  }
+
+  // args[0] === "claude"
   try {
-    const result = await collectGitForRegisteredProjects(options);
+    const result = await collectClaudeForRegisteredProjects(options);
+
+    if (result.claudeLogsMissing) {
+      io.stdout("No Claude session logs found at ~/.claude/projects. Skipping.");
+      return 0;
+    }
 
     if (result.successes.length > 0) {
-      io.stdout(`Collected Git activity for ${formatProjectCount(result.successes.length)}.`);
-
+      io.stdout(
+        `Collected Claude activity for ${formatProjectCount(result.successes.length)}.`
+      );
       for (const success of result.successes) {
         io.stdout(
-          `${success.projectId}: ${success.activity.totals.commits} commits, ${success.activity.dirty.files.length} dirty files.`
+          `${success.projectId}: ${success.signalCount} signals, ${success.conversationCount} turns, ${success.toolFactCount} tool facts.`
         );
       }
     }
@@ -771,11 +812,10 @@ async function runCollect(
 
     return result.failures.length > 0 ? 3 : 0;
   } catch (error) {
-    if (error instanceof CollectGitCommandError) {
+    if (error instanceof CollectClaudeCommandError) {
       io.stderr(error.message);
       return error.code === "invalid-projects-file" ? 2 : 3;
     }
-
     throw error;
   }
 }
