@@ -99,11 +99,17 @@ function extractUserText(entry: Record<string, unknown>): string | null {
   const content = message.content;
   if (typeof content === "string") return content;
   if (Array.isArray(content)) {
+    // Collect every text block, not just the first — multi-part user prompts
+    // store several `text` blocks, and dropping the rest loses context from
+    // both the raw archive and the emitted signal. Mirrors the assistant path,
+    // which already iterates all text blocks.
+    const texts: string[] = [];
     for (const block of content) {
       if (isRecord(block) && block.type === "text" && typeof block.text === "string") {
-        return block.text;
+        texts.push(block.text);
       }
     }
+    return texts.length > 0 ? texts.join("\n") : null;
   }
   return null;
 }

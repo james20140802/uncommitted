@@ -60,6 +60,29 @@ describe("parseClaudeSession", () => {
     expect(result.signals.every((s) => Array.isArray(s.safetyNotes) && s.safetyNotes.length === 0)).toBe(true);
   });
 
+  it("includes every text block of a multi-part user message", () => {
+    const contents = line({
+      type: "user",
+      timestamp: "2026-06-13T05:00:00.000Z",
+      message: {
+        content: [
+          { type: "text", text: "First part." },
+          { type: "text", text: "Second part." }
+        ]
+      }
+    });
+    const result = parseClaudeSession({ projectId: "p1", contents });
+    expect(result.conversation).toEqual([
+      {
+        role: "user",
+        text: "First part.\nSecond part.",
+        timestamp: "2026-06-13T05:00:00.000Z"
+      }
+    ]);
+    expect(result.signals[0].summary).toContain("First part.");
+    expect(result.signals[0].summary).toContain("Second part.");
+  });
+
   it("emits thinking blocks into conversation but not into signals", () => {
     const contents = line({
       type: "assistant",
