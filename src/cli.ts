@@ -11,6 +11,10 @@ import {
   collectClaudeForRegisteredProjects,
   CollectClaudeCommandError
 } from "./collect-claude-command.js";
+import {
+  collectCodexForRegisteredProjects,
+  CollectCodexCommandError
+} from "./collect-codex-command.js";
 import { AiGenerationError, type AiProvider } from "./ai-provider.js";
 import { commands, isKnownCommand } from "./commands.js";
 import { formatDoctorReport, runDoctorCommand } from "./doctor-command.js";
@@ -77,6 +81,7 @@ export type CliOptions = {
   cwd?: string;
   homeDir?: string;
   claudeHome?: string;
+  codexHome?: string;
   draftRoot?: string;
   now?: () => string;
   aiProvider?: AiProvider;
@@ -752,8 +757,8 @@ async function runCollect(
   io: CliIo,
   options: CliOptions
 ): Promise<number> {
-  if (args.length !== 1 || (args[0] !== "git" && args[0] !== "claude")) {
-    io.stderr("Usage: uncommitted collect <git|claude>");
+  if (args.length < 1 || (args[0] !== "git" && args[0] !== "claude" && args[0] !== "codex")) {
+    io.stderr("Usage: uncommitted collect <git|claude|codex>");
     return 1;
   }
 
@@ -786,18 +791,65 @@ async function runCollect(
     }
   }
 
-  // args[0] === "claude"
-  try {
-    const result = await collectClaudeForRegisteredProjects(options);
+  if (args[0] === "claude") {
+    try {
+      const result = await collectClaudeForRegisteredProjects(options);
 
-    if (result.claudeLogsMissing) {
-      io.stdout("No Claude session logs found at ~/.claude/projects. Skipping.");
+      if (result.claudeLogsMissing) {
+        io.stdout("No Claude session logs found at ~/.claude/projects. Skipping.");
+        return 0;
+      }
+
+      if (result.successes.length > 0) {
+        io.stdout(
+          `Collected Claude activity for ${formatProjectCount(result.successes.length)}.`
+        );
+        for (const success of result.successes) {
+          io.stdout(
+            `${success.projectId}: ${success.signalCount} signals, ${success.conversationCount} turns, ${success.toolFactCount} tool facts.`
+          );
+        }
+      }
+
+      for (const failure of result.failures) {
+        io.stderr(`Failed to collect ${failure.projectId}: ${failure.message}`);
+      }
+
+      return result.failures.length > 0 ? 3 : 0;
+    } catch (error) {
+      if (error instanceof CollectClaudeCommandError) {
+        io.stderr(error.message);
+        return error.code === "invalid-projects-file" ? 2 : 3;
+      }
+      throw error;
+    }
+  }
+
+  // args[0] === "codex"
+  const codexArgs = args.slice(1);
+  let targetDate: string | undefined;
+  for (let i = 0; i < codexArgs.length; i++) {
+    if (codexArgs[i] === "--date" && i + 1 < codexArgs.length) {
+      targetDate = codexArgs[++i];
+    }
+  }
+
+  try {
+    const result = await collectCodexForRegisteredProjects({
+      homeDir: options.homeDir,
+      codexHome: options.codexHome,
+      now: options.now ?? (() => new Date().toISOString()),
+      targetDate
+    });
+
+    if (result.codexLogsMissing) {
+      io.stdout("No Codex session logs found at ~/.codex/sessions. Skipping.");
       return 0;
     }
 
     if (result.successes.length > 0) {
       io.stdout(
-        `Collected Claude activity for ${formatProjectCount(result.successes.length)}.`
+        `Collected Codex activity for ${formatProjectCount(result.successes.length)}.`
       );
       for (const success of result.successes) {
         io.stdout(
@@ -812,9 +864,9 @@ async function runCollect(
 
     return result.failures.length > 0 ? 3 : 0;
   } catch (error) {
-    if (error instanceof CollectClaudeCommandError) {
+    if (error instanceof CollectCodexCommandError) {
       io.stderr(error.message);
-      return error.code === "invalid-projects-file" ? 2 : 3;
+      return error.code === "invalid-projects-file" || error.code === "invalid-date" ? 2 : 3;
     }
     throw error;
   }
