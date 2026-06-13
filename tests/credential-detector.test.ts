@@ -35,6 +35,15 @@ describe("detectSecrets", () => {
     expect(result.categories).toContain("vendor api tokens");
   });
 
+  it("masks lowercase bearer headers (HTTP headers are case-insensitive)", () => {
+    const sample =
+      "authorization: bearer sk-lowercaseopaquetoken123 logged by a tool";
+    const result = detectSecrets(sample);
+    expect(result.value).not.toContain("sk-lowercaseopaquetoken123");
+    expect(result.value).toContain("[redacted-secret]");
+    expect(result.categories).toContain("vendor api tokens");
+  });
+
   it("masks values after password=/api_key:/secret = without touching the key half", () => {
     const sample = `password="hunter2hunter2"
 api_key: AbCdEf123456789

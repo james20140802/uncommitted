@@ -22,11 +22,14 @@ const VENDOR_PATTERNS: RegExp[] = [
   /\bgho_[A-Za-z0-9]{36}\b/g,
   /\bgithub_pat_[A-Za-z0-9_]{82}\b/g,
   /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g,
-  /\bAIza[0-9A-Za-z_\-]{35}\b/g,
+  /\bAIza[0-9A-Za-z_-]{35}\b/g,
   /\bsk_live_[0-9a-zA-Z]{24,}\b/g,
   /-----BEGIN[A-Z ]*PRIVATE KEY-----/g,
   /\beyJ[A-Za-z0-9_-]{1,4096}\.eyJ[A-Za-z0-9_-]{1,4096}\.[A-Za-z0-9_-]{1,4096}\b/g,
-  /\bAuthorization:\s*Bearer\s+[A-Za-z0-9._\-]{1,4096}\b/g
+  // HTTP headers are case-insensitive and many tools log them lowercase
+  // (e.g. "authorization: bearer <token>"), so match the header/scheme name
+  // case-insensitively to catch non-JWT bearer tokens below the entropy cutoff.
+  /\bAuthorization:\s*Bearer\s+[A-Za-z0-9._-]{1,4096}\b/gi
 ];
 
 // Capture the key half and the (quoted or bare) value half. We replace just
