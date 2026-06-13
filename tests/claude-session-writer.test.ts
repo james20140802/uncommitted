@@ -73,6 +73,31 @@ describe("writeClaudeSessionOutputs", () => {
     expect(info.mode & 0o777).toBe(0o600);
   });
 
+  it("interleaves conversation and tool facts by timestamp in the raw archive", async () => {
+    const result = await writeClaudeSessionOutputs({
+      projectRoot: tmpRoot,
+      targetDate: "2026-06-13",
+      signals: [],
+      // A tool fact occurred BEFORE the assistant's closing text. The writer
+      // must order by timestamp, not write all turns first then all tools.
+      conversation: [
+        { role: "user", text: "Do the thing", timestamp: "2026-06-13T05:00:00.000Z" },
+        { role: "assistant", text: "Done", timestamp: "2026-06-13T05:00:02.000Z" }
+      ],
+      toolFacts: [
+        { tool: "Read", target: "src/x.ts", timestamp: "2026-06-13T05:00:01.000Z" }
+      ]
+    });
+
+    const text = await readFile(result.rawArchiveFile, "utf8");
+    const lines = text.split("\n").filter(Boolean).map((l) => JSON.parse(l));
+    expect(lines.map((l) => [l.kind, l.timestamp])).toEqual([
+      ["turn", "2026-06-13T05:00:00.000Z"],
+      ["tool", "2026-06-13T05:00:01.000Z"],
+      ["turn", "2026-06-13T05:00:02.000Z"]
+    ]);
+  });
+
   it("fully rewrites both files on rerun (no stale content)", async () => {
     await writeClaudeSessionOutputs({
       projectRoot: tmpRoot,

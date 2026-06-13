@@ -33,16 +33,22 @@ export async function writeClaudeSessionOutputs(
     ? input.signals.map((s) => JSON.stringify(s)).join("\n") + "\n"
     : "";
 
-  const rawLines: string[] = [];
+  // Interleave conversation turns and tool facts by timestamp so the Tier 1
+  // archive preserves the real session timeline (e.g. user -> tool -> assistant)
+  // instead of writing all turns first and all tool facts last. The sort is
+  // stable, so entries sharing a timestamp keep their original turn-before-tool
+  // order (matches how the parser emits blocks within a single message).
+  const rawEntries: { timestamp: string; line: string }[] = [];
   for (const turn of input.conversation) {
-    rawLines.push(
-      JSON.stringify({
+    rawEntries.push({
+      timestamp: turn.timestamp,
+      line: JSON.stringify({
         kind: "turn",
         role: turn.role,
         text: turn.text,
         timestamp: turn.timestamp
       })
-    );
+    });
   }
   for (const fact of input.toolFacts) {
     const payload: Record<string, unknown> = {
@@ -53,9 +59,14 @@ export async function writeClaudeSessionOutputs(
     if (fact.target !== undefined) {
       payload.target = fact.target;
     }
-    rawLines.push(JSON.stringify(payload));
+    rawEntries.push({ timestamp: fact.timestamp, line: JSON.stringify(payload) });
   }
-  const rawBody = rawLines.length ? rawLines.join("\n") + "\n" : "";
+  rawEntries.sort((a, b) =>
+    a.timestamp < b.timestamp ? -1 : a.timestamp > b.timestamp ? 1 : 0
+  );
+  const rawBody = rawEntries.length
+    ? rawEntries.map((entry) => entry.line).join("\n") + "\n"
+    : "";
 
   await writeFile(signalsFile, signalsBody, "utf8");
   await writeFile(rawArchiveFile, rawBody, { encoding: "utf8", mode: 0o600 });
