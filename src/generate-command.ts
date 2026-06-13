@@ -15,6 +15,7 @@ import {
   type CarouselVisualStyleMode
 } from "./carousel-renderer.js";
 import type { GitActivityEvent } from "./collect-git-command.js";
+import { isActivitySignal, type ActivitySignal } from "./event-source.js";
 import { resolveConfigPaths } from "./config-paths.js";
 import {
   deriveCaptionText,
@@ -196,11 +197,13 @@ export async function runGenerateCommand(
   const generatedAt = options.now ? options.now() : new Date().toISOString();
   const gitEvents = await readGitActivityEvents(projects, targetDate);
   const manualNotes = await readManualNoteEvents(projects, targetDate);
+  const claudeSignals = await readClaudeActivitySignals(projects, targetDate);
   const activitySummary = buildActivitySummary({
     targetDate,
     generatedAt,
     gitEvents,
-    manualNotes
+    manualNotes,
+    claudeSignals
   });
   const draftRevision = await runDraftStorageOperation(() =>
     createDraftRevision({
@@ -674,6 +677,45 @@ async function readManualNoteEvents(
   }
 
   return notes;
+}
+
+async function readClaudeActivitySignals(
+  projects: ProjectRecord[],
+  targetDate: string
+): Promise<ActivitySignal[]> {
+  const signals: ActivitySignal[] = [];
+
+  for (const project of projects) {
+    const content = await readOptionalText(
+      join(project.root, ".uncommitted", "events", "claude", `${targetDate}.jsonl`)
+    );
+
+    if (content === undefined) {
+      continue;
+    }
+
+    for (const line of content.split("\n")) {
+      if (!line.trim()) {
+        continue;
+      }
+
+      // Claude signals are a supplementary, already-redacted input. Skip any
+      // malformed line rather than failing the whole diary — a single bad
+      // Claude record should never block generation from Git + notes.
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(line);
+      } catch {
+        continue;
+      }
+
+      if (isActivitySignal(parsed)) {
+        signals.push(parsed);
+      }
+    }
+  }
+
+  return signals;
 }
 
 async function readOptionalJson(path: string): Promise<unknown | undefined> {

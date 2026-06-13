@@ -169,6 +169,39 @@ describe("generate command", () => {
     );
   });
 
+  it("incorporates collected Claude signals into the activity summary", async () => {
+    const { io, stderr } = createIo();
+    const fixture = await createRegisteredProjectFixture();
+    const provider = new TaskAwareProvider();
+
+    await writeGitEvent(fixture.project, "2026-05-12");
+    await writeClaudeSignals(fixture.project, "2026-05-12", [
+      {
+        projectId: fixture.project.id,
+        timestamp: "2026-05-12T09:00:00.000Z",
+        kind: "claude-assistant-text",
+        summary: "implement the claude session adapter",
+        safetyNotes: []
+      }
+    ]);
+
+    const exitCode = await runCli(["generate", "today"], io, {
+      homeDir: fixture.homeDir,
+      now: () => "2026-05-12T23:30:00.000Z",
+      aiProvider: provider
+    });
+    const outputDir = join(fixture.draftRoot, "2026-05-12", "rev-001");
+    const activitySummary = (await readJson(
+      join(outputDir, "activity-summary.json")
+    )) as { smallWins: string[] };
+
+    expect(exitCode).toBe(0);
+    expect(stderr).toEqual([]);
+    expect(activitySummary.smallWins).toContain(
+      "implement the claude session adapter"
+    );
+  });
+
   it("completes warning drafts with a visible safety warning and metadata state", async () => {
     const { io, stdout, stderr } = createIo();
     const fixture = await createRegisteredProjectFixture();
@@ -882,6 +915,27 @@ async function writeManualNote(
       text: "Finished the text draft workflow without exposing dev@example.com or /Users/dev/private.",
       source: "manual"
     })}\n`,
+    "utf8"
+  );
+}
+
+async function writeClaudeSignals(
+  project: ProjectRecord,
+  targetDate: string,
+  signals: {
+    projectId: string;
+    timestamp: string;
+    kind: string;
+    summary: string;
+    safetyNotes: string[];
+  }[]
+): Promise<void> {
+  const eventsDir = join(project.root, ".uncommitted", "events", "claude");
+
+  await mkdir(eventsDir, { recursive: true });
+  await writeFile(
+    join(eventsDir, `${targetDate}.jsonl`),
+    signals.map((signal) => JSON.stringify(signal)).join("\n") + "\n",
     "utf8"
   );
 }
