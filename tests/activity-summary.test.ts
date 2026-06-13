@@ -428,3 +428,55 @@ describe("activity summary — signal-driven synthesis (UNC-135)", () => {
     expect(deriveSynthesisFromSummaryModule).toBe(deriveSynthesisFromSignals);
   });
 });
+
+describe("activity summary — Claude signal wiring (UNC-117)", () => {
+  it("reflects Claude activity in synthesis and activity level on a Git-quiet day", () => {
+    const summary = buildActivitySummary(
+      createInput({
+        claudeSignals: [
+          {
+            projectId: "cli",
+            timestamp: "2026-05-12T10:00:00.000Z",
+            kind: "claude-assistant-text",
+            summary: "implement the redaction layer",
+            safetyNotes: []
+          },
+          {
+            projectId: "cli",
+            timestamp: "2026-05-12T10:05:00.000Z",
+            kind: "claude-user-turn",
+            summary: "still blocked on the flaky test",
+            safetyNotes: []
+          }
+        ]
+      })
+    );
+
+    expect(summary.activityLevel).not.toBe("none");
+    expect(summary.dominantTheme).not.toBe("quiet");
+    expect(summary.smallWins).toContain("implement the redaction layer");
+    expect(summary.blockersOrConfusion).toContain("still blocked on the flaky test");
+    expect(summary.uncertaintyNotes).not.toContain(
+      "No Git activity or manual notes were found for 2026-05-12."
+    );
+  });
+
+  it("ignores Claude signals from other dates", () => {
+    const summary = buildActivitySummary(
+      createInput({
+        claudeSignals: [
+          {
+            projectId: "cli",
+            timestamp: "2026-05-11T10:00:00.000Z",
+            kind: "claude-assistant-text",
+            summary: "implement yesterday's feature",
+            safetyNotes: []
+          }
+        ]
+      })
+    );
+
+    expect(summary.activityLevel).toBe("none");
+    expect(summary.smallWins).not.toContain("implement yesterday's feature");
+  });
+});
