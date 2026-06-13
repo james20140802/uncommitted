@@ -122,6 +122,85 @@ describe("collectClaudeForRegisteredProjects", () => {
     expect(rawText).not.toContain("AKIAIOSFODNN7EXAMPLE");
   });
 
+  it("attributes a session whose cwd appears after a header record without cwd", async () => {
+    await writeProjectsFile(homeDir, [
+      {
+        schemaVersion: 1,
+        id: "p1",
+        name: "demo",
+        root: projectRoot,
+        gitRoot: projectRoot,
+        enabled: true,
+        createdAt: "2026-06-01T00:00:00.000Z"
+      }
+    ]);
+    const sessionDir = join(claudeHome, "projects", "encoded-project");
+    await mkdir(sessionDir, { recursive: true });
+    const lines = [
+      // Header/summary record with no cwd — must not stop the scan.
+      JSON.stringify({ type: "summary", summary: "session header" }),
+      JSON.stringify({
+        type: "user",
+        cwd: projectRoot,
+        timestamp: "2026-06-13T05:00:00.000Z",
+        message: { content: "hello from the project" }
+      })
+    ];
+    await writeFile(join(sessionDir, "abc.jsonl"), lines.join("\n") + "\n");
+
+    const result = await collectClaudeForRegisteredProjects({
+      homeDir,
+      claudeHome,
+      now: NOW
+    });
+    expect(result.successes).toHaveLength(1);
+    expect(result.successes[0].signalCount).toBeGreaterThanOrEqual(1);
+    expect(result.successes[0].conversationCount).toBeGreaterThanOrEqual(1);
+  });
+
+  it("keeps only target-date entries, dropping other-date Claude work", async () => {
+    await writeProjectsFile(homeDir, [
+      {
+        schemaVersion: 1,
+        id: "p1",
+        name: "demo",
+        root: projectRoot,
+        gitRoot: projectRoot,
+        enabled: true,
+        createdAt: "2026-06-01T00:00:00.000Z"
+      }
+    ]);
+    const sessionDir = join(claudeHome, "projects", "encoded-project");
+    await mkdir(sessionDir, { recursive: true });
+    const lines = [
+      JSON.stringify({
+        type: "user",
+        cwd: projectRoot,
+        timestamp: "2026-06-12T23:50:00.000Z",
+        message: { content: "yesterday-only Claude work" }
+      }),
+      JSON.stringify({
+        type: "user",
+        cwd: projectRoot,
+        timestamp: "2026-06-13T00:10:00.000Z",
+        message: { content: "today Claude work" }
+      })
+    ];
+    await writeFile(join(sessionDir, "abc.jsonl"), lines.join("\n") + "\n");
+
+    const result = await collectClaudeForRegisteredProjects({
+      homeDir,
+      claudeHome,
+      now: NOW
+    });
+    expect(result.successes).toHaveLength(1);
+    expect(result.successes[0].conversationCount).toBe(1);
+
+    const rawText = await readFile(result.successes[0].rawArchiveFile, "utf8");
+    expect(rawText).toContain("today Claude work");
+    expect(rawText).not.toContain("yesterday-only Claude work");
+  });
+
   it("skips session files whose cwd does not attribute to a registered project", async () => {
     await writeProjectsFile(homeDir, [
       {

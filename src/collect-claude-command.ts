@@ -104,8 +104,7 @@ export async function collectClaudeForRegisteredProjects(
   for (const log of logs) {
     let projectId: string | null = null;
     try {
-      const head = await readFirstParseable(log.path);
-      const cwd = head && typeof head.cwd === "string" ? head.cwd : null;
+      const cwd = await readSessionCwd(log.path);
       if (cwd) {
         const attr = attributeCwdToProject(cwd, projects);
         if (attr) projectId = attr.projectId;
@@ -134,9 +133,23 @@ export async function collectClaudeForRegisteredProjects(
           projectId: project.id,
           contents
         });
-        aggregate.signals.push(...parsed.signals);
-        aggregate.conversation.push(...parsed.conversation);
-        aggregate.toolFacts.push(...parsed.toolFacts);
+        // A single session can span midnight, and discovery returns every
+        // session file regardless of date. Keep only entries that belong to
+        // the target date (entries without a timestamp are treated as
+        // current) so yesterday's Claude work never leaks into today's diary.
+        aggregate.signals.push(
+          ...parsed.signals.filter((s) => isOnTargetDate(s.timestamp, targetDate))
+        );
+        aggregate.conversation.push(
+          ...parsed.conversation.filter((c) =>
+            isOnTargetDate(c.timestamp, targetDate)
+          )
+        );
+        aggregate.toolFacts.push(
+          ...parsed.toolFacts.filter((t) =>
+            isOnTargetDate(t.timestamp, targetDate)
+          )
+        );
       }
       const redacted = redactClaudeSession(aggregate);
       const written = await writeClaudeSessionOutputs({
@@ -165,20 +178,33 @@ export async function collectClaudeForRegisteredProjects(
   return { targetDate, successes, failures, claudeLogsMissing: false };
 }
 
-async function readFirstParseable(
-  path: string
-): Promise<Record<string, unknown> | null> {
+// Scan the session for the first record that carries a string `cwd`, rather
+// than stopping at the first parseable JSON object. Claude sessions can open
+// with a summary/metadata record that has no `cwd`; the project root only
+// appears on later user/assistant records. Stopping at the first object would
+// leave `cwd` null and silently drop the entire session.
+async function readSessionCwd(path: string): Promise<string | null> {
   const contents = await readFile(path, "utf8");
   for (const line of contents.split("\n")) {
     if (line.trim() === "") continue;
     try {
       const parsed = JSON.parse(line);
-      if (typeof parsed === "object" && parsed !== null) {
-        return parsed as Record<string, unknown>;
+      if (
+        typeof parsed === "object" &&
+        parsed !== null &&
+        typeof (parsed as Record<string, unknown>).cwd === "string"
+      ) {
+        return (parsed as Record<string, unknown>).cwd as string;
       }
     } catch {
       continue;
     }
   }
   return null;
+}
+
+function isOnTargetDate(timestamp: string, targetDate: string): boolean {
+  // Undated entries can't be proven to belong to another day, so keep them
+  // with the current collection; dated entries must match the target date.
+  return timestamp === "" || timestamp.slice(0, 10) === targetDate;
 }
