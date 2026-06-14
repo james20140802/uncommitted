@@ -38,6 +38,9 @@ export type ActivitySummaryInput = {
   // Optional and source-agnostic: they feed the synthesis stream and the
   // activity score so the diary reflects Claude work, not just Git + notes.
   claudeSignals?: ActivitySignal[];
+  // Already-redacted Codex session signals (from `uncommitted collect codex`).
+  // Treated identically to Claude signals so a Codex-only day isn't quiet.
+  codexSignals?: ActivitySignal[];
 };
 
 export type ActivityProjectSummary = {
@@ -204,17 +207,21 @@ export function buildActivitySummary(
     }
   }
 
-  // Claude signals arrive already redacted and normalized; keep only the ones
-  // that belong to the target date (undated entries are treated as current).
-  const claudeSignals = (input.claudeSignals ?? []).filter(
+  // Claude and Codex session signals arrive already redacted and normalized;
+  // keep only the ones that belong to the target date (undated entries are
+  // treated as current). Both sources are handled identically.
+  const sessionSignals = [
+    ...(input.claudeSignals ?? []),
+    ...(input.codexSignals ?? [])
+  ].filter(
     (signal) =>
       signal.timestamp === "" ||
       signal.timestamp.slice(0, 10) === input.targetDate
   );
 
   // Build a normalized signal stream from the source-shaped inputs and append
-  // the Claude signals, then derive the 4 source-agnostic synthesis fields
-  // generically. Claude signals are opaque kinds, so they are pattern-classified
+  // the session signals, then derive the 4 source-agnostic synthesis fields
+  // generically. Session signals are opaque kinds, so they are pattern-classified
   // for themes / small wins / blockers / unfinished threads.
   const signals = [
     ...buildSignalsFromInput({
@@ -222,7 +229,7 @@ export function buildActivitySummary(
       gitEvents,
       manualNotes: manualNotesForDate
     }),
-    ...claudeSignals
+    ...sessionSignals
   ];
   const synthesis = deriveSynthesisFromSignals(signals);
 
@@ -245,7 +252,7 @@ export function buildActivitySummary(
     filesChanged +
     uncommittedFiles.length +
     manualNotes.length * 2 +
-    claudeSignals.length;
+    sessionSignals.length;
   const activityLevel = classifyActivityLevel(score);
   const dominantTheme = deriveDominantTheme(activityLevel, synthesis.themes);
 
@@ -264,7 +271,7 @@ export function buildActivitySummary(
     manualNoteCount: manualNotes.length,
     themeCount: synthesis.themes.length,
     uncommittedChangeCount: uncommittedFiles.length,
-    claudeSignalCount: claudeSignals.length
+    sessionSignalCount: sessionSignals.length
   });
   const publicSafetyNotes = buildPublicSafetyNotes({
     hasManualPrivateItems,
@@ -489,7 +496,7 @@ function buildUncertaintyNotes(
     manualNoteCount: number;
     themeCount: number;
     uncommittedChangeCount: number;
-    claudeSignalCount: number;
+    sessionSignalCount: number;
   }
 ): string[] {
   const notes: string[] = [];
@@ -498,7 +505,7 @@ function buildUncertaintyNotes(
     signals.gitEventCount === 0 &&
     signals.manualNoteCount === 0 &&
     signals.uncommittedChangeCount === 0 &&
-    signals.claudeSignalCount === 0
+    signals.sessionSignalCount === 0
   ) {
     notes.push(`No Git activity or manual notes were found for ${input.targetDate}.`);
   }

@@ -198,12 +198,14 @@ export async function runGenerateCommand(
   const gitEvents = await readGitActivityEvents(projects, targetDate);
   const manualNotes = await readManualNoteEvents(projects, targetDate);
   const claudeSignals = await readClaudeActivitySignals(projects, targetDate);
+  const codexSignals = await readCodexActivitySignals(projects, targetDate);
   const activitySummary = buildActivitySummary({
     targetDate,
     generatedAt,
     gitEvents,
     manualNotes,
-    claudeSignals
+    claudeSignals,
+    codexSignals
   });
   const draftRevision = await runDraftStorageOperation(() =>
     createDraftRevision({
@@ -679,15 +681,30 @@ async function readManualNoteEvents(
   return notes;
 }
 
-async function readClaudeActivitySignals(
+function readClaudeActivitySignals(
   projects: ProjectRecord[],
   targetDate: string
+): Promise<ActivitySignal[]> {
+  return readSessionActivitySignals(projects, targetDate, "claude");
+}
+
+function readCodexActivitySignals(
+  projects: ProjectRecord[],
+  targetDate: string
+): Promise<ActivitySignal[]> {
+  return readSessionActivitySignals(projects, targetDate, "codex");
+}
+
+async function readSessionActivitySignals(
+  projects: ProjectRecord[],
+  targetDate: string,
+  source: "claude" | "codex"
 ): Promise<ActivitySignal[]> {
   const signals: ActivitySignal[] = [];
 
   for (const project of projects) {
     const content = await readOptionalText(
-      join(project.root, ".uncommitted", "events", "claude", `${targetDate}.jsonl`)
+      join(project.root, ".uncommitted", "events", source, `${targetDate}.jsonl`)
     );
 
     if (content === undefined) {
@@ -699,9 +716,9 @@ async function readClaudeActivitySignals(
         continue;
       }
 
-      // Claude signals are a supplementary, already-redacted input. Skip any
+      // Session signals are a supplementary, already-redacted input. Skip any
       // malformed line rather than failing the whole diary — a single bad
-      // Claude record should never block generation from Git + notes.
+      // session record should never block generation from Git + notes.
       let parsed: unknown;
       try {
         parsed = JSON.parse(line);

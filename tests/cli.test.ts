@@ -65,7 +65,47 @@ describe("cli", () => {
 
     expect(exitCode).toBe(1);
     expect(stdout).toEqual([]);
-    expect(stderr.join("\n")).toContain("Usage: uncommitted collect <git|claude>");
+    expect(stderr.join("\n")).toContain("Usage: uncommitted collect <git|claude|codex>");
+  });
+
+  it("rejects extra arguments for collect git instead of silently ignoring them", async () => {
+    const { io, stdout, stderr } = createIo();
+
+    const exitCode = await runCli(["collect", "git", "--date", "2026-06-14"], io);
+
+    expect(exitCode).toBe(1);
+    expect(stdout).toEqual([]);
+    expect(stderr.join("\n")).toContain("Usage: uncommitted collect git");
+  });
+
+  it("rejects extra arguments for collect claude instead of silently ignoring them", async () => {
+    const { io, stdout, stderr } = createIo();
+
+    const exitCode = await runCli(["collect", "claude", "typo"], io);
+
+    expect(exitCode).toBe(1);
+    expect(stdout).toEqual([]);
+    expect(stderr.join("\n")).toContain("Usage: uncommitted collect claude");
+  });
+
+  it("rejects collect codex --date without a value", async () => {
+    const { io, stdout, stderr } = createIo();
+
+    const exitCode = await runCli(["collect", "codex", "--date"], io);
+
+    expect(exitCode).toBe(1);
+    expect(stdout).toEqual([]);
+    expect(stderr.join("\n")).toContain("Usage: uncommitted collect codex");
+  });
+
+  it("rejects unknown collect codex flags", async () => {
+    const { io, stdout, stderr } = createIo();
+
+    const exitCode = await runCli(["collect", "codex", "--bogus"], io);
+
+    expect(exitCode).toBe(1);
+    expect(stdout).toEqual([]);
+    expect(stderr.join("\n")).toContain("Usage: uncommitted collect codex");
   });
 
   it("reports skip and exits 0 when collect claude finds no session logs", async () => {
@@ -108,6 +148,48 @@ describe("cli", () => {
     expect(exitCode).toBe(0);
     expect(stderr).toEqual([]);
     expect(stdout.join("\n")).toContain("No Claude session logs found");
+  });
+
+  it("reports skip and exits 0 when collect codex finds no session logs", async () => {
+    const { io, stdout, stderr } = createIo();
+    const directory = await mkdtemp(join(tmpdir(), "uncommitted-cli-collect-codex-"));
+    const repoDir = join(directory, "repo");
+    const homeDir = join(directory, "home");
+
+    await mkdir(repoDir, { recursive: true });
+    await mkdir(join(homeDir, ".uncommitted"), { recursive: true });
+    await writeFile(
+      join(homeDir, ".uncommitted", "projects.json"),
+      JSON.stringify(
+        {
+          schemaVersion: 1,
+          projects: [
+            {
+              schemaVersion: 1,
+              id: "p1",
+              name: "demo",
+              root: repoDir,
+              gitRoot: repoDir,
+              enabled: true,
+              createdAt: "2026-05-01T00:00:00.000Z"
+            }
+          ]
+        },
+        null,
+        2
+      ) + "\n",
+      "utf8"
+    );
+
+    const exitCode = await runCli(["collect", "codex"], io, {
+      homeDir,
+      codexHome: join(directory, "codex-home"),
+      now: () => "2026-05-06T13:30:00.000Z"
+    });
+
+    expect(exitCode).toBe(0);
+    expect(stderr).toEqual([]);
+    expect(stdout.join("\n")).toContain("No Codex session logs found");
   });
 
   it("collects today's Git activity for registered projects", async () => {
