@@ -150,14 +150,15 @@ function handleEventMsg(
     const role: "user" | "assistant" =
       ptype === "user_message" ? "user" : "assistant";
     sink.conversation.push({ role, text, timestamp });
-    sink.signals.push(
-      makeSignal(
-        projectId,
-        timestamp,
-        role === "user" ? "codex-user-turn" : "codex-assistant-text",
-        text
-      )
-    );
+    // agent_message is a UI echo of the assistant turn already captured via
+    // response_item/message (and may carry reasoning). Keep it in the raw
+    // archive but don't emit a Tier 2 signal, mirroring reasoning handling, so
+    // it isn't double-counted or surfaced into activity summaries.
+    if (role === "user") {
+      sink.signals.push(
+        makeSignal(projectId, timestamp, "codex-user-turn", text)
+      );
+    }
     return;
   }
 
@@ -216,6 +217,13 @@ function extractFunctionTarget(payload: Record<string, unknown>): string | undef
   if (!isRecord(parsed)) return undefined;
   if (typeof parsed.file_path === "string") return parsed.file_path;
   if (typeof parsed.path === "string") return parsed.path;
+  // Codex exec_command calls encode the shell text in `cmd`; read it before
+  // falling back to `command` so shell invocations keep their target.
+  if (typeof parsed.cmd === "string") return truncate(parsed.cmd, COMMAND_LIMIT);
+  if (Array.isArray(parsed.cmd)) {
+    const joined = parsed.cmd.filter((x) => typeof x === "string").join(" ");
+    if (joined) return truncate(joined, COMMAND_LIMIT);
+  }
   if (typeof parsed.command === "string") return truncate(parsed.command, COMMAND_LIMIT);
   if (Array.isArray(parsed.command)) {
     const joined = parsed.command.filter((x) => typeof x === "string").join(" ");

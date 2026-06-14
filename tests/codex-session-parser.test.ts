@@ -73,6 +73,16 @@ const EXEC_END = JSON.stringify({
   }
 });
 
+const EXEC_FUNCTION_CALL_CMD = JSON.stringify({
+  timestamp: "2026-06-13T14:18:15.000Z",
+  type: "response_item",
+  payload: {
+    type: "function_call",
+    name: "exec_command",
+    arguments: JSON.stringify({ cmd: "cargo test" })
+  }
+});
+
 const DEVELOPER_PROMPT = JSON.stringify({
   timestamp: "2026-06-13T14:18:00.500Z",
   type: "response_item",
@@ -161,6 +171,32 @@ describe("parseCodexSession", () => {
         timestamp: "2026-06-13T14:18:13.000Z"
       }
     ]);
+  });
+
+  it("does not emit a Tier 2 signal for event_msg.agent_message (kept in raw archive only)", () => {
+    // agent_message is a UI echo of the assistant turn already captured as a
+    // response_item/message signal. Emitting it again double-counts (and can
+    // surface reasoning) into activity summaries, so it stays conversation-only.
+    const result = parseCodexSession({ projectId: "p1", contents: EVENT_AGENT });
+    expect(result.conversation).toHaveLength(1);
+    expect(result.conversation[0].role).toBe("assistant");
+    expect(result.signals).toEqual([]);
+  });
+
+  it("reads exec_command cmd argument as the tool target", () => {
+    const result = parseCodexSession({
+      projectId: "p1",
+      contents: EXEC_FUNCTION_CALL_CMD
+    });
+    expect(result.toolFacts).toEqual([
+      {
+        tool: "exec_command",
+        target: "cargo test",
+        timestamp: "2026-06-13T14:18:15.000Z"
+      }
+    ]);
+    expect(result.signals).toHaveLength(1);
+    expect(result.signals[0].summary).toBe("exec_command cargo test");
   });
 
   it("records exec_command_end as a tool fact without body", () => {
