@@ -762,6 +762,13 @@ async function runCollect(
     return 1;
   }
 
+  // git and claude take no further arguments; reject trailing tokens so an
+  // unsupported flag can't silently collect/overwrite today's events.
+  if ((args[0] === "git" || args[0] === "claude") && args.length > 1) {
+    io.stderr(`Usage: uncommitted collect ${args[0]}`);
+    return 1;
+  }
+
   if (args[0] === "git") {
     try {
       const result = await collectGitForRegisteredProjects(options);
@@ -829,9 +836,19 @@ async function runCollect(
   const codexArgs = args.slice(1);
   let targetDate: string | undefined;
   for (let i = 0; i < codexArgs.length; i++) {
-    if (codexArgs[i] === "--date" && i + 1 < codexArgs.length) {
+    if (codexArgs[i] === "--date") {
+      // --date must be followed by a value; otherwise the collector would fall
+      // back to today and overwrite today's events on a typo.
+      if (i + 1 >= codexArgs.length) {
+        io.stderr("Usage: uncommitted collect codex [--date YYYY-MM-DD]");
+        return 1;
+      }
       targetDate = codexArgs[++i];
+      continue;
     }
+    // Reject unknown/extra tokens rather than silently ignoring them.
+    io.stderr("Usage: uncommitted collect codex [--date YYYY-MM-DD]");
+    return 1;
   }
 
   try {

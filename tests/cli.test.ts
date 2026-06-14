@@ -68,6 +68,46 @@ describe("cli", () => {
     expect(stderr.join("\n")).toContain("Usage: uncommitted collect <git|claude|codex>");
   });
 
+  it("rejects extra arguments for collect git instead of silently ignoring them", async () => {
+    const { io, stdout, stderr } = createIo();
+
+    const exitCode = await runCli(["collect", "git", "--date", "2026-06-14"], io);
+
+    expect(exitCode).toBe(1);
+    expect(stdout).toEqual([]);
+    expect(stderr.join("\n")).toContain("Usage: uncommitted collect git");
+  });
+
+  it("rejects extra arguments for collect claude instead of silently ignoring them", async () => {
+    const { io, stdout, stderr } = createIo();
+
+    const exitCode = await runCli(["collect", "claude", "typo"], io);
+
+    expect(exitCode).toBe(1);
+    expect(stdout).toEqual([]);
+    expect(stderr.join("\n")).toContain("Usage: uncommitted collect claude");
+  });
+
+  it("rejects collect codex --date without a value", async () => {
+    const { io, stdout, stderr } = createIo();
+
+    const exitCode = await runCli(["collect", "codex", "--date"], io);
+
+    expect(exitCode).toBe(1);
+    expect(stdout).toEqual([]);
+    expect(stderr.join("\n")).toContain("Usage: uncommitted collect codex");
+  });
+
+  it("rejects unknown collect codex flags", async () => {
+    const { io, stdout, stderr } = createIo();
+
+    const exitCode = await runCli(["collect", "codex", "--bogus"], io);
+
+    expect(exitCode).toBe(1);
+    expect(stdout).toEqual([]);
+    expect(stderr.join("\n")).toContain("Usage: uncommitted collect codex");
+  });
+
   it("reports skip and exits 0 when collect claude finds no session logs", async () => {
     const { io, stdout, stderr } = createIo();
     const directory = await mkdtemp(join(tmpdir(), "uncommitted-cli-collect-claude-"));
