@@ -99,9 +99,25 @@ export async function collectCodexForRegisteredProjects(
     targetDate = now.slice(0, 10);
   }
 
-  const logs = await discoverCodexSessionLogs({
-    codexHome: options.codexHome,
-    targetDate
+  // A Codex session that starts before midnight stays under its start day's
+  // `sessions/YYYY/MM/DD` directory even when work continues into the next day.
+  // Discover both the target day and the previous day so cross-midnight entries
+  // (kept by the per-entry timestamp filter below) aren't dropped.
+  const discovered = [
+    ...(await discoverCodexSessionLogs({
+      codexHome: options.codexHome,
+      targetDate
+    })),
+    ...(await discoverCodexSessionLogs({
+      codexHome: options.codexHome,
+      targetDate: previousDate(targetDate)
+    }))
+  ];
+  const seenPaths = new Set<string>();
+  const logs = discovered.filter((log) => {
+    if (seenPaths.has(log.path)) return false;
+    seenPaths.add(log.path);
+    return true;
   });
   if (logs.length === 0) {
     return {
@@ -191,6 +207,12 @@ export async function collectCodexForRegisteredProjects(
   }
 
   return { targetDate, successes, failures, codexLogsMissing: false };
+}
+
+function previousDate(targetDate: string): string {
+  const d = new Date(`${targetDate}T00:00:00.000Z`);
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
 }
 
 function isOnTargetDate(timestamp: string, targetDate: string): boolean {
