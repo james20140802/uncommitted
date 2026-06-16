@@ -5,7 +5,7 @@ export type InferredRepo = {
   isGitHub: boolean;
 };
 
-const HTTPS = /^https?:\/\/([^/]+)\/([^/]+)\/([^/?#]+?)(?:\.git)?(?:[/?#]|$)/i;
+const HTTPS = /^https?:\/\/(?:[^/@]+@)?([^/]+)\/([^/]+)\/([^/?#]+?)(?:\.git)?(?:[/?#]|$)/i;
 const SSH = /^git@([^:]+):([^/]+)\/([^/?#]+?)(?:\.git)?(?:[/?#]|$)/i;
 const GIT_SSH = /^(?:git\+)?ssh:\/\/git@([^/]+)\/([^/]+)\/([^/?#]+?)(?:\.git)?(?:[/?#]|$)/i;
 
@@ -17,7 +17,7 @@ export function inferGitHubOriginRepo(remoteUrl: string): InferredRepo {
     if (m) {
       const [, host, owner, repo] = m;
       return {
-        host,
+        host: host.toLowerCase(),
         owner,
         repo,
         isGitHub: host.toLowerCase() === "github.com"

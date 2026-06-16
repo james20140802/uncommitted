@@ -27,4 +27,21 @@ describe("inferGitHubOriginRepo", () => {
     expect(inferGitHubOriginRepo("")).toEqual({ host: null, owner: null, repo: null, isGitHub: false });
     expect(inferGitHubOriginRepo("not-a-url")).toEqual({ host: null, owner: null, repo: null, isGitHub: false });
   });
+
+  it("strips userinfo from HTTPS remotes so credentials don't leak into host", () => {
+    const r = inferGitHubOriginRepo("https://x-access-token:ghs_PLACEHOLDER@github.com/foo/bar.git");
+    expect(r.host).toBe("github.com");
+    expect(r.owner).toBe("foo");
+    expect(r.repo).toBe("bar");
+    expect(r.isGitHub).toBe(true);
+    // Defensive: ensure no part of the returned object contains the credential.
+    expect(JSON.stringify(r)).not.toContain("ghs_PLACEHOLDER");
+    expect(JSON.stringify(r)).not.toContain("x-access-token");
+  });
+
+  it("normalizes the host to lowercase", () => {
+    const r = inferGitHubOriginRepo("https://GitHub.com/foo/bar.git");
+    expect(r.host).toBe("github.com");
+    expect(r.isGitHub).toBe(true);
+  });
 });
