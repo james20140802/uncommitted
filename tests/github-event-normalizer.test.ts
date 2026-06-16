@@ -1,0 +1,44 @@
+import { describe, it, expect } from "vitest";
+import { normalizeGitHubFetch } from "../src/github-event-normalizer.js";
+import type { GitHubFetchResult } from "../src/github-fetcher.js";
+
+const base: GitHubFetchResult = {
+  visibility: "public",
+  authenticatedLogin: "alice",
+  mergedPRs: [
+    { number: 1, title: "Add caching", body: "Implements LRU.", authorLogin: "alice", mergedAt: "2026-06-17T05:00:00Z" },
+    { number: 2, title: "External PR", body: "from someone else", authorLogin: "bob", mergedAt: "2026-06-17T06:00:00Z" }
+  ],
+  closedIssues: [
+    { number: 9, title: "Bug X", body: "I tracked this down", authorLogin: "alice", closedAt: "2026-06-17T07:00:00Z" }
+  ],
+  reviews: [
+    { id: 100, prNumber: 1, state: "APPROVED", submittedAt: "2026-06-17T08:00:00Z", authorLogin: "alice", body: "lgtm" },
+    { id: 101, prNumber: 1, state: "COMMENTED", submittedAt: "2026-06-17T08:30:00Z", authorLogin: "carol", body: "nit pick" }
+  ]
+};
+
+describe("normalizeGitHubFetch", () => {
+  it("emits one signal per PR/issue/review", () => {
+    const r = normalizeGitHubFetch({ projectId: "p1", fetch: base });
+    const kinds = r.signals.map((s) => s.kind).sort();
+    expect(kinds).toEqual(["issue", "pr", "pr", "review", "review"]);
+  });
+
+  it("only collects bodies authored by the authenticated user", () => {
+    const r = normalizeGitHubFetch({ projectId: "p1", fetch: base });
+    const sources = r.ownAuthoredBodies.map((b) => `${b.source}#${b.number}`).sort();
+    expect(sources).toEqual(["issue-body#9", "pr-body#1", "review-comment#1"]);
+  });
+
+  it("uses pr.mergedAt / issue.closedAt / review.submittedAt as the signal timestamp", () => {
+    const r = normalizeGitHubFetch({ projectId: "p1", fetch: base });
+    const pr1 = r.signals.find((s) => s.kind === "pr" && s.summary.includes("#1"));
+    expect(pr1?.timestamp).toBe("2026-06-17T05:00:00Z");
+  });
+
+  it("stamps visibility on every own-authored body", () => {
+    const r = normalizeGitHubFetch({ projectId: "p1", fetch: { ...base, visibility: "private" } });
+    expect(r.ownAuthoredBodies.every((b) => b.visibility === "private")).toBe(true);
+  });
+});
