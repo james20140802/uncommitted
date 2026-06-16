@@ -28,7 +28,7 @@ function trim(s: string): string {
 export function normalizeGitHubFetch(input: NormalizeInput): NormalizedGitHub {
   const signals: ActivitySignal[] = [];
   const bodies: OwnAuthoredBody[] = [];
-  const me = input.fetch.authenticatedLogin;
+  const me = input.fetch.authenticatedLogin.toLowerCase();
   const visibility = input.fetch.visibility;
 
   for (const pr of input.fetch.mergedPRs) {
@@ -39,7 +39,7 @@ export function normalizeGitHubFetch(input: NormalizeInput): NormalizedGitHub {
       summary: trim(`PR #${pr.number} merged: ${pr.title}`),
       safetyNotes: []
     });
-    if (pr.authorLogin === me && pr.body) {
+    if (pr.authorLogin.toLowerCase() === me && pr.body) {
       bodies.push({ source: "pr-body", number: pr.number, visibility, text: pr.body, timestamp: pr.mergedAt });
     }
   }
@@ -52,7 +52,7 @@ export function normalizeGitHubFetch(input: NormalizeInput): NormalizedGitHub {
       summary: trim(`Issue #${issue.number} closed: ${issue.title}`),
       safetyNotes: []
     });
-    if (issue.authorLogin === me && issue.body) {
+    if (issue.authorLogin.toLowerCase() === me && issue.body) {
       bodies.push({ source: "issue-body", number: issue.number, visibility, text: issue.body, timestamp: issue.closedAt });
     }
   }
@@ -65,7 +65,7 @@ export function normalizeGitHubFetch(input: NormalizeInput): NormalizedGitHub {
       summary: trim(`Review ${review.state} on PR #${review.prNumber}`),
       safetyNotes: []
     });
-    if (review.authorLogin === me && review.body) {
+    if (review.authorLogin.toLowerCase() === me && review.body) {
       bodies.push({
         source: "review-comment",
         number: review.prNumber,

@@ -41,4 +41,19 @@ describe("normalizeGitHubFetch", () => {
     const r = normalizeGitHubFetch({ projectId: "p1", fetch: { ...base, visibility: "private" } });
     expect(r.ownAuthoredBodies.every((b) => b.visibility === "private")).toBe(true);
   });
+
+  it("compares author logins case-insensitively so case drift doesn't drop own bodies", () => {
+    const fetch: GitHubFetchResult = {
+      visibility: "public",
+      authenticatedLogin: "Alice",
+      mergedPRs: [
+        { number: 42, title: "Mine", body: "this is mine",
+          authorLogin: "alice", mergedAt: "2026-06-17T01:00:00Z" }
+      ],
+      closedIssues: [],
+      reviews: []
+    };
+    const r = normalizeGitHubFetch({ projectId: "p", fetch });
+    expect(r.ownAuthoredBodies.map((b) => b.source)).toEqual(["pr-body"]);
+  });
 });
