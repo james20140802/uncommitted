@@ -1,0 +1,199 @@
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { resolveConfigPaths } from "./config-paths.js";
+import { readProjectsFile } from "./project-registry.js";
+import { resolveGitHubToken } from "./github-token-resolver.js";
+import { inferGitHubOriginRepo } from "./github-repo-inference.js";
+import {
+  fetchGitHubActivity,
+  type HttpClient,
+  type Sleep
+} from "./github-fetcher.js";
+import { normalizeGitHubFetch } from "./github-event-normalizer.js";
+import { redactGitHubEvents } from "./github-event-redactor.js";
+import { writeGitHubEvents } from "./github-event-writer.js";
+
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const execFileP = promisify(execFile);
+
+export type CollectGitHubCommandErrorCode =
+  | "invalid-projects-file"
+  | "no-projects"
+  | "invalid-date"
+  | "no-token";
+
+export class CollectGitHubCommandError extends Error {
+  constructor(
+    message: string,
+    public readonly code: CollectGitHubCommandErrorCode
+  ) {
+    super(message);
+    this.name = "CollectGitHubCommandError";
+  }
+}
+
+export type CollectGitHubInput = {
+  homeDir?: string;
+  env?: Record<string, string | undefined>;
+  targetDate?: string;
+  now?: () => string;
+  httpClient?: HttpClient;
+  sleep?: Sleep;
+  remoteUrlReader?: (projectRoot: string) => Promise<string>;
+};
+
+export type CollectGitHubSuccess = {
+  projectId: string;
+  signalsFile: string;
+  rawArchiveFile: string;
+  signalCount: number;
+  rawCount: number;
+};
+
+export type CollectGitHubFailure = { projectId: string; message: string };
+
+export type CollectGitHubSkipped = {
+  projectId: string;
+  reason: "non-github-remote";
+  remoteUrl: string;
+};
+
+export type CollectGitHubResult = {
+  targetDate: string;
+  successes: CollectGitHubSuccess[];
+  failures: CollectGitHubFailure[];
+  skippedProjects: CollectGitHubSkipped[];
+};
+
+async function defaultRemoteUrlReader(projectRoot: string): Promise<string> {
+  try {
+    const { stdout } = await execFileP("git", [
+      "-C",
+      projectRoot,
+      "remote",
+      "get-url",
+      "origin"
+    ]);
+    return stdout.trim();
+  } catch {
+    return "";
+  }
+}
+
+export async function collectGitHubForRegisteredProjects(
+  input: CollectGitHubInput = {}
+): Promise<CollectGitHubResult> {
+  const paths = resolveConfigPaths({ homeDir: input.homeDir });
+  let projectsFile;
+  try {
+    projectsFile = await readProjectsFile(paths.projectsFile, {
+      missingAsEmpty: true
+    });
+  } catch {
+    throw new CollectGitHubCommandError(
+      "Invalid projects file.",
+      "invalid-projects-file"
+    );
+  }
+  const projects = projectsFile.projects.filter((p) => p.enabled);
+  if (projects.length === 0) {
+    throw new CollectGitHubCommandError(
+      "No registered projects. Run `uncommitted project add .` first.",
+      "no-projects"
+    );
+  }
+
+  let targetDate: string;
+  if (input.targetDate) {
+    if (!DATE_RE.test(input.targetDate)) {
+      throw new CollectGitHubCommandError(
+        "Invalid --date; expected YYYY-MM-DD.",
+        "invalid-date"
+      );
+    }
+    targetDate = input.targetDate;
+  } else {
+    const now = input.now ? input.now() : new Date().toISOString();
+    targetDate = now.slice(0, 10);
+  }
+
+  // resolveConfigPaths returns configDir = <homeDir>/.uncommitted; strip the
+  // suffix to recover the home dir the token resolver wants.
+  const homeDirForToken = paths.configDir.replace(/\/\.uncommitted$/, "");
+  const resolved = await resolveGitHubToken({
+    homeDir: homeDirForToken,
+    env: input.env
+  });
+  if (!resolved.token) {
+    throw new CollectGitHubCommandError(
+      "GITHUB_TOKEN not set and `githubToken` missing from config.",
+      "no-token"
+    );
+  }
+
+  const remoteUrlReader = input.remoteUrlReader ?? defaultRemoteUrlReader;
+  const successes: CollectGitHubSuccess[] = [];
+  const failures: CollectGitHubFailure[] = [];
+  const skippedProjects: CollectGitHubSkipped[] = [];
+
+  for (const project of projects) {
+    const remoteUrl = await remoteUrlReader(project.root);
+    const inferred = inferGitHubOriginRepo(remoteUrl);
+    if (!inferred.isGitHub || !inferred.owner || !inferred.repo) {
+      skippedProjects.push({
+        projectId: project.id,
+        reason: "non-github-remote",
+        remoteUrl
+      });
+      continue;
+    }
+    try {
+      const fetched = await fetchGitHubActivity({
+        token: resolved.token,
+        owner: inferred.owner,
+        repo: inferred.repo,
+        targetDate,
+        httpClient: input.httpClient,
+        sleep: input.sleep
+      });
+      const normalized = normalizeGitHubFetch({
+        projectId: project.id,
+        fetch: fetched
+      });
+      const redacted = redactGitHubEvents(normalized);
+      const written = await writeGitHubEvents({
+        projectRoot: project.root,
+        targetDate,
+        signals: redacted.signals,
+        ownAuthoredBodies: redacted.ownAuthoredBodies
+      });
+      successes.push({
+        projectId: project.id,
+        signalsFile: written.signalsFile,
+        rawArchiveFile: written.rawArchiveFile,
+        signalCount: written.signalCount,
+        rawCount: written.rawCount
+      });
+    } catch (error) {
+      // Flush empty canonical files so downstream readers can rely on the path
+      // contract even when a per-project fetch fails partway through.
+      try {
+        await writeGitHubEvents({
+          projectRoot: project.root,
+          targetDate,
+          signals: [],
+          ownAuthoredBodies: []
+        });
+      } catch {
+        // best effort
+      }
+      failures.push({
+        projectId: project.id,
+        message:
+          error instanceof Error ? error.message : "Collection failed."
+      });
+    }
+  }
+
+  return { targetDate, successes, failures, skippedProjects };
+}
