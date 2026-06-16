@@ -86,7 +86,7 @@ const detectionRules: DetectionRule[] = [
     replacement: "[redacted-repo-url]",
     message: "Private repository remote was redacted.",
     pattern:
-      /\bgit@[\w.-]+:[^\s]+|(?:https?|ssh|git):\/\/(?:[^/\s]+@)?(?:github\.com|gitlab\.com|bitbucket\.org|[\w.-]+)[:/][^\s]+\.git\b/gi
+      /\bgit@[\w.-]+:[^\s]+|(?:git\+)?(?:https?|ssh|git):\/\/(?:[^/\s]+@)?(?:github\.com|gitlab\.com|bitbucket\.org|[\w.-]+)[:/][^\s]+\.git\b/gi
   },
   {
     category: "private-url",
