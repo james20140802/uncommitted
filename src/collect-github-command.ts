@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { homedir } from "node:os";
 import { promisify } from "node:util";
 import { resolveConfigPaths } from "./config-paths.js";
 import { readProjectsFile } from "./project-registry.js";
@@ -117,11 +118,8 @@ export async function collectGitHubForRegisteredProjects(
     targetDate = now.slice(0, 10);
   }
 
-  // resolveConfigPaths returns configDir = <homeDir>/.uncommitted; strip the
-  // suffix to recover the home dir the token resolver wants.
-  const homeDirForToken = paths.configDir.replace(/\/\.uncommitted$/, "");
   const resolved = await resolveGitHubToken({
-    homeDir: homeDirForToken,
+    homeDir: input.homeDir ?? homedir(),
     env: input.env
   });
   if (!resolved.token) {

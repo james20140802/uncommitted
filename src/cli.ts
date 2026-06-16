@@ -903,56 +903,59 @@ async function runCollect(
     }
   }
 
-  // args[0] === "github"
-  const ghArgs = args.slice(1);
-  let ghTargetDate: string | undefined;
-  for (let i = 0; i < ghArgs.length; i++) {
-    if (ghArgs[i] === "--date") {
-      if (i + 1 >= ghArgs.length) {
-        io.stderr("Usage: uncommitted collect github [--date YYYY-MM-DD]");
-        return 1;
+  if (args[0] === "github") {
+    const ghArgs = args.slice(1);
+    let ghTargetDate: string | undefined;
+    for (let i = 0; i < ghArgs.length; i++) {
+      if (ghArgs[i] === "--date") {
+        if (i + 1 >= ghArgs.length) {
+          io.stderr("Usage: uncommitted collect github [--date YYYY-MM-DD]");
+          return 1;
+        }
+        ghTargetDate = ghArgs[++i];
+        continue;
       }
-      ghTargetDate = ghArgs[++i];
-      continue;
+      io.stderr("Usage: uncommitted collect github [--date YYYY-MM-DD]");
+      return 1;
     }
-    io.stderr("Usage: uncommitted collect github [--date YYYY-MM-DD]");
-    return 1;
-  }
 
-  try {
-    const result = await collectGitHubForRegisteredProjects({
-      homeDir: options.homeDir,
-      targetDate: ghTargetDate,
-      now: options.now ?? (() => new Date().toISOString())
-    });
+    try {
+      const result = await collectGitHubForRegisteredProjects({
+        homeDir: options.homeDir,
+        targetDate: ghTargetDate,
+        now: options.now ?? (() => new Date().toISOString())
+      });
 
-    if (result.successes.length > 0) {
-      io.stdout(
-        `Collected GitHub activity for ${formatProjectCount(result.successes.length)}.`
-      );
-      for (const success of result.successes) {
+      if (result.successes.length > 0) {
         io.stdout(
-          `${success.projectId}: ${success.signalCount} signals, ${success.rawCount} authored bodies.`
+          `Collected GitHub activity for ${formatProjectCount(result.successes.length)}.`
         );
+        for (const success of result.successes) {
+          io.stdout(
+            `${success.projectId}: ${success.signalCount} signals, ${success.rawCount} authored bodies.`
+          );
+        }
       }
+      for (const skip of result.skippedProjects) {
+        io.stdout(`${skip.projectId}: skipped (non-GitHub remote).`);
+      }
+      for (const failure of result.failures) {
+        io.stderr(`Failed to collect ${failure.projectId}: ${failure.message}`);
+      }
+      return result.failures.length > 0 ? 3 : 0;
+    } catch (error) {
+      if (error instanceof CollectGitHubCommandError) {
+        io.stderr(error.message);
+        if (error.code === "invalid-projects-file") return 2;
+        if (error.code === "no-token") return 2;
+        if (error.code === "invalid-date") return 2;
+        return 3;
+      }
+      throw error;
     }
-    for (const skip of result.skippedProjects) {
-      io.stdout(`${skip.projectId}: skipped (non-GitHub remote).`);
-    }
-    for (const failure of result.failures) {
-      io.stderr(`Failed to collect ${failure.projectId}: ${failure.message}`);
-    }
-    return result.failures.length > 0 ? 3 : 0;
-  } catch (error) {
-    if (error instanceof CollectGitHubCommandError) {
-      io.stderr(error.message);
-      if (error.code === "invalid-projects-file") return 2;
-      if (error.code === "no-token") return 2;
-      if (error.code === "invalid-date") return 2;
-      return 3;
-    }
-    throw error;
   }
+
+  return 1;
 }
 
 async function runNote(
