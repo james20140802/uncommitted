@@ -41,6 +41,10 @@ export type ActivitySummaryInput = {
   // Already-redacted Codex session signals (from `uncommitted collect codex`).
   // Treated identically to Claude signals so a Codex-only day isn't quiet.
   codexSignals?: ActivitySignal[];
+  // Already-redacted GitHub activity signals (from `uncommitted collect github`).
+  // Treated identically to session signals so a day of merged PRs / closed
+  // issues / reviews isn't quiet.
+  githubSignals?: ActivitySignal[];
 };
 
 export type ActivityProjectSummary = {
@@ -212,7 +216,8 @@ export function buildActivitySummary(
   // treated as current). Both sources are handled identically.
   const sessionSignals = [
     ...(input.claudeSignals ?? []),
-    ...(input.codexSignals ?? [])
+    ...(input.codexSignals ?? []),
+    ...(input.githubSignals ?? [])
   ].filter(
     (signal) =>
       signal.timestamp === "" ||

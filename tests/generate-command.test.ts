@@ -235,6 +235,39 @@ describe("generate command", () => {
     );
   });
 
+  it("incorporates collected GitHub signals into the activity summary", async () => {
+    const { io, stderr } = createIo();
+    const fixture = await createRegisteredProjectFixture();
+    const provider = new TaskAwareProvider();
+
+    await writeGitEvent(fixture.project, "2026-05-12");
+    await writeGitHubSignals(fixture.project, "2026-05-12", [
+      {
+        projectId: fixture.project.id,
+        timestamp: "2026-05-12T09:00:00.000Z",
+        kind: "pr",
+        summary: "PR #42 merged: add the github collector",
+        safetyNotes: []
+      }
+    ]);
+
+    const exitCode = await runCli(["generate", "today"], io, {
+      homeDir: fixture.homeDir,
+      now: () => "2026-05-12T23:30:00.000Z",
+      aiProvider: provider
+    });
+    const outputDir = join(fixture.draftRoot, "2026-05-12", "rev-001");
+    const activitySummary = (await readJson(
+      join(outputDir, "activity-summary.json")
+    )) as { smallWins: string[] };
+
+    expect(exitCode).toBe(0);
+    expect(stderr).toEqual([]);
+    expect(activitySummary.smallWins).toContain(
+      "PR #42 merged: add the github collector"
+    );
+  });
+
   it("completes warning drafts with a visible safety warning and metadata state", async () => {
     const { io, stdout, stderr } = createIo();
     const fixture = await createRegisteredProjectFixture();
@@ -985,6 +1018,27 @@ async function writeCodexSignals(
   }[]
 ): Promise<void> {
   const eventsDir = join(project.root, ".uncommitted", "events", "codex");
+
+  await mkdir(eventsDir, { recursive: true });
+  await writeFile(
+    join(eventsDir, `${targetDate}.jsonl`),
+    signals.map((signal) => JSON.stringify(signal)).join("\n") + "\n",
+    "utf8"
+  );
+}
+
+async function writeGitHubSignals(
+  project: ProjectRecord,
+  targetDate: string,
+  signals: {
+    projectId: string;
+    timestamp: string;
+    kind: string;
+    summary: string;
+    safetyNotes: string[];
+  }[]
+): Promise<void> {
+  const eventsDir = join(project.root, ".uncommitted", "events", "github");
 
   await mkdir(eventsDir, { recursive: true });
   await writeFile(
