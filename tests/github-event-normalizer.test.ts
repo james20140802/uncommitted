@@ -19,10 +19,20 @@ const base: GitHubFetchResult = {
 };
 
 describe("normalizeGitHubFetch", () => {
-  it("emits one signal per PR/issue/review", () => {
+  it("emits one signal per own PR/issue/review and excludes teammates' activity", () => {
     const r = normalizeGitHubFetch({ projectId: "p1", fetch: base });
     const kinds = r.signals.map((s) => s.kind).sort();
-    expect(kinds).toEqual(["issue", "pr", "pr", "review", "review"]);
+    // PR #2 (bob) and review #101 (carol) must not become this user's activity.
+    expect(kinds).toEqual(["issue", "pr", "review"]);
+  });
+
+  it("never emits a signal for a PR/issue/review authored by someone else", () => {
+    const r = normalizeGitHubFetch({ projectId: "p1", fetch: base });
+    expect(r.signals.some((s) => s.summary.includes("#2"))).toBe(false);
+    const reviewSummaries = r.signals
+      .filter((s) => s.kind === "review")
+      .map((s) => s.summary);
+    expect(reviewSummaries).toEqual(["Review APPROVED on PR #1"]);
   });
 
   it("only collects bodies authored by the authenticated user", () => {

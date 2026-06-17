@@ -31,7 +31,13 @@ export function normalizeGitHubFetch(input: NormalizeInput): NormalizedGitHub {
   const me = input.fetch.authenticatedLogin.toLowerCase();
   const visibility = input.fetch.visibility;
 
+  // Only the authenticated user's own activity becomes a diary signal. The
+  // repo/date search returns every teammate's merged PR, closed issue, and
+  // review on the date, so emitting a signal per item would invent work the
+  // user never did. Author comparison is case-insensitive to survive login
+  // case drift, matching the own-body gate.
   for (const pr of input.fetch.mergedPRs) {
+    if (pr.authorLogin.toLowerCase() !== me) continue;
     signals.push({
       projectId: input.projectId,
       timestamp: pr.mergedAt,
@@ -39,12 +45,13 @@ export function normalizeGitHubFetch(input: NormalizeInput): NormalizedGitHub {
       summary: trim(`PR #${pr.number} merged: ${pr.title}`),
       safetyNotes: []
     });
-    if (pr.authorLogin.toLowerCase() === me && pr.body) {
+    if (pr.body) {
       bodies.push({ source: "pr-body", number: pr.number, visibility, text: pr.body, timestamp: pr.mergedAt });
     }
   }
 
   for (const issue of input.fetch.closedIssues) {
+    if (issue.authorLogin.toLowerCase() !== me) continue;
     signals.push({
       projectId: input.projectId,
       timestamp: issue.closedAt,
@@ -52,12 +59,13 @@ export function normalizeGitHubFetch(input: NormalizeInput): NormalizedGitHub {
       summary: trim(`Issue #${issue.number} closed: ${issue.title}`),
       safetyNotes: []
     });
-    if (issue.authorLogin.toLowerCase() === me && issue.body) {
+    if (issue.body) {
       bodies.push({ source: "issue-body", number: issue.number, visibility, text: issue.body, timestamp: issue.closedAt });
     }
   }
 
   for (const review of input.fetch.reviews) {
+    if (review.authorLogin.toLowerCase() !== me) continue;
     signals.push({
       projectId: input.projectId,
       timestamp: review.submittedAt,
@@ -65,7 +73,7 @@ export function normalizeGitHubFetch(input: NormalizeInput): NormalizedGitHub {
       summary: trim(`Review ${review.state} on PR #${review.prNumber}`),
       safetyNotes: []
     });
-    if (review.authorLogin.toLowerCase() === me && review.body) {
+    if (review.body) {
       bodies.push({
         source: "review-comment",
         number: review.prNumber,
