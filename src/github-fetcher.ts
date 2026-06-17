@@ -53,6 +53,9 @@ export class RateLimitedError extends Error {
 }
 
 const API = "https://api.github.com";
+const PER_PAGE = 100;
+// GitHub search exposes at most 1000 results (10 pages of 100).
+const SEARCH_PAGE_CAP = 10;
 
 // GitHub signals rate limiting with 429, or 403 accompanied by an exhausted
 // quota (`x-ratelimit-remaining: 0`) or a `retry-after` header. A bare 403
@@ -95,16 +98,28 @@ export async function fetchGitHubActivity(
     return (await res.json()) as T;
   };
 
+  // Search returns at most 100 items per page (1000 results total). Page through
+  // every page so high-activity days are not silently truncated to the first 100.
+  const searchAll = async (query: string): Promise<GHIssueLike[]> => {
+    const items: GHIssueLike[] = [];
+    for (let page = 1; page <= SEARCH_PAGE_CAP; page++) {
+      const res = await get<{ items?: GHIssueLike[] }>(
+        `/search/issues?q=${encodeURIComponent(query)}&per_page=${PER_PAGE}&page=${page}`
+      );
+      const batch = res.items ?? [];
+      items.push(...batch);
+      if (batch.length < PER_PAGE) break;
+    }
+    return items;
+  };
+
   const me = await get<{ login: string }>("/user");
   const repoInfo = await get<{ private: boolean }>(`/repos/${input.owner}/${input.repo}`);
   const visibility: RepoVisibility = repoInfo.private ? "private" : "public";
+  const repoQ = `repo:${input.owner}/${input.repo}`;
 
-  const prSearch = await get<{ items: GHIssueLike[] }>(
-    `/search/issues?q=${encodeURIComponent(
-      `repo:${input.owner}/${input.repo} is:pr is:merged merged:${input.targetDate}`
-    )}&per_page=100`
-  );
-  const mergedPRs: FetchedPR[] = prSearch.items
+  const prItems = await searchAll(`${repoQ} is:pr is:merged merged:${input.targetDate}`);
+  const mergedPRs: FetchedPR[] = prItems
     .filter((it) => it.pull_request)
     .map((it) => ({
       number: it.number,
@@ -114,12 +129,8 @@ export async function fetchGitHubActivity(
       mergedAt: it.pull_request?.merged_at ?? it.closed_at ?? ""
     }));
 
-  const issueSearch = await get<{ items: GHIssueLike[] }>(
-    `/search/issues?q=${encodeURIComponent(
-      `repo:${input.owner}/${input.repo} is:issue is:closed closed:${input.targetDate}`
-    )}&per_page=100`
-  );
-  const closedIssues: FetchedIssue[] = issueSearch.items
+  const issueItems = await searchAll(`${repoQ} is:issue is:closed closed:${input.targetDate}`);
+  const closedIssues: FetchedIssue[] = issueItems
     .filter((it) => !it.pull_request)
     .map((it) => ({
       number: it.number,
@@ -129,14 +140,26 @@ export async function fetchGitHubActivity(
       closedAt: it.closed_at ?? ""
     }));
 
+  // A review submitted on the target date does not imply the PR was merged that
+  // day, so the same-day merged-PR set misses reviews on still-open or
+  // earlier/later-merged PRs. Discover candidate PRs the user reviewed and that
+  // were touched on the date, then union with merged PRs before fetching reviews.
+  const reviewCandidatePRs = new Set<number>(mergedPRs.map((pr) => pr.number));
+  const reviewedItems = await searchAll(
+    `${repoQ} is:pr reviewed-by:${me.login} updated:${input.targetDate}`
+  );
+  for (const it of reviewedItems) {
+    if (it.pull_request) reviewCandidatePRs.add(it.number);
+  }
+
   const reviews: FetchedReview[] = [];
-  for (const pr of mergedPRs) {
-    const list = await get<GHReview[]>(`/repos/${input.owner}/${input.repo}/pulls/${pr.number}/reviews`);
+  for (const prNumber of reviewCandidatePRs) {
+    const list = await get<GHReview[]>(`/repos/${input.owner}/${input.repo}/pulls/${prNumber}/reviews`);
     for (const r of list) {
       if (!r.submitted_at || !r.submitted_at.startsWith(input.targetDate)) continue;
       reviews.push({
         id: r.id,
-        prNumber: pr.number,
+        prNumber,
         state: r.state ?? "",
         submittedAt: r.submitted_at,
         authorLogin: r.user?.login ?? "",

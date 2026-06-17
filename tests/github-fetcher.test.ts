@@ -127,4 +127,77 @@ describe("fetchGitHubActivity", () => {
     });
     expect(result.visibility).toBe("private");
   });
+
+  it("pages through merged-PR search results beyond the first 100", async () => {
+    const calls: string[] = [];
+    const prItem = (n: number) => ({
+      number: n, title: `PR ${n}`, body: "",
+      pull_request: { merged_at: "2026-06-17T05:00:00Z" },
+      closed_at: "2026-06-17T05:00:00Z", user: { login: "alice" }
+    });
+    const client: HttpClient = async (url) => {
+      calls.push(url);
+      if (url.includes("/reviews")) return jsonResponse([]);
+      if (url.includes("/user")) return jsonResponse({ login: "alice" });
+      if (url.endsWith("/repos/foo/bar")) return jsonResponse({ private: false });
+      if (url.includes("/search/issues")) {
+        const isPrMerged = url.includes("is%3Apr") && url.includes("is%3Amerged");
+        const isReviewedBy = url.includes("reviewed-by");
+        if (isPrMerged && !isReviewedBy) {
+          const page = Number(url.match(/[?&]page=(\d+)/)?.[1] ?? "1");
+          if (page === 1) {
+            return jsonResponse({ items: Array.from({ length: 100 }, (_, i) => prItem(i + 1)) });
+          }
+          if (page === 2) {
+            return jsonResponse({ items: Array.from({ length: 5 }, (_, i) => prItem(i + 101)) });
+          }
+          return jsonResponse({ items: [] });
+        }
+        return jsonResponse({ items: [] });
+      }
+      return jsonResponse({}, 404);
+    };
+
+    const result = await fetchGitHubActivity({
+      token: "t", owner: "foo", repo: "bar",
+      targetDate: "2026-06-17", httpClient: client
+    });
+
+    expect(result.mergedPRs).toHaveLength(105);
+    expect(calls.some((u) => u.includes("page=2") && u.includes("is%3Apr"))).toBe(true);
+  });
+
+  it("discovers reviews on PRs that were not merged on the target date", async () => {
+    const calls: string[] = [];
+    const client: HttpClient = async (url) => {
+      calls.push(url);
+      if (url.includes("/pulls/7/reviews")) {
+        return jsonResponse([
+          { id: 500, state: "APPROVED", submitted_at: "2026-06-17T09:00:00Z",
+            user: { login: "alice" }, body: "ok" }
+        ]);
+      }
+      if (url.includes("/reviews")) return jsonResponse([]);
+      if (url.includes("/user")) return jsonResponse({ login: "alice" });
+      if (url.endsWith("/repos/foo/bar")) return jsonResponse({ private: false });
+      if (url.includes("/search/issues")) {
+        if (url.includes("reviewed-by")) {
+          // PR #7 is open / merged a different day, but the user reviewed it today.
+          return jsonResponse({ items: [{ number: 7, title: "Open PR", pull_request: {}, user: { login: "carol" } }] });
+        }
+        return jsonResponse({ items: [] });
+      }
+      return jsonResponse({}, 404);
+    };
+
+    const result = await fetchGitHubActivity({
+      token: "t", owner: "foo", repo: "bar",
+      targetDate: "2026-06-17", httpClient: client
+    });
+
+    expect(result.mergedPRs).toHaveLength(0);
+    expect(result.reviews.map((r) => r.prNumber)).toContain(7);
+    expect(result.reviews.map((r) => r.id)).toContain(500);
+    expect(calls.some((u) => u.includes("/pulls/7/reviews"))).toBe(true);
+  });
 });
