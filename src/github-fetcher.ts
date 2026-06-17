@@ -54,6 +54,19 @@ export class RateLimitedError extends Error {
 
 const API = "https://api.github.com";
 
+// GitHub signals rate limiting with 429, or 403 accompanied by an exhausted
+// quota (`x-ratelimit-remaining: 0`) or a `retry-after` header. A bare 403
+// (missing scope, no access to a private repo) is an authorization problem and
+// must surface as a normal HTTP error instead of a misleading rate-limit retry.
+function isRateLimited(res: Response): boolean {
+  if (res.status === 429) return true;
+  if (res.status !== 403) return false;
+  return (
+    res.headers.get("retry-after") !== null ||
+    res.headers.get("x-ratelimit-remaining") === "0"
+  );
+}
+
 export async function fetchGitHubActivity(
   input: FetchGitHubActivityInput
 ): Promise<GitHubFetchResult> {
@@ -69,10 +82,10 @@ export async function fetchGitHubActivity(
       "User-Agent": "uncommitted-collector"
     };
     let res = await http(url, { headers });
-    if (res.status === 403 || res.status === 429) {
+    if (isRateLimited(res)) {
       await sleep(1500);
       res = await http(url, { headers });
-      if (res.status === 403 || res.status === 429) {
+      if (isRateLimited(res)) {
         throw new RateLimitedError();
       }
     }

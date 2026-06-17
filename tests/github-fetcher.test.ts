@@ -73,6 +73,48 @@ describe("fetchGitHubActivity", () => {
     expect(calls).toBeGreaterThanOrEqual(2);
   });
 
+  it("treats a 403 without rate-limit headers as a normal HTTP error, not a rate limit", async () => {
+    let calls = 0;
+    const sleep = vi.fn().mockResolvedValue(undefined);
+    const client: HttpClient = async () => {
+      calls++;
+      // 403 with quota remaining => authorization/scope problem, not rate limit.
+      return new Response("Forbidden", {
+        status: 403,
+        headers: { "x-ratelimit-remaining": "57" }
+      });
+    };
+    const err = await fetchGitHubActivity({
+      token: "t", owner: "foo", repo: "bar",
+      targetDate: "2026-06-17", httpClient: client, sleep
+    }).catch((e) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect(err).not.toBeInstanceOf(RateLimitedError);
+    expect((err as Error).message).toContain("403");
+    // No retry/backoff for a non-rate-limit 403.
+    expect(calls).toBe(1);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it("treats a 403 with x-ratelimit-remaining: 0 as a rate limit (retries then throws)", async () => {
+    let calls = 0;
+    const client: HttpClient = async () => {
+      calls++;
+      return new Response("rate limited", {
+        status: 403,
+        headers: { "x-ratelimit-remaining": "0" }
+      });
+    };
+    await expect(
+      fetchGitHubActivity({
+        token: "t", owner: "foo", repo: "bar",
+        targetDate: "2026-06-17", httpClient: client,
+        sleep: vi.fn().mockResolvedValue(undefined)
+      })
+    ).rejects.toBeInstanceOf(RateLimitedError);
+    expect(calls).toBeGreaterThanOrEqual(2);
+  });
+
   it("returns private visibility when /repos reports private: true", async () => {
     const client = makeClient({
       "/user": () => jsonResponse({ login: "alice" }),
