@@ -134,6 +134,51 @@ describe("collectGitHubForRegisteredProjects", () => {
     expect(empty).toBe("");
   });
 
+  it("skips GitLab-only/local projects without requiring a GitHub token", async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), "gh-cmd-"));
+    const projectRoot = await mkdtemp(join(tmpdir(), "gh-proj-"));
+    await seedProjects(homeDir, projectRoot);
+    const result = await collectGitHubForRegisteredProjects({
+      homeDir,
+      env: {}, // no token
+      targetDate: "2026-06-17",
+      remoteUrlReader: async () => "git@gitlab.com:foo/bar.git",
+      httpClient: async () => {
+        throw new Error("should not be called");
+      }
+    });
+    expect(result.skippedProjects).toHaveLength(1);
+    expect(result.successes).toHaveLength(0);
+    expect(result.failures).toHaveLength(0);
+  });
+
+  it("preserves previously collected events when a re-run's fetch fails", async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), "gh-cmd-"));
+    const projectRoot = await mkdtemp(join(tmpdir(), "gh-proj-"));
+    await seedProjects(homeDir, projectRoot);
+
+    const githubDir = join(projectRoot, ".uncommitted", "events", "github");
+    await mkdir(join(githubDir, "raw"), { recursive: true });
+    const signalsPath = join(githubDir, "2026-06-17.jsonl");
+    const rawPath = join(githubDir, "raw", "2026-06-17.jsonl");
+    const priorSignals = '{"projectId":"p1","timestamp":"2026-06-17T05:00:00Z","kind":"pr","summary":"PR #1 merged: keep me","safetyNotes":[]}\n';
+    const priorRaw = '{"source":"pr-body","number":1,"visibility":"public","text":"keep me","timestamp":"2026-06-17T05:00:00Z"}\n';
+    await writeFile(signalsPath, priorSignals);
+    await writeFile(rawPath, priorRaw);
+
+    const result = await collectGitHubForRegisteredProjects({
+      homeDir,
+      env: { GITHUB_TOKEN: "t" },
+      targetDate: "2026-06-17",
+      remoteUrlReader: async () => "https://github.com/foo/bar.git",
+      httpClient: async () => new Response("nope", { status: 500 })
+    });
+
+    expect(result.failures).toHaveLength(1);
+    expect(await readFile(signalsPath, "utf8")).toBe(priorSignals);
+    expect(await readFile(rawPath, "utf8")).toBe(priorRaw);
+  });
+
   it("rejects an invalid --date (not YYYY-MM-DD)", async () => {
     const homeDir = await mkdtemp(join(tmpdir(), "gh-cmd-"));
     const projectRoot = await mkdtemp(join(tmpdir(), "gh-proj-"));

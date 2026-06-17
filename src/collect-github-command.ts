@@ -1,5 +1,7 @@
 import { execFile } from "node:child_process";
+import { access } from "node:fs/promises";
 import { homedir } from "node:os";
+import { join } from "node:path";
 import { promisify } from "node:util";
 import { resolveConfigPaths } from "./config-paths.js";
 import { readProjectsFile } from "./project-registry.js";
@@ -118,22 +120,19 @@ export async function collectGitHubForRegisteredProjects(
     targetDate = now.slice(0, 10);
   }
 
-  const resolved = await resolveGitHubToken({
-    homeDir: input.homeDir ?? homedir(),
-    env: input.env
-  });
-  if (!resolved.token) {
-    throw new CollectGitHubCommandError(
-      "GITHUB_TOKEN not set and `githubToken` missing from config.",
-      "no-token"
-    );
-  }
-
   const remoteUrlReader = input.remoteUrlReader ?? defaultRemoteUrlReader;
   const successes: CollectGitHubSuccess[] = [];
   const failures: CollectGitHubFailure[] = [];
   const skippedProjects: CollectGitHubSkipped[] = [];
 
+  // Classify remotes before requiring a token: a workspace with only
+  // GitLab/local remotes has nothing to collect, so it should skip gracefully
+  // instead of failing with a config error the user can do nothing about.
+  const githubProjects: Array<{
+    project: (typeof projects)[number];
+    owner: string;
+    repo: string;
+  }> = [];
   for (const project of projects) {
     const remoteUrl = await remoteUrlReader(project.root);
     const inferred = inferGitHubOriginRepo(remoteUrl);
@@ -145,11 +144,34 @@ export async function collectGitHubForRegisteredProjects(
       });
       continue;
     }
+    githubProjects.push({
+      project,
+      owner: inferred.owner,
+      repo: inferred.repo
+    });
+  }
+
+  if (githubProjects.length === 0) {
+    return { targetDate, successes, failures, skippedProjects };
+  }
+
+  const resolved = await resolveGitHubToken({
+    homeDir: input.homeDir ?? homedir(),
+    env: input.env
+  });
+  if (!resolved.token) {
+    throw new CollectGitHubCommandError(
+      "GITHUB_TOKEN not set and `githubToken` missing from config.",
+      "no-token"
+    );
+  }
+
+  for (const { project, owner, repo } of githubProjects) {
     try {
       const fetched = await fetchGitHubActivity({
         token: resolved.token,
-        owner: inferred.owner,
-        repo: inferred.repo,
+        owner,
+        repo,
         targetDate,
         httpClient: input.httpClient,
         sleep: input.sleep
@@ -173,17 +195,32 @@ export async function collectGitHubForRegisteredProjects(
         rawCount: written.rawCount
       });
     } catch (error) {
-      // Flush empty canonical files so downstream readers can rely on the path
-      // contract even when a per-project fetch fails partway through.
-      try {
-        await writeGitHubEvents({
-          projectRoot: project.root,
-          targetDate,
-          signals: [],
-          ownAuthoredBodies: []
-        });
-      } catch {
-        // best effort
+      // On failure, never destroy a prior successful collection: if the
+      // canonical signal file already exists, leave it (and the raw archive)
+      // untouched. Only flush empty files on a first run so downstream readers
+      // can still rely on the path contract.
+      const signalsPath = join(
+        project.root,
+        ".uncommitted",
+        "events",
+        "github",
+        `${targetDate}.jsonl`
+      );
+      const hasExisting = await access(signalsPath).then(
+        () => true,
+        () => false
+      );
+      if (!hasExisting) {
+        try {
+          await writeGitHubEvents({
+            projectRoot: project.root,
+            targetDate,
+            signals: [],
+            ownAuthoredBodies: []
+          });
+        } catch {
+          // best effort
+        }
       }
       failures.push({
         projectId: project.id,
