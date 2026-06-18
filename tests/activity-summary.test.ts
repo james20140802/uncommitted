@@ -461,6 +461,34 @@ describe("activity summary — Claude signal wiring (UNC-117)", () => {
     );
   });
 
+  it("seeds a project summary from a GitHub-only project day", () => {
+    const summary = buildActivitySummary(
+      createInput({
+        githubSignals: [
+          {
+            projectId: "cli",
+            timestamp: "2026-05-12T10:00:00.000Z",
+            kind: "pr",
+            summary: "PR #1 merged: add collector",
+            safetyNotes: []
+          },
+          {
+            projectId: "cli",
+            timestamp: "2026-05-12T11:00:00.000Z",
+            kind: "review",
+            summary: "Review APPROVED on PR #2",
+            safetyNotes: []
+          }
+        ]
+      })
+    );
+
+    expect(summary.activityLevel).not.toBe("none");
+    const cli = summary.projects.find((p) => p.projectId === "cli");
+    expect(cli).toBeDefined();
+    expect(cli?.summary).toContain("2 GitHub events");
+  });
+
   it("ignores Claude signals from other dates", () => {
     const summary = buildActivitySummary(
       createInput({
