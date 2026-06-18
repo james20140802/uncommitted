@@ -45,8 +45,12 @@ export async function writeGitHubEvents(input: GitHubWriteInput): Promise<GitHub
     ? input.ownAuthoredBodies.map((b) => JSON.stringify(b)).join("\n") + "\n"
     : "";
 
-  await atomicWrite(signalsFile, signalsBody);
+  // Write the raw archive first so the canonical signal file is only replaced
+  // after the raw write (and its chmod) succeed. Otherwise a raw-write failure
+  // could overwrite a previous good signal file while leaving a stale/missing
+  // raw archive, breaking the failure contract for disk/permission errors.
   await atomicWrite(rawArchiveFile, rawBody, 0o600);
+  await atomicWrite(signalsFile, signalsBody);
 
   return {
     signalsFile,

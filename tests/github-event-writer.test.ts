@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mkdtemp, readFile, stat, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, stat, mkdir, writeFile, chmod } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { writeGitHubEvents } from "../src/github-event-writer.js";
@@ -57,6 +57,38 @@ describe("writeGitHubEvents", () => {
     );
     expect(contents).not.toContain("stale");
     expect(contents).toContain("fresh");
+  });
+
+  it("does not replace an existing good signal file when the raw archive write fails", async () => {
+    const projectRoot = await mkdtemp(join(tmpdir(), "gh-writer-"));
+    const baseDir = join(projectRoot, ".uncommitted", "events", "github");
+    const rawDir = join(baseDir, "raw");
+    await mkdir(rawDir, { recursive: true });
+    // A previous successful collection left a good signal file in place.
+    const signalsFile = join(baseDir, `${targetDate}.jsonl`);
+    await writeFile(signalsFile, "good-prior-signal\n");
+    // Make the raw archive write fail (no write permission on the raw dir).
+    await chmod(rawDir, 0o500);
+
+    try {
+      await expect(
+        writeGitHubEvents({
+          projectRoot,
+          targetDate,
+          signals: [
+            { projectId: "p", timestamp: "x", kind: "pr", summary: "fresh", safetyNotes: [] }
+          ],
+          ownAuthoredBodies: [
+            { source: "pr-body", number: 1, visibility: "private",
+              timestamp: "2026-06-17T05:00:00Z", text: "body" }
+          ]
+        })
+      ).rejects.toBeTruthy();
+      // The canonical signal file must be untouched: raw archive is written first.
+      expect(await readFile(signalsFile, "utf8")).toBe("good-prior-signal\n");
+    } finally {
+      await chmod(rawDir, 0o700);
+    }
   });
 
   it("does not write empty files when no signals or bodies are supplied", async () => {
