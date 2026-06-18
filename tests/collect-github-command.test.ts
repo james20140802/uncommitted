@@ -179,6 +179,27 @@ describe("collectGitHubForRegisteredProjects", () => {
     expect(await readFile(rawPath, "utf8")).toBe(priorRaw);
   });
 
+  it("reports a per-project failure when the git remote read fails", async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), "gh-cmd-"));
+    const projectRoot = await mkdtemp(join(tmpdir(), "gh-proj-"));
+    await seedProjects(homeDir, projectRoot);
+    const result = await collectGitHubForRegisteredProjects({
+      homeDir,
+      env: {}, // no token: a broken project must not be silently skipped
+      targetDate: "2026-06-17",
+      remoteUrlReader: async () => {
+        throw new Error("not a git repository");
+      },
+      httpClient: async () => {
+        throw new Error("should not be called");
+      }
+    });
+    expect(result.failures).toHaveLength(1);
+    expect(result.failures[0].projectId).toBe("p1");
+    expect(result.skippedProjects).toHaveLength(0);
+    expect(result.successes).toHaveLength(0);
+  });
+
   it("rejects an invalid --date (not YYYY-MM-DD)", async () => {
     const homeDir = await mkdtemp(join(tmpdir(), "gh-cmd-"));
     const projectRoot = await mkdtemp(join(tmpdir(), "gh-proj-"));

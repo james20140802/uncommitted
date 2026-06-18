@@ -78,8 +78,18 @@ async function defaultRemoteUrlReader(projectRoot: string): Promise<string> {
       "origin"
     ]);
     return stdout.trim();
-  } catch {
-    return "";
+  } catch (error) {
+    // A repo that simply has no `origin` remote is a legitimate non-GitHub
+    // skip — return an empty URL. But a genuine command failure (path gone,
+    // not a Git repo, git unavailable) must surface so the project is reported
+    // as a failure instead of silently dropped from collection.
+    const stderr = (error as { stderr?: string }).stderr ?? "";
+    if (/no such remote/i.test(stderr)) {
+      return "";
+    }
+    const detail = (stderr.split("\n").find((line) => line.trim().length > 0) ??
+      (error instanceof Error ? error.message : "git remote read failed")).trim();
+    throw new Error(`Could not read git remote: ${detail}`, { cause: error });
   }
 }
 
@@ -134,7 +144,19 @@ export async function collectGitHubForRegisteredProjects(
     repo: string;
   }> = [];
   for (const project of projects) {
-    const remoteUrl = await remoteUrlReader(project.root);
+    let remoteUrl: string;
+    try {
+      remoteUrl = await remoteUrlReader(project.root);
+    } catch (error) {
+      // A broken project path or non-repo must not masquerade as a graceful
+      // non-GitHub skip; report it as a per-project failure.
+      failures.push({
+        projectId: project.id,
+        message:
+          error instanceof Error ? error.message : "Could not read git remote."
+      });
+      continue;
+    }
     const inferred = inferGitHubOriginRepo(remoteUrl);
     if (!inferred.isGitHub || !inferred.owner || !inferred.repo) {
       skippedProjects.push({
