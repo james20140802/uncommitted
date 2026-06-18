@@ -51,7 +51,8 @@ export function normalizeGitHubFetch(input: NormalizeInput): NormalizedGitHub {
   }
 
   for (const issue of input.fetch.closedIssues) {
-    if (issue.authorLogin.toLowerCase() !== me) continue;
+    // Attribute on the closer: only signal issues the authenticated user closed.
+    if (issue.closedByLogin.toLowerCase() !== me) continue;
     signals.push({
       projectId: input.projectId,
       timestamp: issue.closedAt,

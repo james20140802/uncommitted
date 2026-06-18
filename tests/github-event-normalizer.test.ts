@@ -10,7 +10,7 @@ const base: GitHubFetchResult = {
     { number: 2, title: "External PR", body: "from someone else", authorLogin: "bob", mergedAt: "2026-06-17T06:00:00Z" }
   ],
   closedIssues: [
-    { number: 9, title: "Bug X", body: "I tracked this down", authorLogin: "alice", closedAt: "2026-06-17T07:00:00Z" }
+    { number: 9, title: "Bug X", body: "I tracked this down", closedByLogin: "alice", closedAt: "2026-06-17T07:00:00Z" }
   ],
   reviews: [
     { id: 100, prNumber: 1, state: "APPROVED", submittedAt: "2026-06-17T08:00:00Z", authorLogin: "alice", body: "lgtm" },
@@ -50,6 +50,24 @@ describe("normalizeGitHubFetch", () => {
   it("stamps visibility on every own-authored body", () => {
     const r = normalizeGitHubFetch({ projectId: "p1", fetch: { ...base, visibility: "private" } });
     expect(r.ownAuthoredBodies.every((b) => b.visibility === "private")).toBe(true);
+  });
+
+  it("attributes closed issues to the closer, not the opener", () => {
+    const fetch: GitHubFetchResult = {
+      visibility: "public",
+      authenticatedLogin: "alice",
+      mergedPRs: [],
+      closedIssues: [
+        // Opened by someone else but closed by alice => her work, keep it.
+        { number: 9, title: "Closed by me", body: "", closedByLogin: "alice", closedAt: "2026-06-17T07:00:00Z" },
+        // Closed by a teammate => not alice's work, drop it.
+        { number: 10, title: "Closed by bob", body: "", closedByLogin: "bob", closedAt: "2026-06-17T07:30:00Z" }
+      ],
+      reviews: []
+    };
+    const r = normalizeGitHubFetch({ projectId: "p", fetch });
+    const issueSummaries = r.signals.filter((s) => s.kind === "issue").map((s) => s.summary);
+    expect(issueSummaries).toEqual(["Issue #9 closed: Closed by me"]);
   });
 
   it("compares author logins case-insensitively so case drift doesn't drop own bodies", () => {

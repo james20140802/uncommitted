@@ -167,6 +167,42 @@ describe("fetchGitHubActivity", () => {
     expect(calls.some((u) => u.includes("page=2") && u.includes("is%3Apr"))).toBe(true);
   });
 
+  it("attributes a closed issue to the closer, not the opener", async () => {
+    const client: HttpClient = async (url) => {
+      if (url.includes("/issues/9")) {
+        // Opened by bob, closed by the authenticated user (alice).
+        return jsonResponse({ number: 9, closed_by: { login: "alice" } });
+      }
+      if (url.includes("/issues/10")) {
+        // Opened by alice, closed by bob.
+        return jsonResponse({ number: 10, closed_by: { login: "bob" } });
+      }
+      if (url.includes("/reviews")) return jsonResponse([]);
+      if (url.includes("/user")) return jsonResponse({ login: "alice" });
+      if (url.endsWith("/repos/foo/bar")) return jsonResponse({ private: false });
+      if (url.includes("/search/issues")) {
+        if (url.includes("is%3Aissue")) {
+          return jsonResponse({ items: [
+            { number: 9, title: "Issue nine", body: "b", closed_at: "2026-06-17T06:00:00Z", user: { login: "bob" } },
+            { number: 10, title: "Issue ten", body: "b", closed_at: "2026-06-17T06:30:00Z", user: { login: "alice" } }
+          ] });
+        }
+        return jsonResponse({ items: [] });
+      }
+      return jsonResponse({}, 404);
+    };
+
+    const result = await fetchGitHubActivity({
+      token: "t", owner: "foo", repo: "bar",
+      targetDate: "2026-06-17", httpClient: client
+    });
+
+    const nine = result.closedIssues.find((i) => i.number === 9);
+    const ten = result.closedIssues.find((i) => i.number === 10);
+    expect(nine?.closedByLogin).toBe("alice");
+    expect(ten?.closedByLogin).toBe("bob");
+  });
+
   it("discovers reviews on PRs that were not merged on the target date", async () => {
     const calls: string[] = [];
     const client: HttpClient = async (url) => {

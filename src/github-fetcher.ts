@@ -15,7 +15,10 @@ export type FetchedIssue = {
   number: number;
   title: string;
   body: string;
-  authorLogin: string;
+  // The login of whoever closed the issue (not the opener). Closing is the
+  // activity a diary signal attributes, so the opener's identity would mis-fire
+  // the signal when opener and closer differ. Empty when the closer is unknown.
+  closedByLogin: string;
   closedAt: string;
 };
 
@@ -129,16 +132,25 @@ export async function fetchGitHubActivity(
       mergedAt: it.pull_request?.merged_at ?? it.closed_at ?? ""
     }));
 
-  const issueItems = await searchAll(`${repoQ} is:issue is:closed closed:${input.targetDate}`);
-  const closedIssues: FetchedIssue[] = issueItems
-    .filter((it) => !it.pull_request)
-    .map((it) => ({
+  // Issue search reports the opener (`user`), not who closed it. Fetch each
+  // issue so the closer (`closed_by`) drives signal attribution; otherwise an
+  // issue the user opened but a teammate closed (or vice versa) would invent or
+  // omit a "closed" diary signal. An unknown closer stays empty and is dropped.
+  const issueItems = (await searchAll(`${repoQ} is:issue is:closed closed:${input.targetDate}`))
+    .filter((it) => !it.pull_request);
+  const closedIssues: FetchedIssue[] = [];
+  for (const it of issueItems) {
+    const detail = await get<{ closed_by?: { login?: string } }>(
+      `/repos/${input.owner}/${input.repo}/issues/${it.number}`
+    );
+    closedIssues.push({
       number: it.number,
       title: it.title ?? "",
       body: typeof it.body === "string" ? it.body : "",
-      authorLogin: it.user?.login ?? "",
+      closedByLogin: detail.closed_by?.login ?? "",
       closedAt: it.closed_at ?? ""
-    }));
+    });
+  }
 
   // A review submitted on the target date does not imply the PR was merged that
   // day, so the same-day merged-PR set misses reviews on still-open or
