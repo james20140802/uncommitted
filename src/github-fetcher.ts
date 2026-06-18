@@ -164,9 +164,24 @@ export async function fetchGitHubActivity(
     if (it.pull_request) reviewCandidatePRs.add(it.number);
   }
 
+  // The reviews endpoint defaults to 30 per page, so a PR with many reviews
+  // would silently drop the user's review past the first page. Page through it
+  // the same way the search calls do, stopping at the first short page.
+  const listReviews = async (prNumber: number): Promise<GHReview[]> => {
+    const all: GHReview[] = [];
+    for (let page = 1; ; page++) {
+      const batch = await get<GHReview[]>(
+        `/repos/${input.owner}/${input.repo}/pulls/${prNumber}/reviews?per_page=${PER_PAGE}&page=${page}`
+      );
+      all.push(...batch);
+      if (batch.length < PER_PAGE) break;
+    }
+    return all;
+  };
+
   const reviews: FetchedReview[] = [];
   for (const prNumber of reviewCandidatePRs) {
-    const list = await get<GHReview[]>(`/repos/${input.owner}/${input.repo}/pulls/${prNumber}/reviews`);
+    const list = await listReviews(prNumber);
     for (const r of list) {
       if (!r.submitted_at || !r.submitted_at.startsWith(input.targetDate)) continue;
       reviews.push({

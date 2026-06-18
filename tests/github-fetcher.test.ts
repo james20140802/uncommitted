@@ -203,6 +203,53 @@ describe("fetchGitHubActivity", () => {
     expect(ten?.closedByLogin).toBe("bob");
   });
 
+  it("pages through PR reviews beyond the first page", async () => {
+    const calls: string[] = [];
+    const review = (id: number) => ({
+      id, state: "COMMENTED", submitted_at: "2026-06-17T09:00:00Z",
+      user: { login: "alice" }, body: "ok"
+    });
+    const client: HttpClient = async (url) => {
+      calls.push(url);
+      if (url.includes("/pulls/1/reviews")) {
+        const page = Number(url.match(/[?&]page=(\d+)/)?.[1] ?? "1");
+        if (page === 1) {
+          return jsonResponse(Array.from({ length: 100 }, (_, i) => review(i + 1)));
+        }
+        if (page === 2) {
+          return jsonResponse([review(101)]);
+        }
+        return jsonResponse([]);
+      }
+      if (url.includes("/user")) return jsonResponse({ login: "alice" });
+      if (url.endsWith("/repos/foo/bar")) return jsonResponse({ private: false });
+      if (url.includes("/search/issues")) {
+        const isPrMerged = url.includes("is%3Apr") && url.includes("is%3Amerged");
+        if (isPrMerged) {
+          const page = Number(url.match(/[?&]page=(\d+)/)?.[1] ?? "1");
+          if (page === 1) {
+            return jsonResponse({ items: [{
+              number: 1, title: "PR one", pull_request: { merged_at: "2026-06-17T05:00:00Z" },
+              closed_at: "2026-06-17T05:00:00Z", user: { login: "alice" }
+            }] });
+          }
+          return jsonResponse({ items: [] });
+        }
+        return jsonResponse({ items: [] });
+      }
+      return jsonResponse({}, 404);
+    };
+
+    const result = await fetchGitHubActivity({
+      token: "t", owner: "foo", repo: "bar",
+      targetDate: "2026-06-17", httpClient: client
+    });
+
+    expect(result.reviews).toHaveLength(101);
+    expect(result.reviews.map((r) => r.id)).toContain(101);
+    expect(calls.some((u) => u.includes("/pulls/1/reviews") && u.includes("page=2"))).toBe(true);
+  });
+
   it("discovers reviews on PRs that were not merged on the target date", async () => {
     const calls: string[] = [];
     const client: HttpClient = async (url) => {
