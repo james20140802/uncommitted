@@ -199,13 +199,15 @@ export async function runGenerateCommand(
   const manualNotes = await readManualNoteEvents(projects, targetDate);
   const claudeSignals = await readClaudeActivitySignals(projects, targetDate);
   const codexSignals = await readCodexActivitySignals(projects, targetDate);
+  const githubSignals = await readGitHubActivitySignals(projects, targetDate);
   const activitySummary = buildActivitySummary({
     targetDate,
     generatedAt,
     gitEvents,
     manualNotes,
     claudeSignals,
-    codexSignals
+    codexSignals,
+    githubSignals
   });
   const draftRevision = await runDraftStorageOperation(() =>
     createDraftRevision({
@@ -695,10 +697,17 @@ function readCodexActivitySignals(
   return readSessionActivitySignals(projects, targetDate, "codex");
 }
 
+function readGitHubActivitySignals(
+  projects: ProjectRecord[],
+  targetDate: string
+): Promise<ActivitySignal[]> {
+  return readSessionActivitySignals(projects, targetDate, "github");
+}
+
 async function readSessionActivitySignals(
   projects: ProjectRecord[],
   targetDate: string,
-  source: "claude" | "codex"
+  source: "claude" | "codex" | "github"
 ): Promise<ActivitySignal[]> {
   const signals: ActivitySignal[] = [];
 

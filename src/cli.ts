@@ -15,6 +15,10 @@ import {
   collectCodexForRegisteredProjects,
   CollectCodexCommandError
 } from "./collect-codex-command.js";
+import {
+  collectGitHubForRegisteredProjects,
+  CollectGitHubCommandError
+} from "./collect-github-command.js";
 import { AiGenerationError, type AiProvider } from "./ai-provider.js";
 import { commands, isKnownCommand } from "./commands.js";
 import { formatDoctorReport, runDoctorCommand } from "./doctor-command.js";
@@ -757,13 +761,20 @@ async function runCollect(
   io: CliIo,
   options: CliOptions
 ): Promise<number> {
-  if (args.length < 1 || (args[0] !== "git" && args[0] !== "claude" && args[0] !== "codex")) {
-    io.stderr("Usage: uncommitted collect <git|claude|codex>");
+  if (
+    args.length < 1 ||
+    (args[0] !== "git" &&
+      args[0] !== "claude" &&
+      args[0] !== "codex" &&
+      args[0] !== "github")
+  ) {
+    io.stderr("Usage: uncommitted collect <git|claude|codex|github>");
     return 1;
   }
 
   // git and claude take no further arguments; reject trailing tokens so an
-  // unsupported flag can't silently collect/overwrite today's events.
+  // unsupported flag can't silently collect/overwrite today's events. codex and
+  // github both accept --date so they validate their own argv below.
   if ((args[0] === "git" || args[0] === "claude") && args.length > 1) {
     io.stderr(`Usage: uncommitted collect ${args[0]}`);
     return 1;
@@ -832,61 +843,119 @@ async function runCollect(
     }
   }
 
-  // args[0] === "codex"
-  const codexArgs = args.slice(1);
-  let targetDate: string | undefined;
-  for (let i = 0; i < codexArgs.length; i++) {
-    if (codexArgs[i] === "--date") {
-      // --date must be followed by a value; otherwise the collector would fall
-      // back to today and overwrite today's events on a typo.
-      if (i + 1 >= codexArgs.length) {
-        io.stderr("Usage: uncommitted collect codex [--date YYYY-MM-DD]");
-        return 1;
+  if (args[0] === "codex") {
+    const codexArgs = args.slice(1);
+    let targetDate: string | undefined;
+    for (let i = 0; i < codexArgs.length; i++) {
+      if (codexArgs[i] === "--date") {
+        // --date must be followed by a value; otherwise the collector would fall
+        // back to today and overwrite today's events on a typo.
+        if (i + 1 >= codexArgs.length) {
+          io.stderr("Usage: uncommitted collect codex [--date YYYY-MM-DD]");
+          return 1;
+        }
+        targetDate = codexArgs[++i];
+        continue;
       }
-      targetDate = codexArgs[++i];
-      continue;
-    }
-    // Reject unknown/extra tokens rather than silently ignoring them.
-    io.stderr("Usage: uncommitted collect codex [--date YYYY-MM-DD]");
-    return 1;
-  }
-
-  try {
-    const result = await collectCodexForRegisteredProjects({
-      homeDir: options.homeDir,
-      codexHome: options.codexHome,
-      now: options.now ?? (() => new Date().toISOString()),
-      targetDate
-    });
-
-    if (result.codexLogsMissing) {
-      io.stdout("No Codex session logs found at ~/.codex/sessions. Skipping.");
-      return 0;
+      // Reject unknown/extra tokens rather than silently ignoring them.
+      io.stderr("Usage: uncommitted collect codex [--date YYYY-MM-DD]");
+      return 1;
     }
 
-    if (result.successes.length > 0) {
-      io.stdout(
-        `Collected Codex activity for ${formatProjectCount(result.successes.length)}.`
-      );
-      for (const success of result.successes) {
+    try {
+      const result = await collectCodexForRegisteredProjects({
+        homeDir: options.homeDir,
+        codexHome: options.codexHome,
+        now: options.now ?? (() => new Date().toISOString()),
+        targetDate
+      });
+
+      if (result.codexLogsMissing) {
+        io.stdout("No Codex session logs found at ~/.codex/sessions. Skipping.");
+        return 0;
+      }
+
+      if (result.successes.length > 0) {
         io.stdout(
-          `${success.projectId}: ${success.signalCount} signals, ${success.conversationCount} turns, ${success.toolFactCount} tool facts.`
+          `Collected Codex activity for ${formatProjectCount(result.successes.length)}.`
         );
+        for (const success of result.successes) {
+          io.stdout(
+            `${success.projectId}: ${success.signalCount} signals, ${success.conversationCount} turns, ${success.toolFactCount} tool facts.`
+          );
+        }
       }
-    }
 
-    for (const failure of result.failures) {
-      io.stderr(`Failed to collect ${failure.projectId}: ${failure.message}`);
-    }
+      for (const failure of result.failures) {
+        io.stderr(`Failed to collect ${failure.projectId}: ${failure.message}`);
+      }
 
-    return result.failures.length > 0 ? 3 : 0;
-  } catch (error) {
-    if (error instanceof CollectCodexCommandError) {
-      io.stderr(error.message);
-      return error.code === "invalid-projects-file" || error.code === "invalid-date" ? 2 : 3;
+      return result.failures.length > 0 ? 3 : 0;
+    } catch (error) {
+      if (error instanceof CollectCodexCommandError) {
+        io.stderr(error.message);
+        return error.code === "invalid-projects-file" ||
+          error.code === "invalid-date"
+          ? 2
+          : 3;
+      }
+      throw error;
     }
-    throw error;
   }
+
+  if (args[0] === "github") {
+    const ghArgs = args.slice(1);
+    let ghTargetDate: string | undefined;
+    for (let i = 0; i < ghArgs.length; i++) {
+      if (ghArgs[i] === "--date") {
+        if (i + 1 >= ghArgs.length) {
+          io.stderr("Usage: uncommitted collect github [--date YYYY-MM-DD]");
+          return 1;
+        }
+        ghTargetDate = ghArgs[++i];
+        continue;
+      }
+      io.stderr("Usage: uncommitted collect github [--date YYYY-MM-DD]");
+      return 1;
+    }
+
+    try {
+      const result = await collectGitHubForRegisteredProjects({
+        homeDir: options.homeDir,
+        targetDate: ghTargetDate,
+        now: options.now ?? (() => new Date().toISOString())
+      });
+
+      if (result.successes.length > 0) {
+        io.stdout(
+          `Collected GitHub activity for ${formatProjectCount(result.successes.length)}.`
+        );
+        for (const success of result.successes) {
+          io.stdout(
+            `${success.projectId}: ${success.signalCount} signals, ${success.rawCount} authored bodies.`
+          );
+        }
+      }
+      for (const skip of result.skippedProjects) {
+        io.stdout(`${skip.projectId}: skipped (non-GitHub remote).`);
+      }
+      for (const failure of result.failures) {
+        io.stderr(`Failed to collect ${failure.projectId}: ${failure.message}`);
+      }
+      return result.failures.length > 0 ? 3 : 0;
+    } catch (error) {
+      if (error instanceof CollectGitHubCommandError) {
+        io.stderr(error.message);
+        if (error.code === "invalid-projects-file") return 2;
+        if (error.code === "no-token") return 2;
+        if (error.code === "invalid-date") return 2;
+        return 3;
+      }
+      throw error;
+    }
+  }
+
+  return 1;
 }
 
 async function runNote(

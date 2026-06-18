@@ -65,7 +65,7 @@ describe("cli", () => {
 
     expect(exitCode).toBe(1);
     expect(stdout).toEqual([]);
-    expect(stderr.join("\n")).toContain("Usage: uncommitted collect <git|claude|codex>");
+    expect(stderr.join("\n")).toContain("Usage: uncommitted collect <git|claude|codex|github>");
   });
 
   it("rejects extra arguments for collect git instead of silently ignoring them", async () => {
@@ -106,6 +106,26 @@ describe("cli", () => {
     expect(exitCode).toBe(1);
     expect(stdout).toEqual([]);
     expect(stderr.join("\n")).toContain("Usage: uncommitted collect codex");
+  });
+
+  it("rejects extra args after `collect github`", async () => {
+    const { io, stdout, stderr } = createIo();
+
+    const exitCode = await runCli(["collect", "github", "unexpected"], io);
+
+    expect(exitCode).toBe(1);
+    expect(stdout).toEqual([]);
+    expect(stderr.join("\n")).toContain("Usage: uncommitted collect github");
+  });
+
+  it("rejects collect github --date without a value", async () => {
+    const { io, stdout, stderr } = createIo();
+
+    const exitCode = await runCli(["collect", "github", "--date"], io);
+
+    expect(exitCode).toBe(1);
+    expect(stdout).toEqual([]);
+    expect(stderr.join("\n")).toContain("Usage: uncommitted collect github");
   });
 
   it("reports skip and exits 0 when collect claude finds no session logs", async () => {

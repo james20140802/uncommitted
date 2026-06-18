@@ -188,3 +188,22 @@ describe("safety report", () => {
     expect(result.redactedText).not.toContain("git@github.com");
   });
 });
+
+describe("safety-report private-repo-remote (UNC-152)", () => {
+  it("masks SSH-style remote URLs with git+ssh prefix", () => {
+    const r = checkDraftSafety(
+      "see git+ssh://git@github.com/foo/bar.git for details"
+    );
+    expect(r.redactedText).not.toContain(
+      "git+ssh://git@github.com/foo/bar.git"
+    );
+    expect(
+      r.report.risks.some((x) => x.category === "private-repo-remote")
+    ).toBe(true);
+  });
+
+  it("preserves public org/repo references that aren't URLs", () => {
+    const r = checkDraftSafety("our example is github.com/foo/bar in docs");
+    expect(r.redactedText).toContain("github.com/foo/bar");
+  });
+});

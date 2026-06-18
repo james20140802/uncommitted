@@ -41,6 +41,10 @@ export type ActivitySummaryInput = {
   // Already-redacted Codex session signals (from `uncommitted collect codex`).
   // Treated identically to Claude signals so a Codex-only day isn't quiet.
   codexSignals?: ActivitySignal[];
+  // Already-redacted GitHub activity signals (from `uncommitted collect github`).
+  // Treated identically to session signals so a day of merged PRs / closed
+  // issues / reviews isn't quiet.
+  githubSignals?: ActivitySignal[];
 };
 
 export type ActivityProjectSummary = {
@@ -115,6 +119,7 @@ type ProjectAccumulator = {
   deletions: number;
   uncommittedChangeCount: number;
   manualNoteCount: number;
+  githubSignalCount: number;
   themes: Set<Exclude<ActivityTheme, "mixed" | "quiet">>;
 };
 
@@ -212,12 +217,25 @@ export function buildActivitySummary(
   // treated as current). Both sources are handled identically.
   const sessionSignals = [
     ...(input.claudeSignals ?? []),
-    ...(input.codexSignals ?? [])
+    ...(input.codexSignals ?? []),
+    ...(input.githubSignals ?? [])
   ].filter(
     (signal) =>
       signal.timestamp === "" ||
       signal.timestamp.slice(0, 10) === input.targetDate
   );
+
+  // GitHub signals carry a registered projectId but never create a git event or
+  // manual note, so a PR/review-only day would leave `projects` empty and the
+  // diary would claim zero projects on an active day. Seed a project
+  // accumulator per GitHub signal so PR-only days keep their project
+  // attribution (name falls back to the id, as manual-note-only projects do).
+  for (const signal of input.githubSignals ?? []) {
+    if (signal.timestamp !== "" && signal.timestamp.slice(0, 10) !== input.targetDate) {
+      continue;
+    }
+    getProject(projects, signal.projectId, signal.projectId).githubSignalCount += 1;
+  }
 
   // Build a normalized signal stream from the source-shaped inputs and append
   // the session signals, then derive the 4 source-agnostic synthesis fields
@@ -420,6 +438,7 @@ function getProject(
     deletions: 0,
     uncommittedChangeCount: 0,
     manualNoteCount: 0,
+    githubSignalCount: 0,
     themes: new Set()
   };
 
@@ -456,6 +475,10 @@ function summarizeProject(project: ProjectAccumulator): string {
 
   if (project.uncommittedChangeCount > 0) {
     parts.push(`${project.uncommittedChangeCount} uncommitted ${project.uncommittedChangeCount === 1 ? "file" : "files"}`);
+  }
+
+  if (project.githubSignalCount > 0) {
+    parts.push(`${project.githubSignalCount} GitHub ${project.githubSignalCount === 1 ? "event" : "events"}`);
   }
 
   return parts.length > 0 ? parts.join(", ") : "No activity signals.";
