@@ -17,7 +17,9 @@ describe("init command", () => {
         aiProvider: "openai",
         carouselVisualStyle: "photo-first",
         persona: "dry coworker",
-        roastLevel: "3"
+        roastLevel: "3",
+        rawRetentionDays: "14",
+        captionProjectionTokenBudget: "2048"
       }
     });
 
@@ -30,7 +32,9 @@ describe("init command", () => {
         aiProvider: "openai",
         carouselVisualStyle: "photo-first",
         persona: "dry coworker",
-        roastLevel: 3
+        roastLevel: 3,
+        rawRetentionDays: 14,
+        captionProjectionTokenBudget: 2048
       });
     expect(JSON.parse(await readFile(join(homeDir, ".uncommitted", "projects.json"), "utf8")))
       .toEqual({ schemaVersion: 1, projects: [] });
@@ -191,6 +195,131 @@ describe("init command", () => {
         answers: { roastLevel: "6" }
       })
     ).rejects.toThrow("Roast level must be a number from 0 to 5.");
+  });
+
+  it("includes Source Expansion defaults (30 day retention, 4000 token caption budget) when omitted", async () => {
+    const homeDir = await mkTestHome("source-expansion-defaults");
+
+    await runInitCommand([], { homeDir });
+
+    const config = JSON.parse(
+      await readFile(join(homeDir, ".uncommitted", "config.json"), "utf8")
+    ) as { rawRetentionDays: number; captionProjectionTokenBudget: number };
+    expect(config.rawRetentionDays).toBe(30);
+    expect(config.captionProjectionTokenBudget).toBe(4000);
+  });
+
+  it("accepts explicit Source Expansion values", async () => {
+    const homeDir = await mkTestHome("source-expansion-explicit");
+
+    await runInitCommand([], {
+      homeDir,
+      answers: {
+        rawRetentionDays: "7",
+        captionProjectionTokenBudget: "8000"
+      }
+    });
+
+    const config = JSON.parse(
+      await readFile(join(homeDir, ".uncommitted", "config.json"), "utf8")
+    ) as { rawRetentionDays: number; captionProjectionTokenBudget: number };
+    expect(config.rawRetentionDays).toBe(7);
+    expect(config.captionProjectionTokenBudget).toBe(8000);
+  });
+
+  it("treats `0` and `unlimited` as unlimited raw retention", async () => {
+    const zeroHome = await mkTestHome("retention-zero");
+    const unlimitedHome = await mkTestHome("retention-unlimited");
+
+    await runInitCommand([], {
+      homeDir: zeroHome,
+      answers: { rawRetentionDays: "0" }
+    });
+    await runInitCommand([], {
+      homeDir: unlimitedHome,
+      answers: { rawRetentionDays: " Unlimited " }
+    });
+
+    const zeroConfig = JSON.parse(
+      await readFile(join(zeroHome, ".uncommitted", "config.json"), "utf8")
+    ) as { rawRetentionDays: number };
+    const unlimitedConfig = JSON.parse(
+      await readFile(join(unlimitedHome, ".uncommitted", "config.json"), "utf8")
+    ) as { rawRetentionDays: number };
+
+    expect(zeroConfig.rawRetentionDays).toBe(0);
+    expect(unlimitedConfig.rawRetentionDays).toBe(0);
+  });
+
+  it("rejects negative or non-integer raw retention days", async () => {
+    const negativeHome = await mkTestHome("retention-negative");
+    const fractionHome = await mkTestHome("retention-fraction");
+    const garbageHome = await mkTestHome("retention-garbage");
+
+    await expect(
+      runInitCommand([], {
+        homeDir: negativeHome,
+        answers: { rawRetentionDays: "-1" }
+      })
+    ).rejects.toThrow(
+      "Raw retention days must be a non-negative integer (use 0 or 'unlimited' to keep forever)."
+    );
+    await expect(
+      runInitCommand([], {
+        homeDir: fractionHome,
+        answers: { rawRetentionDays: "1.5" }
+      })
+    ).rejects.toThrow(
+      "Raw retention days must be a non-negative integer (use 0 or 'unlimited' to keep forever)."
+    );
+    await expect(
+      runInitCommand([], {
+        homeDir: garbageHome,
+        answers: { rawRetentionDays: "soon" }
+      })
+    ).rejects.toThrow(
+      "Raw retention days must be a non-negative integer (use 0 or 'unlimited' to keep forever)."
+    );
+  });
+
+  it("rejects non-positive or non-integer caption projection token budgets", async () => {
+    const zeroHome = await mkTestHome("budget-zero");
+    const negativeHome = await mkTestHome("budget-negative");
+    const fractionHome = await mkTestHome("budget-fraction");
+    const garbageHome = await mkTestHome("budget-garbage");
+
+    await expect(
+      runInitCommand([], {
+        homeDir: zeroHome,
+        answers: { captionProjectionTokenBudget: "0" }
+      })
+    ).rejects.toThrow(
+      "Caption projection token budget must be a positive integer."
+    );
+    await expect(
+      runInitCommand([], {
+        homeDir: negativeHome,
+        answers: { captionProjectionTokenBudget: "-100" }
+      })
+    ).rejects.toThrow(
+      "Caption projection token budget must be a positive integer."
+    );
+    await expect(
+      runInitCommand([], {
+        homeDir: fractionHome,
+        answers: { captionProjectionTokenBudget: "1.5" }
+      })
+    ).rejects.toThrow(
+      "Caption projection token budget must be a positive integer."
+    );
+    await expect(
+      runInitCommand([], {
+        homeDir: garbageHome,
+        answers: { captionProjectionTokenBudget: "lots" }
+      })
+    ).rejects.toThrow(
+      "Caption projection token budget must be a positive integer."
+    );
   });
 });
 
