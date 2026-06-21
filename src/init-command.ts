@@ -11,6 +11,8 @@ export type InitAnswers = {
   carouselVisualStyle?: string;
   persona?: string;
   roastLevel?: string;
+  rawRetentionDays?: string;
+  captionProjectionTokenBudget?: string;
 };
 
 export type InitCommandOptions = {
@@ -26,6 +28,8 @@ export type InitConfig = {
   carouselVisualStyle: "photo-first" | "story-card";
   persona: string;
   roastLevel: number;
+  rawRetentionDays: number;
+  captionProjectionTokenBudget: number;
 };
 
 export type InitCommandResult = {
@@ -39,7 +43,9 @@ const defaultAnswers = {
   aiProvider: "none",
   carouselVisualStyle: "photo-first",
   persona: "project-local AI coworker writing its own off-the-record diary",
-  roastLevel: "2"
+  roastLevel: "2",
+  rawRetentionDays: "30",
+  captionProjectionTokenBudget: "4000"
 };
 const supportedAiProviders = [
   "none",
@@ -64,6 +70,10 @@ export async function runInitCommand(
     answers.carouselVisualStyle
   );
   const roastLevel = parseRoastLevel(answers.roastLevel);
+  const rawRetentionDays = parseRawRetentionDays(answers.rawRetentionDays);
+  const captionProjectionTokenBudget = parseCaptionProjectionTokenBudget(
+    answers.captionProjectionTokenBudget
+  );
   const paths = resolveConfigPaths({
     homeDir: options.homeDir,
     draftRoot: answers.draftRoot
@@ -82,7 +92,9 @@ export async function runInitCommand(
     aiProvider,
     carouselVisualStyle,
     persona: answers.persona,
-    roastLevel
+    roastLevel,
+    rawRetentionDays,
+    captionProjectionTokenBudget
   };
 
   await writeJson(paths.configFile, config);
@@ -116,7 +128,12 @@ async function resolveAnswers(answers: InitAnswers = {}): Promise<Required<InitA
       carouselVisualStyle:
         answers.carouselVisualStyle ?? defaultAnswers.carouselVisualStyle,
       persona: answers.persona ?? defaultAnswers.persona,
-      roastLevel: answers.roastLevel ?? defaultAnswers.roastLevel
+      roastLevel: answers.roastLevel ?? defaultAnswers.roastLevel,
+      rawRetentionDays:
+        answers.rawRetentionDays ?? defaultAnswers.rawRetentionDays,
+      captionProjectionTokenBudget:
+        answers.captionProjectionTokenBudget ??
+        defaultAnswers.captionProjectionTokenBudget
     };
   }
 
@@ -137,7 +154,17 @@ async function resolveAnswers(answers: InitAnswers = {}): Promise<Required<InitA
         defaultAnswers.carouselVisualStyle
       ),
       persona: await ask(readline, "Persona", defaultAnswers.persona),
-      roastLevel: await ask(readline, "Roast level 0-5", defaultAnswers.roastLevel)
+      roastLevel: await ask(readline, "Roast level 0-5", defaultAnswers.roastLevel),
+      rawRetentionDays: await ask(
+        readline,
+        "Raw event retention days (0 or 'unlimited' to keep forever)",
+        defaultAnswers.rawRetentionDays
+      ),
+      captionProjectionTokenBudget: await ask(
+        readline,
+        "Caption projection token budget per day",
+        defaultAnswers.captionProjectionTokenBudget
+      )
     };
   } finally {
     readline.close();
@@ -158,6 +185,34 @@ function parseRoastLevel(value: string): number {
 
   if (!Number.isInteger(parsed) || parsed < 0 || parsed > 5) {
     throw new Error("Roast level must be a number from 0 to 5.");
+  }
+
+  return parsed;
+}
+
+function parseRawRetentionDays(value: string): number {
+  const normalized = value.trim().toLowerCase();
+
+  if (normalized === "unlimited") {
+    return 0;
+  }
+
+  const parsed = Number(normalized);
+
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    throw new Error(
+      "Raw retention days must be a non-negative integer (use 0 or 'unlimited' to keep forever)."
+    );
+  }
+
+  return parsed;
+}
+
+function parseCaptionProjectionTokenBudget(value: string): number {
+  const parsed = Number(value);
+
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error("Caption projection token budget must be a positive integer.");
   }
 
   return parsed;
