@@ -41,6 +41,7 @@ import {
   type ProjectRecord
 } from "./project-registry.js";
 import { resolveConfigPaths } from "./config-paths.js";
+import { loadSourceConfig, type SourceName } from "./source-config.js";
 import {
   ExportCommandError,
   runExportCommand
@@ -778,6 +779,16 @@ async function runCollect(
   if ((args[0] === "git" || args[0] === "claude") && args.length > 1) {
     io.stderr(`Usage: uncommitted collect ${args[0]}`);
     return 1;
+  }
+
+  const source = args[0] as SourceName;
+  const paths = resolveConfigPaths({ homeDir: options.homeDir });
+  const sourceConfig = await loadSourceConfig(paths.configFile);
+  if (!sourceConfig[source].enabled) {
+    io.stdout(
+      `Source '${source}' is disabled in config; skipping collection.`
+    );
+    return 0;
   }
 
   if (args[0] === "git") {
