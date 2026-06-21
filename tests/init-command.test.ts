@@ -34,7 +34,13 @@ describe("init command", () => {
         persona: "dry coworker",
         roastLevel: 3,
         rawRetentionDays: 14,
-        captionProjectionTokenBudget: 2048
+        captionProjectionTokenBudget: 2048,
+        sources: {
+          git: { enabled: true },
+          claude: { enabled: true },
+          codex: { enabled: true },
+          github: { enabled: true }
+        }
       });
     expect(JSON.parse(await readFile(join(homeDir, ".uncommitted", "projects.json"), "utf8")))
       .toEqual({ schemaVersion: 1, projects: [] });
@@ -207,6 +213,29 @@ describe("init command", () => {
     ) as { rawRetentionDays: number; captionProjectionTokenBudget: number };
     expect(config.rawRetentionDays).toBe(30);
     expect(config.captionProjectionTokenBudget).toBe(4000);
+  });
+
+  it("writes a default sources map with all four sources enabled", async () => {
+    const homeDir = await mkTestHome("sources-default");
+
+    await runInitCommand([], { homeDir });
+
+    const config = JSON.parse(
+      await readFile(join(homeDir, ".uncommitted", "config.json"), "utf8")
+    ) as {
+      sources: {
+        git: { enabled: boolean };
+        claude: { enabled: boolean };
+        codex: { enabled: boolean };
+        github: { enabled: boolean };
+      };
+    };
+    expect(config.sources).toEqual({
+      git: { enabled: true },
+      claude: { enabled: true },
+      codex: { enabled: true },
+      github: { enabled: true }
+    });
   });
 
   it("accepts explicit Source Expansion values", async () => {
