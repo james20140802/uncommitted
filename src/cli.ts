@@ -43,6 +43,10 @@ import {
 import { resolveConfigPaths } from "./config-paths.js";
 import { loadSourceConfig, type SourceName } from "./source-config.js";
 import {
+  runCollectAll,
+  type CollectInvokerMap
+} from "./collect-all.js";
+import {
   ExportCommandError,
   runExportCommand
 } from "./export-command.js";
@@ -97,6 +101,12 @@ export type CliOptions = {
   schedulerRunner?: LaunchctlRawRunner;
   /** Injectable prompter for feedback command (tests). */
   feedbackPrompter?: FeedbackPrompter;
+  /**
+   * Injectable per-source collect invokers used by `collect all` orchestration.
+   * Tests stub these to force success/failure deterministically without
+   * exercising the live per-source collectors.
+   */
+  collectInvokers?: Partial<CollectInvokerMap>;
 };
 
 const defaultIo: CliIo = {
@@ -767,10 +777,22 @@ async function runCollect(
     (args[0] !== "git" &&
       args[0] !== "claude" &&
       args[0] !== "codex" &&
-      args[0] !== "github")
+      args[0] !== "github" &&
+      args[0] !== "all")
   ) {
-    io.stderr("Usage: uncommitted collect <git|claude|codex|github>");
+    io.stderr("Usage: uncommitted collect <git|claude|codex|github|all>");
     return 1;
+  }
+
+  // `all` orchestrates every enabled source with failure isolation; reject
+  // trailing tokens so a typo (e.g. `collect all --date ...`) can't be
+  // silently ignored.
+  if (args[0] === "all") {
+    if (args.length > 1) {
+      io.stderr("Usage: uncommitted collect all");
+      return 1;
+    }
+    return await runCollectAllCommand(io, options);
   }
 
   // git and claude take no further arguments; reject trailing tokens so an
@@ -967,6 +989,41 @@ async function runCollect(
   }
 
   return 1;
+}
+
+async function runCollectAllCommand(
+  io: CliIo,
+  options: CliOptions
+): Promise<number> {
+  const summary = await runCollectAll({
+    homeDir: options.homeDir,
+    claudeHome: options.claudeHome,
+    codexHome: options.codexHome,
+    now: options.now,
+    collectInvokers: options.collectInvokers
+  });
+
+  const enabledEntries = summary.entries.filter(
+    (entry) => entry.status !== "disabled"
+  );
+
+  if (enabledEntries.length === 0) {
+    io.stdout("collect all: no sources enabled in config; nothing to do.");
+  }
+
+  for (const entry of summary.entries) {
+    if (entry.status === "disabled") {
+      io.stdout(`Source '${entry.source}': disabled`);
+      continue;
+    }
+    if (entry.status === "success") {
+      io.stdout(`Source '${entry.source}': success (${entry.detail})`);
+      continue;
+    }
+    io.stdout(`Source '${entry.source}': failed (${entry.detail})`);
+  }
+
+  return summary.exitCode;
 }
 
 async function runNote(
