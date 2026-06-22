@@ -104,6 +104,64 @@ describe("cli collect <source> per-source gating", () => {
     });
   }
 
+  it("rejects a dangling codex --date even when codex is disabled", async () => {
+    const { io, stdout, stderr } = createIo();
+    const directory = await mkdtemp(
+      join(tmpdir(), "uncommitted-cli-collect-codex-typo-")
+    );
+    const homeDir = join(directory, "home");
+    await writeConfig(homeDir, configWith("codex"));
+
+    const exitCode = await runCli(["collect", "codex", "--date"], io, {
+      homeDir
+    });
+
+    expect(exitCode).toBe(1);
+    expect(stderr.join("\n")).toContain(
+      "Usage: uncommitted collect codex [--date YYYY-MM-DD]"
+    );
+    // The disabled-skip must NOT short-circuit the argument validation.
+    expect(stdout.join("\n")).not.toContain("disabled in config");
+  });
+
+  it("rejects an unknown github flag even when github is disabled", async () => {
+    const { io, stdout, stderr } = createIo();
+    const directory = await mkdtemp(
+      join(tmpdir(), "uncommitted-cli-collect-github-typo-")
+    );
+    const homeDir = join(directory, "home");
+    await writeConfig(homeDir, configWith("github"));
+
+    const exitCode = await runCli(["collect", "github", "--bogus"], io, {
+      homeDir
+    });
+
+    expect(exitCode).toBe(1);
+    expect(stderr.join("\n")).toContain(
+      "Usage: uncommitted collect github [--date YYYY-MM-DD]"
+    );
+    expect(stdout.join("\n")).not.toContain("disabled in config");
+  });
+
+  it("exits 2 (config error) when config.json is malformed", async () => {
+    const { io, stderr } = createIo();
+    const directory = await mkdtemp(
+      join(tmpdir(), "uncommitted-cli-collect-malformed-")
+    );
+    const homeDir = join(directory, "home");
+    await mkdir(join(homeDir, ".uncommitted"), { recursive: true });
+    await writeFile(
+      join(homeDir, ".uncommitted", "config.json"),
+      "{ not valid json",
+      "utf8"
+    );
+
+    const exitCode = await runCli(["collect", "git"], io, { homeDir });
+
+    expect(exitCode).toBe(2);
+    expect(stderr.join("\n")).toContain("Malformed source config");
+  });
+
   it("invokes the claude collector when sources.claude.enabled is true (sanity)", async () => {
     const { io, stdout, stderr } = createIo();
     const directory = await mkdtemp(

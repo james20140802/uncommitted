@@ -15,6 +15,18 @@ export type SourceConfigRecord = {
 
 export type SourceConfigMap = Record<SourceName, SourceConfigRecord>;
 
+/**
+ * Raised when `config.json` exists but cannot be read or parsed. A missing
+ * file is NOT an error (it falls back to all-enabled defaults); a malformed or
+ * permission-denied file is, so the opt-out gate cannot be silently bypassed.
+ */
+export class SourceConfigError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SourceConfigError";
+  }
+}
+
 export function isSourceEnabled(config: unknown, source: SourceName): boolean {
   const record = readSourceRecord(config, source);
 
@@ -32,13 +44,30 @@ export function listEnabledSources(config: unknown): SourceName[] {
 export async function loadSourceConfig(
   configFilePath: string
 ): Promise<SourceConfigMap> {
+  let raw: string;
+
+  try {
+    raw = await readFile(configFilePath, "utf8");
+  } catch (error) {
+    // A missing config file is a valid first-run state: default everything on.
+    // Any other read error (permissions, I/O) must surface as a config error
+    // rather than silently enabling all sources.
+    if (isNotFoundError(error)) {
+      return buildSourceConfigMap({});
+    }
+    throw new SourceConfigError(
+      `Unable to read source config at ${configFilePath}.`
+    );
+  }
+
   let parsed: unknown;
 
   try {
-    const raw = await readFile(configFilePath, "utf8");
     parsed = JSON.parse(raw);
   } catch {
-    parsed = {};
+    throw new SourceConfigError(
+      `Malformed source config at ${configFilePath}; fix or remove the file.`
+    );
   }
 
   return buildSourceConfigMap(parsed);
@@ -93,4 +122,8 @@ function readSourceRecord(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isNotFoundError(error: unknown): boolean {
+  return isRecord(error) && error.code === "ENOENT";
 }

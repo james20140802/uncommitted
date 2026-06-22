@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   SOURCE_NAMES,
+  SourceConfigError,
   isSourceEnabled,
   listEnabledSources,
   loadSourceConfig
@@ -77,5 +78,30 @@ describe("loadSourceConfig", () => {
       codex: { enabled: true },
       github: { enabled: true }
     });
+  });
+
+  it("falls back to all-enabled defaults when the config file is missing", async () => {
+    const home = await mkdtemp(join(tmpdir(), "uncommitted-source-config-"));
+    const configFile = join(home, ".uncommitted", "config.json");
+
+    const sources = await loadSourceConfig(configFile);
+    expect(sources).toEqual({
+      git: { enabled: true },
+      claude: { enabled: true },
+      codex: { enabled: true },
+      github: { enabled: true }
+    });
+  });
+
+  it("rejects a malformed config instead of silently enabling every source", async () => {
+    const home = await mkdtemp(join(tmpdir(), "uncommitted-source-config-"));
+    const configDir = join(home, ".uncommitted");
+    await mkdir(configDir, { recursive: true });
+    const configFile = join(configDir, "config.json");
+    await writeFile(configFile, "{ this is not valid json", "utf8");
+
+    await expect(loadSourceConfig(configFile)).rejects.toBeInstanceOf(
+      SourceConfigError
+    );
   });
 });

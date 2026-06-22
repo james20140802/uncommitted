@@ -41,7 +41,11 @@ import {
   type ProjectRecord
 } from "./project-registry.js";
 import { resolveConfigPaths } from "./config-paths.js";
-import { loadSourceConfig, type SourceName } from "./source-config.js";
+import {
+  loadSourceConfig,
+  SourceConfigError,
+  type SourceName
+} from "./source-config.js";
 import {
   runCollectAll,
   type CollectInvokerMap
@@ -767,6 +771,34 @@ async function runGenerate(
   }
 }
 
+/**
+ * Parse the optional `--date YYYY-MM-DD` argv shared by `collect codex` and
+ * `collect github`. Rejects a dangling `--date` (would otherwise fall back to
+ * today and overwrite events) and any unknown token. Emits the usage error to
+ * stderr and returns `{ error: true }` on failure.
+ */
+function parseCollectDateArgs(
+  args: string[],
+  source: "codex" | "github",
+  io: CliIo
+): { targetDate?: string; error: boolean } {
+  const usage = `Usage: uncommitted collect ${source} [--date YYYY-MM-DD]`;
+  let targetDate: string | undefined;
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--date") {
+      if (i + 1 >= args.length) {
+        io.stderr(usage);
+        return { error: true };
+      }
+      targetDate = args[++i];
+      continue;
+    }
+    io.stderr(usage);
+    return { error: true };
+  }
+  return { targetDate, error: false };
+}
+
 async function runCollect(
   args: string[],
   io: CliIo,
@@ -796,16 +828,42 @@ async function runCollect(
   }
 
   // git and claude take no further arguments; reject trailing tokens so an
-  // unsupported flag can't silently collect/overwrite today's events. codex and
-  // github both accept --date so they validate their own argv below.
+  // unsupported flag can't silently collect/overwrite today's events.
   if ((args[0] === "git" || args[0] === "claude") && args.length > 1) {
     io.stderr(`Usage: uncommitted collect ${args[0]}`);
     return 1;
   }
 
   const source = args[0] as SourceName;
+
+  // codex and github accept `--date`; validate their argv BEFORE consulting
+  // config so a typo (e.g. `collect codex --date`, `collect github --bogus`) is
+  // rejected even when the source is disabled — matching the enabled path.
+  let codexTargetDate: string | undefined;
+  let ghTargetDate: string | undefined;
+  if (source === "codex" || source === "github") {
+    const parsed = parseCollectDateArgs(args.slice(1), source, io);
+    if (parsed.error) {
+      return 1;
+    }
+    if (source === "codex") {
+      codexTargetDate = parsed.targetDate;
+    } else {
+      ghTargetDate = parsed.targetDate;
+    }
+  }
+
   const paths = resolveConfigPaths({ homeDir: options.homeDir });
-  const sourceConfig = await loadSourceConfig(paths.configFile);
+  let sourceConfig;
+  try {
+    sourceConfig = await loadSourceConfig(paths.configFile);
+  } catch (error) {
+    if (error instanceof SourceConfigError) {
+      io.stderr(error.message);
+      return 2;
+    }
+    throw error;
+  }
   if (!sourceConfig[source].enabled) {
     io.stdout(
       `Source '${source}' is disabled in config; skipping collection.`
@@ -877,30 +935,12 @@ async function runCollect(
   }
 
   if (args[0] === "codex") {
-    const codexArgs = args.slice(1);
-    let targetDate: string | undefined;
-    for (let i = 0; i < codexArgs.length; i++) {
-      if (codexArgs[i] === "--date") {
-        // --date must be followed by a value; otherwise the collector would fall
-        // back to today and overwrite today's events on a typo.
-        if (i + 1 >= codexArgs.length) {
-          io.stderr("Usage: uncommitted collect codex [--date YYYY-MM-DD]");
-          return 1;
-        }
-        targetDate = codexArgs[++i];
-        continue;
-      }
-      // Reject unknown/extra tokens rather than silently ignoring them.
-      io.stderr("Usage: uncommitted collect codex [--date YYYY-MM-DD]");
-      return 1;
-    }
-
     try {
       const result = await collectCodexForRegisteredProjects({
         homeDir: options.homeDir,
         codexHome: options.codexHome,
         now: options.now ?? (() => new Date().toISOString()),
-        targetDate
+        targetDate: codexTargetDate
       });
 
       if (result.codexLogsMissing) {
@@ -937,21 +977,6 @@ async function runCollect(
   }
 
   if (args[0] === "github") {
-    const ghArgs = args.slice(1);
-    let ghTargetDate: string | undefined;
-    for (let i = 0; i < ghArgs.length; i++) {
-      if (ghArgs[i] === "--date") {
-        if (i + 1 >= ghArgs.length) {
-          io.stderr("Usage: uncommitted collect github [--date YYYY-MM-DD]");
-          return 1;
-        }
-        ghTargetDate = ghArgs[++i];
-        continue;
-      }
-      io.stderr("Usage: uncommitted collect github [--date YYYY-MM-DD]");
-      return 1;
-    }
-
     try {
       const result = await collectGitHubForRegisteredProjects({
         homeDir: options.homeDir,
@@ -995,13 +1020,22 @@ async function runCollectAllCommand(
   io: CliIo,
   options: CliOptions
 ): Promise<number> {
-  const summary = await runCollectAll({
-    homeDir: options.homeDir,
-    claudeHome: options.claudeHome,
-    codexHome: options.codexHome,
-    now: options.now,
-    collectInvokers: options.collectInvokers
-  });
+  let summary;
+  try {
+    summary = await runCollectAll({
+      homeDir: options.homeDir,
+      claudeHome: options.claudeHome,
+      codexHome: options.codexHome,
+      now: options.now,
+      collectInvokers: options.collectInvokers
+    });
+  } catch (error) {
+    if (error instanceof SourceConfigError) {
+      io.stderr(error.message);
+      return 2;
+    }
+    throw error;
+  }
 
   const enabledEntries = summary.entries.filter(
     (entry) => entry.status !== "disabled"

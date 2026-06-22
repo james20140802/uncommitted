@@ -81,8 +81,16 @@ export async function runCollectAll(
     try {
       const result = await invoke();
       const detail = formatInvokerDetail(result);
-      entries.push({ source, status: "success", detail });
-      successCount += 1;
+      // A collector that returns per-project failures without throwing (broken
+      // project path, fetch/write error) is still a failed run — mirror the
+      // per-source `collect <source>` exit-3 behavior instead of reporting
+      // success and masking the failure.
+      if (result.failureCount > 0) {
+        entries.push({ source, status: "failed", detail });
+      } else {
+        entries.push({ source, status: "success", detail });
+        successCount += 1;
+      }
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       entries.push({ source, status: "failed", detail });
@@ -109,8 +117,24 @@ function resolveInvokerMap(options: CollectAllOptions): CollectInvokerMap {
   };
 }
 
+/**
+ * Wrap a clock so the first reading is captured and reused for the rest of the
+ * run. Without this, each per-source collector would call `now()` as it starts,
+ * and a `collect all` run that straddles UTC midnight could write events under
+ * two different dates — splitting one run so `generate today` sees only part.
+ */
+export function createStableNow(now?: () => string): () => string {
+  let cached: string | undefined;
+  return () => {
+    if (cached === undefined) {
+      cached = now ? now() : new Date().toISOString();
+    }
+    return cached;
+  };
+}
+
 function buildDefaultInvokers(options: CollectAllOptions): CollectInvokerMap {
-  const now = options.now ?? (() => new Date().toISOString());
+  const now = createStableNow(options.now);
 
   return {
     git: async () => {
@@ -184,10 +208,16 @@ function buildDefaultInvokers(options: CollectAllOptions): CollectInvokerMap {
 }
 
 function formatInvokerDetail(result: CollectInvokerResult): string {
-  if (result.detail && result.detail.length > 0) {
-    return result.detail;
+  const base =
+    result.detail && result.detail.length > 0
+      ? result.detail
+      : `${result.successCount} ok, ${result.failureCount} failed`;
+  // Surface the failure count on the success-flavored default detail so a
+  // partially failed source does not read as fully clean.
+  if (result.failureCount > 0 && !base.includes("failed")) {
+    return `${base} (${result.failureCount} failed)`;
   }
-  return `${result.successCount} ok, ${result.failureCount} failed`;
+  return base;
 }
 
 function sumActivityTotals(
