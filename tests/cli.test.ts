@@ -65,7 +65,7 @@ describe("cli", () => {
 
     expect(exitCode).toBe(1);
     expect(stdout).toEqual([]);
-    expect(stderr.join("\n")).toContain("Usage: uncommitted collect <git|claude|codex|github>");
+    expect(stderr.join("\n")).toContain("Usage: uncommitted collect <git|claude|codex|github|all>");
   });
 
   it("rejects extra arguments for collect git instead of silently ignoring them", async () => {

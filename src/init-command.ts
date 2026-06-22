@@ -3,6 +3,7 @@ import process from "node:process";
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { ensureConfigDirectories, resolveConfigPaths } from "./config-paths.js";
+import { defaultSourceConfigMap, type SourceConfigMap } from "./source-config.js";
 
 export type InitAnswers = {
   draftRoot?: string;
@@ -30,6 +31,7 @@ export type InitConfig = {
   roastLevel: number;
   rawRetentionDays: number;
   captionProjectionTokenBudget: number;
+  sources: SourceConfigMap;
 };
 
 export type InitCommandResult = {
@@ -94,7 +96,8 @@ export async function runInitCommand(
     persona: answers.persona,
     roastLevel,
     rawRetentionDays,
-    captionProjectionTokenBudget
+    captionProjectionTokenBudget,
+    sources: defaultSourceConfigMap()
   };
 
   await writeJson(paths.configFile, config);

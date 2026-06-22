@@ -32,6 +32,7 @@ import {
 } from "./draft-storage.js";
 import type { ManualNoteEvent } from "./note-command.js";
 import type { ProjectRecord, ProjectsFile } from "./project-add.js";
+import { loadSourceConfig } from "./source-config.js";
 import {
   createSafetyReport,
   type SafetyReport,
@@ -195,11 +196,22 @@ export async function runGenerateCommand(
   }
 
   const generatedAt = options.now ? options.now() : new Date().toISOString();
-  const gitEvents = await readGitActivityEvents(projects, targetDate);
+  const sourceConfig = await loadSourceConfig(paths.configFile);
+  const gitEvents = sourceConfig.git.enabled
+    ? await readGitActivityEvents(projects, targetDate)
+    : [];
+  // Manual notes are project-local user input, not a tracked source — they are
+  // loaded unconditionally regardless of per-source enable flags.
   const manualNotes = await readManualNoteEvents(projects, targetDate);
-  const claudeSignals = await readClaudeActivitySignals(projects, targetDate);
-  const codexSignals = await readCodexActivitySignals(projects, targetDate);
-  const githubSignals = await readGitHubActivitySignals(projects, targetDate);
+  const claudeSignals = sourceConfig.claude.enabled
+    ? await readClaudeActivitySignals(projects, targetDate)
+    : [];
+  const codexSignals = sourceConfig.codex.enabled
+    ? await readCodexActivitySignals(projects, targetDate)
+    : [];
+  const githubSignals = sourceConfig.github.enabled
+    ? await readGitHubActivitySignals(projects, targetDate)
+    : [];
   const activitySummary = buildActivitySummary({
     targetDate,
     generatedAt,
