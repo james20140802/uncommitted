@@ -15,6 +15,10 @@ import {
 import { normalizeGitHubFetch } from "./github-event-normalizer.js";
 import { redactGitHubEvents } from "./github-event-redactor.js";
 import { writeGitHubEvents } from "./github-event-writer.js";
+import {
+  pruneRawArchives,
+  readRawRetentionDays
+} from "./raw-archive-prune.js";
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const execFileP = promisify(execFile);
@@ -130,6 +134,7 @@ export async function collectGitHubForRegisteredProjects(
     targetDate = now.slice(0, 10);
   }
 
+  const retentionDays = await readRawRetentionDays(paths.configFile);
   const remoteUrlReader = input.remoteUrlReader ?? defaultRemoteUrlReader;
   const successes: CollectGitHubSuccess[] = [];
   const failures: CollectGitHubFailure[] = [];
@@ -215,6 +220,12 @@ export async function collectGitHubForRegisteredProjects(
         rawArchiveFile: written.rawArchiveFile,
         signalCount: written.signalCount,
         rawCount: written.rawCount
+      });
+      await pruneRawArchives({
+        projectRoot: project.root,
+        source: "github",
+        today: targetDate,
+        retentionDays
       });
     } catch (error) {
       // On failure, never destroy a prior successful collection: if the

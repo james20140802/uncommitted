@@ -16,6 +16,10 @@ import {
 } from "./codex-session-parser.js";
 import { redactCodexSession } from "./codex-session-redactor.js";
 import { writeCodexSessionOutputs } from "./codex-session-writer.js";
+import {
+  pruneRawArchives,
+  readRawRetentionDays
+} from "./raw-archive-prune.js";
 
 export type CollectCodexCommandOptions = {
   homeDir?: string;
@@ -98,6 +102,8 @@ export async function collectCodexForRegisteredProjects(
     const now = options.now ? options.now() : new Date().toISOString();
     targetDate = now.slice(0, 10);
   }
+
+  const retentionDays = await readRawRetentionDays(paths.configFile);
 
   // A Codex session that starts before midnight stays under its start day's
   // `sessions/YYYY/MM/DD` directory even when work continues into the next day.
@@ -197,6 +203,12 @@ export async function collectCodexForRegisteredProjects(
         signalCount: written.signalCount,
         conversationCount: written.conversationCount,
         toolFactCount: written.toolFactCount
+      });
+      await pruneRawArchives({
+        projectRoot: project.root,
+        source: "codex",
+        today: targetDate,
+        retentionDays
       });
     } catch (error) {
       failures.push({
