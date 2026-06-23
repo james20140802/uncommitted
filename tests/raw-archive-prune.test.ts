@@ -181,7 +181,7 @@ describe("pruneRawArchives", () => {
     expect(result.errors).toEqual([]);
   });
 
-  it("keeps today's file and yesterday's file when retentionDays=1", async () => {
+  it("keeps only today's file and deletes yesterday's file when retentionDays=1", async () => {
     // retentionDays=1 means "keep files within the last 1 day window including
     // today" => cutoff = today - 0 days = today; keep today and newer, delete
     // strictly older. Spec consensus: a positive N keeps the most recent N
