@@ -14,6 +14,7 @@ import type {
   ProjectPersonaHint,
   StoryFormatPlan
 } from "./story-format-plan.js";
+import type { RawNarrativeProjection } from "./raw-narrative-projection.js";
 
 export type DiarySlide = {
   index: number;
@@ -51,6 +52,7 @@ export type DiaryGeneratorOptions = {
   roastLevel: number;
   projectPersonaHints?: ProjectPersonaHint[];
   entryMode?: "daily_global";
+  rawNarrativeProjection?: RawNarrativeProjection;
 };
 
 export type CaptionResult = {
@@ -113,7 +115,8 @@ export async function generateDiaryDraft(
       storyFormatPlan: options.storyFormatPlan,
       persona: options.persona,
       roastLevel: options.roastLevel,
-      projectPersonaHints: options.projectPersonaHints ?? []
+      projectPersonaHints: options.projectPersonaHints ?? [],
+      rawNarrativeProjection: options.rawNarrativeProjection
     })
   });
   const response = await generateStructured<DiaryDraftProviderData>(
@@ -144,11 +147,12 @@ function buildSafeDiaryInput(options: {
   persona: string;
   roastLevel: number;
   projectPersonaHints: ProjectPersonaHint[];
+  rawNarrativeProjection?: RawNarrativeProjection;
 }): SafeActivitySummary {
   const summary = options.activitySummary;
   const quiet = summary.activityLevel === "none";
 
-  return {
+  const safeInput: SafeActivitySummary = {
     schemaVersion: 1,
     targetDate: summary.targetDate,
     quiet,
@@ -200,6 +204,28 @@ function buildSafeDiaryInput(options: {
       privateItemsToAvoid: summary.privateItemsToAvoid,
       uncertaintyNotes: summary.uncertaintyNotes
     }
+  };
+
+  if (options.rawNarrativeProjection !== undefined) {
+    safeInput.rawNarrativeProjection = toJsonValue(
+      options.rawNarrativeProjection
+    );
+  }
+
+  return safeInput;
+}
+
+function toJsonValue(projection: RawNarrativeProjection): JsonValue {
+  return {
+    turns: projection.turns.map((turn) => ({
+      source: turn.source,
+      text: turn.text,
+      tokenEstimate: turn.tokenEstimate
+    })),
+    totalTokens: projection.totalTokens,
+    droppedTurns: projection.droppedTurns,
+    droppedTokens: projection.droppedTokens,
+    budget: projection.budget
   };
 }
 
