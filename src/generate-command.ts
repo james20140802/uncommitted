@@ -212,7 +212,7 @@ export async function runGenerateCommand(
         id: project.id,
         root: project.root
       })),
-      config: sourceConfig,
+      sourceConfig,
       configFilePath: paths.configFile,
       targetDate
     });

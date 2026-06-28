@@ -6,10 +6,25 @@ import {
   readTier1Archives,
   buildRawNarrativeProjection
 } from "../src/raw-narrative-archive.js";
+import {
+  defaultSourceConfigMap,
+  type SourceConfigMap,
+  type SourceName
+} from "../src/source-config.js";
 
 type RawSource = "claude" | "codex" | "github";
 
 const TARGET_DATE = "2026-06-29";
+
+const allEnabled = (): SourceConfigMap => defaultSourceConfigMap();
+
+const withDisabled = (...sources: SourceName[]): SourceConfigMap => {
+  const map = defaultSourceConfigMap();
+  for (const source of sources) {
+    map[source] = { enabled: false };
+  }
+  return map;
+};
 
 async function makeProjectRoot(prefix = "unc-164-"): Promise<string> {
   return await mkdtemp(join(tmpdir(), prefix));
@@ -51,7 +66,7 @@ describe("readTier1Archives", () => {
 
     const { turns } = await readTier1Archives({
       projects: [{ id: "proj-a", root: projectRoot }],
-      config: {},
+      sourceConfig: allEnabled(),
       targetDate: TARGET_DATE
     });
 
@@ -77,7 +92,7 @@ describe("readTier1Archives", () => {
 
     const { turns } = await readTier1Archives({
       projects: [{ id: "proj-a", root: projectRoot }],
-      config: {},
+      sourceConfig: allEnabled(),
       targetDate: TARGET_DATE
     });
 
@@ -98,7 +113,7 @@ describe("readTier1Archives", () => {
 
     const { turns } = await readTier1Archives({
       projects: [{ id: "proj-a", root: projectRoot }],
-      config: {},
+      sourceConfig: allEnabled(),
       targetDate: TARGET_DATE
     });
 
@@ -121,7 +136,7 @@ describe("readTier1Archives", () => {
 
     const { turns } = await readTier1Archives({
       projects: [{ id: "proj-a", root: projectRoot }],
-      config: {},
+      sourceConfig: allEnabled(),
       targetDate: TARGET_DATE
     });
 
@@ -147,7 +162,7 @@ describe("readTier1Archives", () => {
 
     const { turns, discoveries } = await readTier1Archives({
       projects: [{ id: "proj-a", root: projectRoot }],
-      config: { sources: { claude: { enabled: false } } },
+      sourceConfig: withDisabled("claude"),
       targetDate: TARGET_DATE
     });
 
@@ -175,7 +190,7 @@ describe("readTier1Archives", () => {
 
     const { discoveries } = await readTier1Archives({
       projects: [{ id: "proj-a", root: projectRoot }],
-      config: {},
+      sourceConfig: allEnabled(),
       targetDate: TARGET_DATE
     });
 
@@ -203,7 +218,7 @@ describe("readTier1Archives", () => {
 
     const { turns } = await readTier1Archives({
       projects: [{ id: "proj-a", root: projectRoot }],
-      config: {},
+      sourceConfig: allEnabled(),
       targetDate: TARGET_DATE
     });
 
@@ -219,7 +234,7 @@ describe("readTier1Archives", () => {
 
     const { turns } = await readTier1Archives({
       projects: [{ id: "proj-a", root: projectRoot }],
-      config: {},
+      sourceConfig: allEnabled(),
       targetDate: TARGET_DATE
     });
 
@@ -250,7 +265,7 @@ describe("buildRawNarrativeProjection", () => {
 
     const projection = await buildRawNarrativeProjection({
       projects: [{ id: "proj-a", root: projectRoot }],
-      config: {},
+      sourceConfig: allEnabled(),
       configFilePath: join(projectRoot, "config.json"),
       targetDate: TARGET_DATE,
       budget: 1000
@@ -264,7 +279,7 @@ describe("buildRawNarrativeProjection", () => {
   it("returns an empty projection when all archives are absent", async () => {
     const projection = await buildRawNarrativeProjection({
       projects: [{ id: "proj-a", root: projectRoot }],
-      config: {},
+      sourceConfig: allEnabled(),
       configFilePath: join(projectRoot, "config.json"),
       targetDate: TARGET_DATE,
       budget: 500
@@ -289,13 +304,7 @@ describe("buildRawNarrativeProjection", () => {
 
     const projection = await buildRawNarrativeProjection({
       projects: [{ id: "proj-a", root: projectRoot }],
-      config: {
-        sources: {
-          claude: { enabled: false },
-          codex: { enabled: false },
-          github: { enabled: false }
-        }
-      },
+      sourceConfig: withDisabled("claude", "codex", "github"),
       configFilePath: join(projectRoot, "config.json"),
       targetDate: TARGET_DATE,
       budget: 500
@@ -308,7 +317,7 @@ describe("buildRawNarrativeProjection", () => {
   it("yields a visibly different (non-empty vs empty) projection present vs absent (Q4)", async () => {
     const absent = await buildRawNarrativeProjection({
       projects: [{ id: "proj-a", root: projectRoot }],
-      config: {},
+      sourceConfig: allEnabled(),
       configFilePath: join(projectRoot, "config.json"),
       targetDate: TARGET_DATE,
       budget: 1000
@@ -326,7 +335,7 @@ describe("buildRawNarrativeProjection", () => {
 
     const present = await buildRawNarrativeProjection({
       projects: [{ id: "proj-a", root: projectRoot }],
-      config: {},
+      sourceConfig: allEnabled(),
       configFilePath: join(projectRoot, "config.json"),
       targetDate: TARGET_DATE,
       budget: 1000
@@ -355,7 +364,7 @@ describe("buildRawNarrativeProjection", () => {
 
     const projection = await buildRawNarrativeProjection({
       projects: [{ id: "proj-a", root: projectRoot }],
-      config: {},
+      sourceConfig: allEnabled(),
       configFilePath: join(projectRoot, "config.json"),
       targetDate: TARGET_DATE,
       budget: 1000

@@ -28,7 +28,7 @@ import {
 } from "./raw-narrative-projection.js";
 import { selectTurns } from "./raw-narrative-selection.js";
 import { revalidateTurnsForEgress } from "./raw-narrative-egress.js";
-import { isSourceEnabled } from "./source-config.js";
+import type { SourceConfigMap } from "./source-config.js";
 
 // Sources whose Tier 1 raw archives this reader projects. Git is excluded — it
 // has no conversational raw archive (its events are structured commit data).
@@ -54,7 +54,11 @@ export type ProjectInput = {
 
 export type ReadTier1ArchivesInput = {
   projects: ProjectInput[];
-  config: unknown;
+  // Normalized per-source toggle map from loadSourceConfig (UNC-120). Typed
+  // (not `unknown`) so the gate below is compile-checked against the actual
+  // shape callers pass — a `SourceConfigMap` keyed by source, NOT the raw
+  // config object with a `.sources` wrapper.
+  sourceConfig: SourceConfigMap;
   targetDate: string;
 };
 
@@ -182,7 +186,7 @@ export async function readTier1Archives(
 
   for (const project of input.projects) {
     for (const source of RAW_NARRATIVE_SOURCES) {
-      if (!isSourceEnabled(input.config, source)) {
+      if (input.sourceConfig[source].enabled === false) {
         discoveries.push({
           projectId: project.id,
           source,
@@ -260,7 +264,7 @@ export async function readTier1Archives(
 
 export type BuildRawNarrativeProjectionInput = {
   projects: ProjectInput[];
-  config: unknown;
+  sourceConfig: SourceConfigMap;
   configFilePath: string;
   targetDate: string;
   budget?: number;
@@ -285,7 +289,7 @@ export async function buildRawNarrativeProjection(
 
   const { turns } = await readTier1Archives({
     projects: input.projects,
-    config: input.config,
+    sourceConfig: input.sourceConfig,
     targetDate: input.targetDate
   });
 
