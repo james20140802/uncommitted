@@ -135,6 +135,21 @@ export async function collectGitHubForRegisteredProjects(
   }
 
   const retentionDays = await readRawRetentionDays(paths.configFile);
+
+  // Enforce retention for every enabled project independently of fetch
+  // success or remote classification. A project whose remote was removed or
+  // changed away from GitHub takes the skipped path and never reaches a
+  // per-success prune, so archives from earlier GitHub collections would
+  // otherwise outlive rawRetentionDays.
+  for (const project of projects) {
+    await pruneRawArchives({
+      projectRoot: project.root,
+      source: "github",
+      today: targetDate,
+      retentionDays
+    });
+  }
+
   const remoteUrlReader = input.remoteUrlReader ?? defaultRemoteUrlReader;
   const successes: CollectGitHubSuccess[] = [];
   const failures: CollectGitHubFailure[] = [];
@@ -220,12 +235,6 @@ export async function collectGitHubForRegisteredProjects(
         rawArchiveFile: written.rawArchiveFile,
         signalCount: written.signalCount,
         rawCount: written.rawCount
-      });
-      await pruneRawArchives({
-        projectRoot: project.root,
-        source: "github",
-        today: targetDate,
-        retentionDays
       });
     } catch (error) {
       // On failure, never destroy a prior successful collection: if the
