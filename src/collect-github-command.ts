@@ -15,6 +15,10 @@ import {
 import { normalizeGitHubFetch } from "./github-event-normalizer.js";
 import { redactGitHubEvents } from "./github-event-redactor.js";
 import { writeGitHubEvents } from "./github-event-writer.js";
+import {
+  pruneRawArchives,
+  readRawRetentionDays
+} from "./raw-archive-prune.js";
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const execFileP = promisify(execFile);
@@ -128,6 +132,22 @@ export async function collectGitHubForRegisteredProjects(
   } else {
     const now = input.now ? input.now() : new Date().toISOString();
     targetDate = now.slice(0, 10);
+  }
+
+  const retentionDays = await readRawRetentionDays(paths.configFile);
+
+  // Enforce retention for every enabled project independently of fetch
+  // success or remote classification. A project whose remote was removed or
+  // changed away from GitHub takes the skipped path and never reaches a
+  // per-success prune, so archives from earlier GitHub collections would
+  // otherwise outlive rawRetentionDays.
+  for (const project of projects) {
+    await pruneRawArchives({
+      projectRoot: project.root,
+      source: "github",
+      today: targetDate,
+      retentionDays
+    });
   }
 
   const remoteUrlReader = input.remoteUrlReader ?? defaultRemoteUrlReader;

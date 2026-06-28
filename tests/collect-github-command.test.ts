@@ -152,6 +152,42 @@ describe("collectGitHubForRegisteredProjects", () => {
     expect(result.failures).toHaveLength(0);
   });
 
+  it("prunes expired github raw archives for a project whose remote is no longer github", async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), "gh-cmd-"));
+    const projectRoot = await mkdtemp(join(tmpdir(), "gh-proj-"));
+    await seedProjects(homeDir, projectRoot);
+    // The project once collected GitHub activity but its remote has since
+    // changed away from GitHub. retention must still age out the archives it
+    // accumulated, even though the project now takes the skipped path.
+    await writeFile(
+      join(homeDir, ".uncommitted", "config.json"),
+      JSON.stringify({ rawRetentionDays: 7 })
+    );
+    const rawDir = join(projectRoot, ".uncommitted", "events", "github", "raw");
+    await mkdir(rawDir, { recursive: true });
+    // today 2026-06-17 with retention 7 → cutoff 2026-06-11.
+    const expired = join(rawDir, "2026-06-01.jsonl");
+    const recent = join(rawDir, "2026-06-17.jsonl");
+    await writeFile(expired, "{}\n");
+    await writeFile(recent, "{}\n");
+
+    const result = await collectGitHubForRegisteredProjects({
+      homeDir,
+      env: { GITHUB_TOKEN: "t" },
+      targetDate: "2026-06-17",
+      remoteUrlReader: async () => "git@gitlab.com:foo/bar.git",
+      httpClient: async () => {
+        throw new Error("should not be called");
+      }
+    });
+
+    expect(result.skippedProjects).toHaveLength(1);
+    await expect(readFile(expired, "utf8")).rejects.toMatchObject({
+      code: "ENOENT"
+    });
+    await expect(readFile(recent, "utf8")).resolves.toBe("{}\n");
+  });
+
   it("preserves previously collected events when a re-run's fetch fails", async () => {
     const homeDir = await mkdtemp(join(tmpdir(), "gh-cmd-"));
     const projectRoot = await mkdtemp(join(tmpdir(), "gh-proj-"));

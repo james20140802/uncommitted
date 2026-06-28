@@ -176,6 +176,54 @@ describe("collectCodexForRegisteredProjects", () => {
     expect(result.failures).toEqual([]);
   });
 
+  it("prunes expired raw archives on a no-log day", async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), "codex-cmd-"));
+    const codexHome = join(homeDir, ".codex");
+    const projectRoot = await mkdtemp(join(tmpdir(), "codex-proj-"));
+    await mkdir(join(homeDir, ".uncommitted"), { recursive: true });
+    await writeFile(
+      join(homeDir, ".uncommitted", "projects.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        projects: [
+          {
+            schemaVersion: 1,
+            id: "p1",
+            name: "demo",
+            root: projectRoot,
+            gitRoot: projectRoot,
+            enabled: true,
+            createdAt: "2026-06-14T00:00:00Z"
+          }
+        ]
+      })
+    );
+    // rawRetentionDays=7 with today 2026-06-14 → cutoff 2026-06-08; the older
+    // archive must be pruned even though no rollout files exist today.
+    await writeFile(
+      join(homeDir, ".uncommitted", "config.json"),
+      JSON.stringify({ rawRetentionDays: 7 })
+    );
+    const rawDir = join(projectRoot, ".uncommitted", "events", "codex", "raw");
+    await mkdir(rawDir, { recursive: true });
+    const expired = join(rawDir, "2026-06-01.jsonl");
+    const recent = join(rawDir, "2026-06-14.jsonl");
+    await writeFile(expired, "{}\n");
+    await writeFile(recent, "{}\n");
+
+    const result = await collectCodexForRegisteredProjects({
+      homeDir,
+      codexHome,
+      now: () => "2026-06-14T05:00:00Z"
+    });
+
+    expect(result.codexLogsMissing).toBe(true);
+    await expect(readFile(expired, "utf8")).rejects.toMatchObject({
+      code: "ENOENT"
+    });
+    await expect(readFile(recent, "utf8")).resolves.toBe("{}\n");
+  });
+
   it("throws no-projects error when registry is empty", async () => {
     const homeDir = await mkdtemp(join(tmpdir(), "codex-cmd-"));
     await mkdir(join(homeDir, ".uncommitted"), { recursive: true });

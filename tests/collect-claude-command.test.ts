@@ -67,6 +67,44 @@ describe("collectClaudeForRegisteredProjects", () => {
     ).rejects.toBeInstanceOf(CollectClaudeCommandError);
   });
 
+  it("prunes expired raw archives on a no-log day", async () => {
+    await writeProjectsFile(homeDir, [
+      {
+        schemaVersion: 1,
+        id: "p1",
+        name: "demo",
+        root: projectRoot,
+        gitRoot: projectRoot,
+        enabled: true,
+        createdAt: "2026-06-01T00:00:00.000Z"
+      }
+    ]);
+    // rawRetentionDays=7 with today 2026-06-13 → cutoff 2026-06-07; anything
+    // strictly older must be pruned even when no session logs are collected.
+    await writeFile(
+      join(homeDir, ".uncommitted", "config.json"),
+      JSON.stringify({ rawRetentionDays: 7 })
+    );
+    const rawDir = join(projectRoot, ".uncommitted", "events", "claude", "raw");
+    await mkdir(rawDir, { recursive: true });
+    const expired = join(rawDir, "2026-06-01.jsonl");
+    const recent = join(rawDir, "2026-06-13.jsonl");
+    await writeFile(expired, "{}\n");
+    await writeFile(recent, "{}\n");
+
+    const result = await collectClaudeForRegisteredProjects({
+      homeDir,
+      claudeHome,
+      now: NOW
+    });
+
+    expect(result.claudeLogsMissing).toBe(true);
+    await expect(readFile(expired, "utf8")).rejects.toMatchObject({
+      code: "ENOENT"
+    });
+    await expect(readFile(recent, "utf8")).resolves.toBe("{}\n");
+  });
+
   it("end-to-end: parses, redacts, persists signals + Tier 1 archive for one project", async () => {
     await writeProjectsFile(homeDir, [
       {

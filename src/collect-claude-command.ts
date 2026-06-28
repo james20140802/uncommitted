@@ -13,6 +13,10 @@ import {
 } from "./claude-session-parser.js";
 import { redactClaudeSession } from "./claude-session-redactor.js";
 import { writeClaudeSessionOutputs } from "./claude-session-writer.js";
+import {
+  pruneRawArchives,
+  readRawRetentionDays
+} from "./raw-archive-prune.js";
 
 export type CollectClaudeCommandOptions = {
   homeDir?: string;
@@ -80,11 +84,23 @@ export async function collectClaudeForRegisteredProjects(
 
   const now = options.now ? options.now() : new Date().toISOString();
   const targetDate = now.slice(0, 10);
+  const retentionDays = await readRawRetentionDays(paths.configFile);
 
   const logs = await discoverClaudeSessionLogs({
     claudeHome: options.claudeHome
   });
   if (logs.length === 0) {
+    // No new logs to collect, but retention must still be enforced so raw
+    // archives age out on quiet days instead of lingering until the next
+    // session appears.
+    for (const project of projects) {
+      await pruneRawArchives({
+        projectRoot: project.root,
+        source: "claude",
+        today: targetDate,
+        retentionDays
+      });
+    }
     return {
       targetDate,
       successes: [],
@@ -166,6 +182,12 @@ export async function collectClaudeForRegisteredProjects(
         signalCount: written.signalCount,
         conversationCount: written.conversationCount,
         toolFactCount: written.toolFactCount
+      });
+      await pruneRawArchives({
+        projectRoot: project.root,
+        source: "claude",
+        today: targetDate,
+        retentionDays
       });
     } catch (error) {
       failures.push({
