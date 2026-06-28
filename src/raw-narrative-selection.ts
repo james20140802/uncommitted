@@ -24,9 +24,10 @@
 //          original index (keep earlier-arriving turns).
 //          Kept turns are emitted in chronological (timestamp) order, with
 //          original index as a stable tie-break.
-//        - Once a session is partially evicted (budget pressure reached), later
-//          (older) sessions get no budget; the walk stops adding new sessions
-//          after the budget is exhausted.
+//        - After a partial eviction the budget is usually exhausted, but the
+//          walk continues while `remaining > 0`: any leftover slack flows to
+//          strictly-older sessions (which may be kept whole or partially), so
+//          newer sessions are always served first.
 //   4. Output is concatenated session-by-session in keep-priority (recency)
 //      order, ready for `assembleRawNarrativeProjection` (which re-applies a
 //      hard cap as a safety net).
@@ -222,8 +223,9 @@ export function selectTurns(
     }
     remaining -= kept;
 
-    // Budget is now exhausted (or nearly); subsequent older sessions get
-    // nothing further. Stop to keep the policy crisp and deterministic.
+    // If any budget slack remains after this partial eviction, continue to
+    // strictly-older sessions and backfill them into the leftover slack.
+    // Stop only once the budget is fully exhausted.
     if (remaining <= 0) {
       break;
     }

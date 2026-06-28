@@ -94,6 +94,38 @@ describe("selectTurns precedence", () => {
     expect(kept).toHaveLength(2);
   });
 
+  it("backfills an older session into slack left after a partial eviction", () => {
+    // Newest session: two 7-token turns (28 chars each) = 14 tokens, over the
+    // budget of 10. Lowest-density turn is evicted first, so the code-marked
+    // turn (higher density) survives at 7 tokens, leaving 3 tokens of slack.
+    // The older session's single 2-token turn fits that slack and is kept.
+    const newKept = turn({
+      sessionId: "new",
+      timestamp: "2026-06-01T00:00:02Z",
+      text: "n".repeat(28),
+      hasCodeOrToolMarker: true
+    });
+    const newEvicted = turn({
+      sessionId: "new",
+      timestamp: "2026-06-01T00:00:01Z",
+      text: "m".repeat(28),
+      hasCodeOrToolMarker: false
+    });
+    const oldSmall = turn({
+      sessionId: "old",
+      timestamp: "2026-01-01T00:00:00Z",
+      text: "o".repeat(8) // ~2 tokens
+    });
+    const kept = selectTurns([oldSmall, newEvicted, newKept], { budget: 10 });
+    expect(kept.map((t) => t.sessionId)).toEqual(["new", "old"]);
+    expect(kept.map((t) => t.text)).toEqual([newKept.text, oldSmall.text]);
+    const total = kept.reduce(
+      (sum, t) => sum + defaultTokenCounter.estimate(t.text),
+      0
+    );
+    expect(total).toBeLessThanOrEqual(10);
+  });
+
   it("lets recency beat raw density when they conflict", () => {
     // Older session has a very high-density turn; newer session is plain.
     // Budget fits only one whole session -> recency wins.
