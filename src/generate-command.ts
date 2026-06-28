@@ -33,6 +33,11 @@ import {
 import type { ManualNoteEvent } from "./note-command.js";
 import type { ProjectRecord, ProjectsFile } from "./project-add.js";
 import { loadSourceConfig } from "./source-config.js";
+import { buildRawNarrativeProjection } from "./raw-narrative-archive.js";
+import {
+  emptyRawNarrativeProjection,
+  readCaptionProjectionTokenBudget
+} from "./raw-narrative-projection.js";
 import {
   createSafetyReport,
   type SafetyReport,
@@ -197,6 +202,25 @@ export async function runGenerateCommand(
 
   const generatedAt = options.now ? options.now() : new Date().toISOString();
   const sourceConfig = await loadSourceConfig(paths.configFile);
+  // Tier 2 raw-narrative projection. A projection failure must never break
+  // generation — absent archives are already handled gracefully inside, so on
+  // any unexpected error we fall back to an empty projection.
+  let rawNarrativeProjection;
+  try {
+    rawNarrativeProjection = await buildRawNarrativeProjection({
+      projects: projects.map((project) => ({
+        id: project.id,
+        root: project.root
+      })),
+      config: sourceConfig,
+      configFilePath: paths.configFile,
+      targetDate
+    });
+  } catch {
+    rawNarrativeProjection = emptyRawNarrativeProjection(
+      await readCaptionProjectionTokenBudget(paths.configFile)
+    );
+  }
   const gitEvents = sourceConfig.git.enabled
     ? await readGitActivityEvents(projects, targetDate)
     : [];
@@ -248,7 +272,8 @@ export async function runGenerateCommand(
     storyFormatPlan,
     provider,
     persona: config.persona,
-    roastLevel: config.roastLevel
+    roastLevel: config.roastLevel,
+    rawNarrativeProjection
   });
   const captionResult = await generateCaption({
     activitySummary,
