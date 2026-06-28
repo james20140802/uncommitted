@@ -90,6 +90,17 @@ export async function collectClaudeForRegisteredProjects(
     claudeHome: options.claudeHome
   });
   if (logs.length === 0) {
+    // No new logs to collect, but retention must still be enforced so raw
+    // archives age out on quiet days instead of lingering until the next
+    // session appears.
+    for (const project of projects) {
+      await pruneRawArchives({
+        projectRoot: project.root,
+        source: "claude",
+        today: targetDate,
+        retentionDays
+      });
+    }
     return {
       targetDate,
       successes: [],
