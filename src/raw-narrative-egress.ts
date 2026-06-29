@@ -12,22 +12,25 @@ export type EgressRevalidationResult = {
 };
 
 /**
- * Final pre-egress secret re-validation for the raw conversation turns that
- * are about to leave the machine for the external caption-writer LLM. This is
- * the only point where raw narrative text egresses, so we re-validate every
- * selected turn aggressively and over-redact on purpose.
+ * Egress safety filter for the raw conversation turns that are about to leave
+ * the machine for the external caption-writer LLM. The pipeline applies this
+ * BEFORE selection/assembly (which only subset turns, never add or mutate
+ * text), so no unsafe text can reach the provider. We over-redact on purpose.
  *
- * For each turn we run {@link detectSecrets}. If any signature fires
- * (`categories.length > 0`) OR the detector mutated the text at all
- * (`value !== turn.text`) the ENTIRE turn is dropped — we do not attempt to
- * salvage the redacted value, because a turn that trips any signature is
- * terminal. The `value !== text` check is belt-and-suspenders: it removes this
- * gate's dependency on the detector's implicit "mutate ⟹ category" invariant,
- * so a future detector that ever redacts without firing a category still cannot
- * leak here. Clean turns are kept UNCHANGED (same object reference and text),
- * preserving input order. Dropped turns are counted toward `droppedTurns` and
- * their token estimates summed into `droppedTokens` so callers (T4) can fold
- * them into the final projection counters.
+ * A turn is DROPPED ENTIRELY (never salvaged) when any of:
+ *   - {@link detectSecrets} fires a signature (`categories.length > 0`), or
+ *   - the detector mutated the text at all (`value !== turn.text`), or
+ *   - the turn carries a raw code / tool marker (`hasCodeOrToolMarker`).
+ *
+ * The first two are the secret gate; the `value !== text` check is
+ * belt-and-suspenders so a future detector that redacts without firing a
+ * category still cannot leak. The third enforces the project rule "do not send
+ * raw code/diffs to AI providers": plain code that trips no secret signature
+ * (e.g. `function renderCard() { ... }`, an unbackticked `import ...`) must not
+ * egress either (UNC-156 review). Clean prose turns are kept UNCHANGED (same
+ * object reference and text), preserving input order. Dropped turns are counted
+ * toward `droppedTurns` and their token estimates summed into `droppedTokens` so
+ * callers can fold them into the final projection counters.
  */
 export function revalidateTurnsForEgress(
   turns: NarrativeTurn[],
@@ -39,7 +42,11 @@ export function revalidateTurnsForEgress(
 
   for (const turn of turns) {
     const { categories, value } = detectSecrets(turn.text);
-    if (categories.length > 0 || value !== turn.text) {
+    if (
+      categories.length > 0 ||
+      value !== turn.text ||
+      turn.hasCodeOrToolMarker
+    ) {
       droppedTurns += 1;
       droppedTokens += tokenCounter.estimate(turn.text);
       continue;

@@ -8,6 +8,11 @@ export type NarrativeTurn = {
   timestamp: string; // ISO-8601; "" when none
   sessionId: string; // grouping key
   hasCodeOrToolMarker: boolean;
+  // Conversation role for claude/codex turns ("user" | "assistant" | ...).
+  // Absent for tool facts and github bodies. A "user" turn is a request/plan,
+  // NOT evidence of completed work, so the projection pipeline drops it to avoid
+  // narrating requested-but-not-done work (UNC-156 review).
+  role?: string;
 };
 
 export type ProjectionTurn = {

@@ -214,7 +214,7 @@ describe("generate command — per-source gating", () => {
     const disabledProvider = new TaskAwareProvider();
     await writeGitEvent(disabledFixture.project, "2026-05-12");
     await writeClaudeRawArchive(disabledFixture.project, "2026-05-12", [
-      { role: "user", text: SEED_TEXT, timestamp: "2026-05-12T09:00:00.000Z" }
+      { role: "assistant", text: SEED_TEXT, timestamp: "2026-05-12T09:00:00.000Z" }
     ]);
 
     const disabledExit = await runCli(["generate", "today"], disabledRun.io, {
@@ -248,7 +248,7 @@ describe("generate command — per-source gating", () => {
     const enabledProvider = new TaskAwareProvider();
     await writeGitEvent(enabledFixture.project, "2026-05-12");
     await writeClaudeRawArchive(enabledFixture.project, "2026-05-12", [
-      { role: "user", text: SEED_TEXT, timestamp: "2026-05-12T09:00:00.000Z" }
+      { role: "assistant", text: SEED_TEXT, timestamp: "2026-05-12T09:00:00.000Z" }
     ]);
 
     const enabledExit = await runCli(["generate", "today"], enabledRun.io, {

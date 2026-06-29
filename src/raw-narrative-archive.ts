@@ -127,7 +127,10 @@ function normalizeEntry(
       text,
       timestamp: typeof entry.timestamp === "string" ? entry.timestamp : "",
       sessionId,
-      hasCodeOrToolMarker: hasCodeOrToolMarker(text)
+      hasCodeOrToolMarker: hasCodeOrToolMarker(text),
+      // Carry the role so the projection can drop user requests/plans, which are
+      // not evidence of completed work (UNC-156 review).
+      role: typeof entry.role === "string" ? entry.role : undefined
     };
   }
 
@@ -154,6 +157,14 @@ function normalizeEntry(
   // lives in `text` (see OwnAuthoredBody in github-event-normalizer.ts); the
   // timestamp field is `timestamp`.
   if (source === "github") {
+    // `issue-body` is attributed on the CLOSER, not the author (see
+    // github-event-normalizer.ts "Attribute on the closer"). Closing a
+    // teammate's issue would otherwise project their description as the user's
+    // own raw narrative, so skip it — only `pr-body`/`review-comment` are
+    // genuinely user-authored (UNC-156 review).
+    if (entry.source === "issue-body") {
+      return undefined;
+    }
     const text = firstString(entry.text);
     if (text.length === 0) {
       return undefined;
@@ -273,9 +284,16 @@ export type BuildRawNarrativeProjectionInput = {
 
 /**
  * Orchestrate the full Tier 2 pipeline over the day's Tier 1 archives:
- *   read archives -> selectTurns (budgeted) -> egress revalidation ->
- *   assemble projection. Egress drops are FOLDED (summed) into the final
- *   projection counters so dropped secret turns remain visible to callers.
+ *   read archives -> drop user-role requests -> egress safety filter
+ *   (secrets + raw code) -> selectTurns (budgeted) -> assemble projection.
+ *
+ * The egress safety filter runs BEFORE selection on purpose: selection/assembly
+ * only subset turns (they never add or mutate text), so filtering first means
+ * unsafe turns can neither egress nor consume the budget that clean narrative
+ * needs — fixing the "selected-then-egress-dropped, no backfill" thinning
+ * (UNC-156 review). Drops from EVERY stage (role, safety, selection, assembly)
+ * are FOLDED into the final projection counters so truncation stays visible to
+ * callers and metadata.
  *
  * When there are no turns at all (absent or all-disabled), returns an empty
  * projection echoing the resolved budget — a faithful no-op.
@@ -297,16 +315,42 @@ export async function buildRawNarrativeProjection(
     return emptyRawNarrativeProjection(budget);
   }
 
-  const selected = selectTurns(turns, { budget, tokenCounter });
-  const reval = revalidateTurnsForEgress(selected, tokenCounter);
-  const projection = assembleRawNarrativeProjection(reval.kept, {
+  // Drop user-role turns: requests/plans are not evidence of completed work.
+  const relevant = turns.filter((turn) => turn.role !== "user");
+  let droppedTurns = 0;
+  let droppedTokens = 0;
+  for (const turn of turns) {
+    if (turn.role === "user") {
+      droppedTurns += 1;
+      droppedTokens += tokenCounter.estimate(turn.text);
+    }
+  }
+
+  // Egress safety filter (secrets + raw code) BEFORE budgeted selection.
+  const safe = revalidateTurnsForEgress(relevant, tokenCounter);
+  droppedTurns += safe.droppedTurns;
+  droppedTokens += safe.droppedTokens;
+
+  const selected = selectTurns(safe.kept, { budget, tokenCounter });
+
+  // Turns selectTurns omitted under budget pressure must be counted too,
+  // otherwise an over-budget day can report droppedTurns: 0 (UNC-156 review).
+  const selectedSet = new Set<NarrativeTurn>(selected);
+  for (const turn of safe.kept) {
+    if (!selectedSet.has(turn)) {
+      droppedTurns += 1;
+      droppedTokens += tokenCounter.estimate(turn.text);
+    }
+  }
+
+  const projection = assembleRawNarrativeProjection(selected, {
     budget,
     tokenCounter
   });
 
   return {
     ...projection,
-    droppedTurns: projection.droppedTurns + reval.droppedTurns,
-    droppedTokens: projection.droppedTokens + reval.droppedTokens
+    droppedTurns: projection.droppedTurns + droppedTurns,
+    droppedTokens: projection.droppedTokens + droppedTokens
   };
 }

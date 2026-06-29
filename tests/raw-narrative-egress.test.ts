@@ -85,6 +85,28 @@ describe("revalidateTurnsForEgress", () => {
     }
   });
 
+  it("drops a raw-code/tool turn even when it trips no secret signature", () => {
+    // Plain code with no credential pattern — the project rule forbids raw code
+    // reaching AI providers, so the egress filter must drop it on the marker.
+    const code = turn("function renderCard() { return draw(slides); }", {
+      hasCodeOrToolMarker: true
+    });
+    const result = revalidateTurnsForEgress([code]);
+    expect(result.kept).toEqual([]);
+    expect(result.droppedTurns).toBe(1);
+    expect(result.droppedTokens).toBe(defaultTokenCounter.estimate(code.text));
+  });
+
+  it("keeps clean prose but drops a marked code turn in the same batch", () => {
+    const prose = turn("Spent the morning untangling the selection policy.");
+    const code = turn("const budget = readBudget()", {
+      hasCodeOrToolMarker: true
+    });
+    const result = revalidateTurnsForEgress([prose, code]);
+    expect(result.kept).toEqual([prose]);
+    expect(result.droppedTurns).toBe(1);
+  });
+
   it("returns a zeroed result for empty input", () => {
     expect(revalidateTurnsForEgress([])).toEqual({
       kept: [],

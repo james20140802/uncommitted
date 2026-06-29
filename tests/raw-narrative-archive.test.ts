@@ -149,6 +149,53 @@ describe("readTier1Archives", () => {
     });
   });
 
+  it("skips a github issue-body (attributed on closer, not author) but keeps pr-body", async () => {
+    await seedRawArchive(projectRoot, "github", [
+      JSON.stringify({
+        source: "issue-body",
+        number: 7,
+        visibility: "public",
+        text: "A teammate's issue description the user merely closed.",
+        timestamp: "2026-06-29T09:00:00.000Z"
+      }),
+      JSON.stringify({
+        source: "pr-body",
+        number: 8,
+        visibility: "public",
+        text: "The user's own PR description.",
+        timestamp: "2026-06-29T09:05:00.000Z"
+      })
+    ]);
+
+    const { turns } = await readTier1Archives({
+      projects: [{ id: "proj-a", root: projectRoot }],
+      sourceConfig: allEnabled(),
+      targetDate: TARGET_DATE
+    });
+
+    expect(turns.map((t) => t.text)).toEqual(["The user's own PR description."]);
+  });
+
+  it("carries the conversation role through onto the narrative turn", async () => {
+    await seedRawArchive(projectRoot, "claude", [
+      JSON.stringify({
+        kind: "turn",
+        role: "user",
+        text: "Please add a prune step.",
+        timestamp: "2026-06-29T10:00:00.000Z"
+      })
+    ]);
+
+    const { turns } = await readTier1Archives({
+      projects: [{ id: "proj-a", root: projectRoot }],
+      sourceConfig: allEnabled(),
+      targetDate: TARGET_DATE
+    });
+
+    expect(turns).toHaveLength(1);
+    expect(turns[0].role).toBe("user");
+  });
+
   it("gates a disabled source to zero turns with status 'disabled', distinct from 'no-archive'", async () => {
     await seedRawArchive(projectRoot, "claude", [
       JSON.stringify({
@@ -374,5 +421,99 @@ describe("buildRawNarrativeProjection", () => {
     for (const turn of projection.turns) {
       expect(turn.text).not.toContain("ghp_");
     }
+  });
+
+  it("drops user-role request turns and keeps assistant evidence", async () => {
+    await seedRawArchive(projectRoot, "claude", [
+      JSON.stringify({
+        kind: "turn",
+        role: "user",
+        text: "Please rewrite the whole renderer from scratch tomorrow.",
+        timestamp: "2026-06-29T10:00:00.000Z"
+      }),
+      JSON.stringify({
+        kind: "turn",
+        role: "assistant",
+        text: "Fixed the flaky carousel test and tidied the summary.",
+        timestamp: "2026-06-29T10:01:00.000Z"
+      })
+    ]);
+
+    const projection = await buildRawNarrativeProjection({
+      projects: [{ id: "proj-a", root: projectRoot }],
+      sourceConfig: allEnabled(),
+      configFilePath: join(projectRoot, "config.json"),
+      targetDate: TARGET_DATE,
+      budget: 1000
+    });
+
+    const texts = projection.turns.map((t) => t.text);
+    expect(texts).toContain("Fixed the flaky carousel test and tidied the summary.");
+    expect(texts).not.toContain(
+      "Please rewrite the whole renderer from scratch tomorrow."
+    );
+    // The dropped user turn is still accounted for.
+    expect(projection.droppedTurns).toBeGreaterThanOrEqual(1);
+  });
+
+  it("drops a raw-code turn before egress and keeps clean prose", async () => {
+    await seedRawArchive(projectRoot, "claude", [
+      JSON.stringify({
+        kind: "turn",
+        role: "assistant",
+        text: "function renderCard() { return draw(slides); }",
+        timestamp: "2026-06-29T10:00:00.000Z"
+      }),
+      JSON.stringify({
+        kind: "turn",
+        role: "assistant",
+        text: "Walked through the failure and landed a clean fix.",
+        timestamp: "2026-06-29T10:01:00.000Z"
+      })
+    ]);
+
+    const projection = await buildRawNarrativeProjection({
+      projects: [{ id: "proj-a", root: projectRoot }],
+      sourceConfig: allEnabled(),
+      configFilePath: join(projectRoot, "config.json"),
+      targetDate: TARGET_DATE,
+      budget: 1000
+    });
+
+    const texts = projection.turns.map((t) => t.text);
+    expect(texts).toEqual(["Walked through the failure and landed a clean fix."]);
+    expect(texts.join(" ")).not.toContain("function renderCard");
+    expect(projection.droppedTurns).toBeGreaterThanOrEqual(1);
+  });
+
+  it("counts turns selection omits under a tight token budget", async () => {
+    // Two clean prose turns in the same session, each ~12 tokens. A budget of
+    // 12 fits only one, so selection must omit the other AND report it dropped.
+    await seedRawArchive(projectRoot, "claude", [
+      JSON.stringify({
+        kind: "turn",
+        role: "assistant",
+        text: "a".repeat(48),
+        timestamp: "2026-06-29T10:00:00.000Z"
+      }),
+      JSON.stringify({
+        kind: "turn",
+        role: "assistant",
+        text: "b".repeat(48),
+        timestamp: "2026-06-29T10:01:00.000Z"
+      })
+    ]);
+
+    const projection = await buildRawNarrativeProjection({
+      projects: [{ id: "proj-a", root: projectRoot }],
+      sourceConfig: allEnabled(),
+      configFilePath: join(projectRoot, "config.json"),
+      targetDate: TARGET_DATE,
+      budget: 12
+    });
+
+    expect(projection.turns.length).toBe(1);
+    expect(projection.droppedTurns).toBe(1);
+    expect(projection.droppedTokens).toBeGreaterThan(0);
   });
 });
