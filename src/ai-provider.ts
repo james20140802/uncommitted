@@ -1,6 +1,7 @@
-import { readFile } from "node:fs/promises";
 import process from "node:process";
 import { resolveConfigPaths } from "./config-paths.js";
+import { isRoastLevel, loadGlobalConfig } from "./global-config.js";
+import { isRecord } from "./type-guards.js";
 
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonObject | JsonValue[];
@@ -213,39 +214,30 @@ export async function loadAiProviderConfig(
   options: LoadAiProviderConfigOptions = {}
 ): Promise<AiProviderConfig> {
   const paths = resolveConfigPaths({ homeDir: options.homeDir });
+  const outcome = await loadGlobalConfig(paths.configFile);
 
-  try {
-    const parsed = JSON.parse(await readFile(paths.configFile, "utf8")) as unknown;
+  if (outcome.status === "missing") {
+    throw new AiGenerationError(
+      "AI config is missing. Run `uncommitted init` first.",
+      "invalid-config"
+    );
+  }
 
-    if (!isAiConfigFile(parsed)) {
-      throw new AiGenerationError("AI config is invalid.", "invalid-config");
-    }
-
-    const provider = parseProviderName(parsed.aiProvider);
-
-    if (!provider) {
-      throw new AiGenerationError("AI provider is not supported.", "invalid-config");
-    }
-
-    return {
-      provider,
-      persona: parsed.persona,
-      roastLevel: parsed.roastLevel
-    };
-  } catch (error) {
-    if (error instanceof AiGenerationError) {
-      throw error;
-    }
-
-    if (isNodeError(error) && error.code === "ENOENT") {
-      throw new AiGenerationError(
-        "AI config is missing. Run `uncommitted init` first.",
-        "invalid-config"
-      );
-    }
-
+  if (outcome.status !== "ok" || !isAiConfigFile(outcome.value)) {
     throw new AiGenerationError("AI config is invalid.", "invalid-config");
   }
+
+  const provider = parseProviderName(outcome.value.aiProvider);
+
+  if (!provider) {
+    throw new AiGenerationError("AI provider is not supported.", "invalid-config");
+  }
+
+  return {
+    provider,
+    persona: outcome.value.persona,
+    roastLevel: outcome.value.roastLevel
+  };
 }
 
 export function createAiProvider(
@@ -941,7 +933,7 @@ function isAiConfigFile(value: unknown): value is {
     value.schemaVersion === 1 &&
     typeof value.aiProvider === "string" &&
     typeof value.persona === "string" &&
-    Number.isInteger(value.roastLevel)
+    isRoastLevel(value.roastLevel)
   );
 }
 
@@ -990,19 +982,12 @@ function isJsonValue(value: unknown): value is JsonValue {
 }
 
 function isJsonObject(value: unknown): value is JsonObject {
-  if (!isRecord(value) || Array.isArray(value)) {
+  // isRecord already excludes arrays, so no separate Array.isArray check.
+  if (!isRecord(value)) {
     return false;
   }
 
   return Object.values(value).every(isJsonValue);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
-
-function isNodeError(error: unknown): error is NodeJS.ErrnoException {
-  return error instanceof Error && "code" in error;
 }
 
 function isAbortError(error: unknown): boolean {

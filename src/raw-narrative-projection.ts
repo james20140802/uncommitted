@@ -1,4 +1,5 @@
-import { readFile } from "node:fs/promises";
+import { loadGlobalConfig } from "./global-config.js";
+import { isRecord } from "./type-guards.js";
 
 export type NarrativeSource = "claude" | "codex" | "github";
 
@@ -99,25 +100,19 @@ export function assembleRawNarrativeProjection(
 export async function readCaptionProjectionTokenBudget(
   configFilePath: string
 ): Promise<number> {
-  let raw: string;
-  try {
-    raw = await readFile(configFilePath, "utf8");
-  } catch {
+  const outcome = await loadGlobalConfig(configFilePath);
+  if (outcome.status !== "ok" || !isRecord(outcome.value)) {
     return DEFAULT_CAPTION_PROJECTION_TOKEN_BUDGET;
   }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
+  const value = outcome.value.captionProjectionTokenBudget;
+  if (typeof value !== "number" || !Number.isFinite(value)) {
     return DEFAULT_CAPTION_PROJECTION_TOKEN_BUDGET;
   }
-  if (typeof parsed !== "object" || parsed === null) {
+  // Floor first: a fractional value in (0, 1) is positive but floors to 0,
+  // which would silently empty every projection. Treat sub-1 budgets as unset.
+  const floored = Math.floor(value);
+  if (floored < 1) {
     return DEFAULT_CAPTION_PROJECTION_TOKEN_BUDGET;
   }
-  const value = (parsed as Record<string, unknown>)
-    .captionProjectionTokenBudget;
-  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
-    return DEFAULT_CAPTION_PROJECTION_TOKEN_BUDGET;
-  }
-  return Math.floor(value);
+  return floored;
 }

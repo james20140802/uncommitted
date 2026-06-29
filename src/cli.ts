@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 
 import { realpathSync } from "node:fs";
-import { readFile } from "node:fs/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   collectGitForRegisteredProjects,
@@ -41,6 +40,7 @@ import {
   type ProjectRecord
 } from "./project-registry.js";
 import { resolveConfigPaths } from "./config-paths.js";
+import { loadGlobalConfig, selectDraftRoot } from "./global-config.js";
 import {
   loadSourceConfig,
   SourceConfigError,
@@ -524,24 +524,21 @@ async function readPreviewDraftRoot(
   configFile: string,
   homeDir: string | undefined
 ): Promise<string> {
-  try {
-    const parsed = JSON.parse(await readFile(configFile, "utf8")) as unknown;
-    if (
-      typeof parsed === "object" &&
-      parsed !== null &&
-      !Array.isArray(parsed) &&
-      typeof (parsed as Record<string, unknown>).draftRoot === "string"
-    ) {
-      return resolveConfigPaths({
-        homeDir,
-        draftRoot: (parsed as Record<string, unknown>).draftRoot as string
-      }).defaultDraftRoot;
-    }
-  } catch (err) {
-    if (!isCliNodeError(err) || err.code !== "ENOENT") {
-      throw err;
+  const outcome = await loadGlobalConfig(configFile);
+
+  // Preview is best-effort: a missing config falls back to the default draft
+  // root, but an unreadable or malformed config surfaces its original error.
+  if (outcome.status === "read-error" || outcome.status === "parse-error") {
+    throw outcome.error;
+  }
+
+  if (outcome.status === "ok") {
+    const draftRoot = selectDraftRoot(outcome.value);
+    if (draftRoot !== undefined) {
+      return resolveConfigPaths({ homeDir, draftRoot }).defaultDraftRoot;
     }
   }
+
   return resolveConfigPaths({ homeDir }).defaultDraftRoot;
 }
 
@@ -667,10 +664,6 @@ async function runFeedback(
   } finally {
     prompter.close?.();
   }
-}
-
-function isCliNodeError(error: unknown): error is NodeJS.ErrnoException {
-  return error instanceof Error && "code" in error;
 }
 
 async function runExport(

@@ -1,4 +1,5 @@
-import { readFile } from "node:fs/promises";
+import { loadGlobalConfig } from "./global-config.js";
+import { isRecord } from "./type-guards.js";
 
 export type SourceName = "git" | "claude" | "codex" | "github";
 
@@ -44,33 +45,25 @@ export function listEnabledSources(config: unknown): SourceName[] {
 export async function loadSourceConfig(
   configFilePath: string
 ): Promise<SourceConfigMap> {
-  let raw: string;
+  const outcome = await loadGlobalConfig(configFilePath);
 
-  try {
-    raw = await readFile(configFilePath, "utf8");
-  } catch (error) {
+  switch (outcome.status) {
     // A missing config file is a valid first-run state: default everything on.
-    // Any other read error (permissions, I/O) must surface as a config error
-    // rather than silently enabling all sources.
-    if (isNotFoundError(error)) {
+    case "missing":
       return buildSourceConfigMap({});
-    }
-    throw new SourceConfigError(
-      `Unable to read source config at ${configFilePath}.`
-    );
+    // Any other read error (permissions, I/O) must surface rather than
+    // silently enabling all sources.
+    case "read-error":
+      throw new SourceConfigError(
+        `Unable to read source config at ${configFilePath}.`
+      );
+    case "parse-error":
+      throw new SourceConfigError(
+        `Malformed source config at ${configFilePath}; fix or remove the file.`
+      );
+    case "ok":
+      return buildSourceConfigMap(outcome.value);
   }
-
-  let parsed: unknown;
-
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    throw new SourceConfigError(
-      `Malformed source config at ${configFilePath}; fix or remove the file.`
-    );
-  }
-
-  return buildSourceConfigMap(parsed);
 }
 
 export function buildSourceConfigMap(config: unknown): SourceConfigMap {
@@ -118,12 +111,4 @@ function readSourceRecord(
   }
 
   return { enabled };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isNotFoundError(error: unknown): boolean {
-  return isRecord(error) && error.code === "ENOENT";
 }
