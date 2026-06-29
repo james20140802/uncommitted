@@ -96,9 +96,12 @@ describe("selectTurns precedence", () => {
 
   it("backfills an older session into slack left after a partial eviction", () => {
     // Newest session: two 7-token turns (28 chars each) = 14 tokens, over the
-    // budget of 10. Lowest-density turn is evicted first, so the code-marked
-    // turn (higher density) survives at 7 tokens, leaving 3 tokens of slack.
-    // The older session's single 2-token turn fits that slack and is kept.
+    // budget of 10, so it cannot be kept whole. Phase 1 keeps the older
+    // session's single 2-token turn whole (recency order, fits the budget),
+    // leaving 8 tokens; phase 2 partial-fills the newest session into that
+    // slack — its lowest-density turn is evicted, so the code-marked turn
+    // (higher density) survives at 7 tokens. Result: newest fragment + whole
+    // older session.
     const newKept = turn({
       sessionId: "new",
       timestamp: "2026-06-01T00:00:02Z",
@@ -124,6 +127,27 @@ describe("selectTurns precedence", () => {
       0
     );
     expect(total).toBeLessThanOrEqual(10);
+  });
+
+  it("prefers a whole older session over a fragment of the newest one", () => {
+    // Newest session is one 14-token turn that cannot fit the budget of 10.
+    // An older session is one 10-token turn that fits whole. Completeness
+    // outranks recency, so the whole older session must win over a (here
+    // impossible anyway) fragment of the newer one — and crucially the newer
+    // session must NOT be partial-filled ahead of the fitting older session.
+    const newerOversized = turn({
+      sessionId: "new",
+      timestamp: "2026-06-01T00:00:00Z",
+      text: "n".repeat(56) // 14 tokens, > budget
+    });
+    const olderWhole = turn({
+      sessionId: "old",
+      timestamp: "2026-01-01T00:00:00Z",
+      text: "o".repeat(40) // 10 tokens, == budget
+    });
+    const kept = selectTurns([newerOversized, olderWhole], { budget: 10 });
+    expect(kept.map((t) => t.sessionId)).toEqual(["old"]);
+    expect(kept.map((t) => t.text)).toEqual([olderWhole.text]);
   });
 
   it("lets recency beat raw density when they conflict", () => {

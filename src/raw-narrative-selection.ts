@@ -178,58 +178,89 @@ export function selectTurns(
     return a.firstIndex - b.firstIndex;
   });
 
-  // 4. Greedy fill, session by session, in recency order.
-  const result: NarrativeTurn[] = [];
+  // 4. Two-phase fill honoring completeness > recency.
+  //
+  //   Phase 1: walk sessions most-recent-first and keep every session that fits
+  //            WHOLE in the remaining budget. A session that does not fit whole
+  //            is skipped here; the FIRST (most-recent) such session is the sole
+  //            candidate for a partial fill, all older non-fitting sessions are
+  //            dropped.
+  //   Phase 2: partial-fill that candidate into any leftover slack.
+  //
+  // Doing whole-session keeps first means a budget that cannot fit the newest
+  // session but CAN fit an older session completely emits the complete older
+  // session instead of a fragment of the newer one — the documented
+  // completeness-outranks-recency rule (UNC-156 review).
+  const keptBySession = new Map<string, NarrativeTurn[]>();
   let remaining = budget;
+  let partialCandidate: SessionGroup | undefined;
 
   for (const session of orderedSessions) {
     const sessionTokens = session.turns.reduce((sum, t) => sum + t.tokens, 0);
-
     if (sessionTokens <= remaining) {
-      // Whole-session keep (completeness preference). Emit in chronological
-      // (original input) order.
-      for (const item of session.turns) {
-        result.push(item.turn);
-      }
+      keptBySession.set(
+        session.sessionId,
+        session.turns.map((item) => item.turn)
+      );
       remaining -= sessionTokens;
       continue;
     }
-
-    // Intra-session budget pressure: evict lowest-density turns first until the
-    // rest fit `remaining`. Eviction order is ascending density; ties broken by
-    // earlier original index (keep earlier turns when density is equal).
-    const evictionOrder = [...session.turns].sort((a, b) => {
-      if (a.density !== b.density) {
-        return a.density - b.density; // lowest density first to drop
-      }
-      return b.originalIndex - a.originalIndex; // drop later turns on ties
-    });
-
-    const dropped = new Set<number>();
-    let kept = sessionTokens;
-    for (const item of evictionOrder) {
-      if (kept <= remaining) {
-        break;
-      }
-      dropped.add(item.originalIndex);
-      kept -= item.tokens;
+    if (partialCandidate === undefined) {
+      partialCandidate = session;
     }
+  }
 
-    // Emit survivors in original chronological order.
-    for (const item of session.turns) {
-      if (!dropped.has(item.originalIndex)) {
-        result.push(item.turn);
-      }
+  if (partialCandidate !== undefined && remaining > 0) {
+    const survivors = evictToFit(partialCandidate, remaining);
+    if (survivors.length > 0) {
+      keptBySession.set(partialCandidate.sessionId, survivors);
     }
-    remaining -= kept;
+  }
 
-    // If any budget slack remains after this partial eviction, continue to
-    // strictly-older sessions and backfill them into the leftover slack.
-    // Stop only once the budget is fully exhausted.
-    if (remaining <= 0) {
-      break;
+  // 5. Emit in keep-priority (recency) order.
+  const result: NarrativeTurn[] = [];
+  for (const session of orderedSessions) {
+    const kept = keptBySession.get(session.sessionId);
+    if (kept !== undefined) {
+      result.push(...kept);
     }
   }
 
   return result;
+}
+
+/**
+ * Intra-session budget pressure: evict a session's lowest-density turns first
+ * until the rest fit `remaining`. Eviction order is ascending density; ties
+ * broken by LATER original index (drop later turns, keep earlier ones).
+ * Survivors are returned in chronological (original input) order.
+ */
+function evictToFit(
+  session: SessionGroup,
+  remaining: number
+): NarrativeTurn[] {
+  const evictionOrder = [...session.turns].sort((a, b) => {
+    if (a.density !== b.density) {
+      return a.density - b.density; // lowest density first to drop
+    }
+    return b.originalIndex - a.originalIndex; // drop later turns on ties
+  });
+
+  const dropped = new Set<number>();
+  let kept = session.turns.reduce((sum, t) => sum + t.tokens, 0);
+  for (const item of evictionOrder) {
+    if (kept <= remaining) {
+      break;
+    }
+    dropped.add(item.originalIndex);
+    kept -= item.tokens;
+  }
+
+  const survivors: NarrativeTurn[] = [];
+  for (const item of session.turns) {
+    if (!dropped.has(item.originalIndex)) {
+      survivors.push(item.turn);
+    }
+  }
+  return survivors;
 }
