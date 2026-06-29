@@ -411,6 +411,41 @@ describe("caption generator", () => {
     expect(inputJson).toContain("fix rendering bug");
   });
 
+  it("generateCaption forwards the raw narrative projection to the caption prompt input", async () => {
+    const provider = new MockAiProvider({
+      response: {
+        caption: "오늘은 원문에 적힌 그 순간을 가져왔습니다",
+        hashtags: ["#Uncommitted", "#AI동료일지"]
+      }
+    });
+
+    await generateCaption({
+      activitySummary: createActivitySummary(),
+      provider,
+      persona: "wry coworker",
+      roastLevel: 2,
+      rawNarrativeProjection: {
+        turns: [
+          {
+            source: "claude",
+            text: "Untangled the selection policy and landed a clean fix.",
+            tokenEstimate: 13
+          }
+        ],
+        totalTokens: 13,
+        droppedTurns: 0,
+        droppedTokens: 0,
+        budget: 4000
+      }
+    });
+
+    const request = provider.requests[0]!;
+    const inputJson = JSON.stringify(request.input);
+    expect(inputJson).toContain(
+      "Untangled the selection policy and landed a clean fix."
+    );
+  });
+
   it("generateCaption returns validated { caption, hashtags[] } from mocked provider", async () => {
     const provider = new MockAiProvider({
       response: {

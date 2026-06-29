@@ -197,6 +197,79 @@ describe("generate command — per-source gating", () => {
       "PR #42 merged: add the github collector"
     );
   });
+
+  it("gates the Tier 2 raw-narrative projection by source: a disabled source's raw archive is not projected, an enabled one is", async () => {
+    const SEED_TEXT = "raw narrative projection seed turn unique-marker";
+
+    // Disabled run: claude raw archive present on disk, but claude is off.
+    const disabledRun = createIo();
+    const disabledFixture = await createRegisteredProjectFixture({
+      sources: {
+        git: { enabled: true },
+        claude: { enabled: false },
+        codex: { enabled: true },
+        github: { enabled: true }
+      }
+    });
+    const disabledProvider = new TaskAwareProvider();
+    await writeGitEvent(disabledFixture.project, "2026-05-12");
+    await writeClaudeRawArchive(disabledFixture.project, "2026-05-12", [
+      { role: "assistant", text: SEED_TEXT, timestamp: "2026-05-12T09:00:00.000Z" }
+    ]);
+
+    const disabledExit = await runCli(["generate", "today"], disabledRun.io, {
+      homeDir: disabledFixture.homeDir,
+      now: () => "2026-05-12T23:30:00.000Z",
+      aiProvider: disabledProvider
+    });
+
+    expect(disabledExit).toBe(0);
+    const disabledDraft = disabledProvider.requests.find(
+      (request) => request.task === "draft"
+    );
+    const disabledProjection = (
+      disabledDraft?.input as {
+        rawNarrativeProjection?: { turns: { text: string }[] };
+      }
+    ).rawNarrativeProjection;
+    // Source gating must keep the disabled source's raw turns out of egress.
+    expect(disabledProjection?.turns ?? []).toEqual([]);
+
+    // Enabled run: identical archive, claude on — the turn is projected.
+    const enabledRun = createIo();
+    const enabledFixture = await createRegisteredProjectFixture({
+      sources: {
+        git: { enabled: true },
+        claude: { enabled: true },
+        codex: { enabled: true },
+        github: { enabled: true }
+      }
+    });
+    const enabledProvider = new TaskAwareProvider();
+    await writeGitEvent(enabledFixture.project, "2026-05-12");
+    await writeClaudeRawArchive(enabledFixture.project, "2026-05-12", [
+      { role: "assistant", text: SEED_TEXT, timestamp: "2026-05-12T09:00:00.000Z" }
+    ]);
+
+    const enabledExit = await runCli(["generate", "today"], enabledRun.io, {
+      homeDir: enabledFixture.homeDir,
+      now: () => "2026-05-12T23:30:00.000Z",
+      aiProvider: enabledProvider
+    });
+
+    expect(enabledExit).toBe(0);
+    const enabledDraft = enabledProvider.requests.find(
+      (request) => request.task === "draft"
+    );
+    const enabledProjection = (
+      enabledDraft?.input as {
+        rawNarrativeProjection?: { turns: { text: string }[] };
+      }
+    ).rawNarrativeProjection;
+    expect(enabledProjection?.turns.map((turn) => turn.text)).toContain(
+      SEED_TEXT
+    );
+  });
 });
 
 async function createRegisteredProjectFixture(options: {
@@ -410,6 +483,29 @@ async function writeGitHubSignals(
   }[]
 ): Promise<void> {
   await writeSessionSignals(project, targetDate, "github", signals);
+}
+
+async function writeClaudeRawArchive(
+  project: ProjectRecord,
+  targetDate: string,
+  turns: { role: string; text: string; timestamp: string }[]
+): Promise<void> {
+  const rawDir = join(
+    project.root,
+    ".uncommitted",
+    "events",
+    "claude",
+    "raw"
+  );
+
+  await mkdir(rawDir, { recursive: true });
+  await writeFile(
+    join(rawDir, `${targetDate}.jsonl`),
+    turns
+      .map((turn) => JSON.stringify({ kind: "turn", ...turn }))
+      .join("\n") + "\n",
+    "utf8"
+  );
 }
 
 async function writeSessionSignals(
