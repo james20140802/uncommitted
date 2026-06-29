@@ -17,7 +17,7 @@ import {
   CarouselPngRenderError,
   type CarouselHtmlToPngRenderer
 } from "../src/carousel-renderer.js";
-import { isDirectRun, PreviewConfigError, runCli } from "../src/cli.js";
+import { isDirectRun, runCli } from "../src/cli.js";
 import type {
   AiProvider,
   AiProviderRawResponse,
@@ -1388,9 +1388,9 @@ describe("cli", () => {
       expect(stdout.join("\n")).toContain("Custom root caption");
     });
 
-    // UNC-177: PreviewConfigError guard tests
-    describe("readPreviewDraftRoot config guards (UNC-177)", () => {
-      it("throws PreviewConfigError when config has schemaVersion: 2", async () => {
+    // UNC-177/UNC-178: PreviewConfigError guard tests — central handler maps to exit 2 + unified message
+    describe("readPreviewDraftRoot config guards (UNC-177/UNC-178)", () => {
+      it("returns exit 2 with unified message when config has schemaVersion: 2", async () => {
         const homeDir = await mkdtemp(join(tmpdir(), "uncommitted-preview-schema-"));
         await mkdir(join(homeDir, ".uncommitted"), { recursive: true });
         await writeFile(
@@ -1398,11 +1398,14 @@ describe("cli", () => {
           JSON.stringify({ schemaVersion: 2, draftRoot: join(homeDir, "drafts") }),
           "utf8"
         );
-        const { io } = createIo();
-        await expect(runCli(["preview", "latest"], io, { homeDir })).rejects.toBeInstanceOf(PreviewConfigError);
+        const { io, stderr } = createIo();
+        const exitCode = await runCli(["preview", "latest"], io, { homeDir });
+        expect(exitCode).toBe(2);
+        expect(stderr.join("\n")).toContain("Config error:");
+        expect(stderr.join("\n")).toContain("is unreadable or malformed. Fix or remove the file.");
       });
 
-      it("throws PreviewConfigError when config is a record missing schemaVersion", async () => {
+      it("returns exit 2 with unified message when config is a record missing schemaVersion", async () => {
         const homeDir = await mkdtemp(join(tmpdir(), "uncommitted-preview-noschema-"));
         await mkdir(join(homeDir, ".uncommitted"), { recursive: true });
         await writeFile(
@@ -1410,11 +1413,14 @@ describe("cli", () => {
           JSON.stringify({ draftRoot: join(homeDir, "drafts") }),
           "utf8"
         );
-        const { io } = createIo();
-        await expect(runCli(["preview", "latest"], io, { homeDir })).rejects.toBeInstanceOf(PreviewConfigError);
+        const { io, stderr } = createIo();
+        const exitCode = await runCli(["preview", "latest"], io, { homeDir });
+        expect(exitCode).toBe(2);
+        expect(stderr.join("\n")).toContain("Config error:");
+        expect(stderr.join("\n")).toContain("is unreadable or malformed. Fix or remove the file.");
       });
 
-      it("throws PreviewConfigError when config.json contains malformed JSON", async () => {
+      it("returns exit 2 with unified message when config.json contains malformed JSON", async () => {
         const homeDir = await mkdtemp(join(tmpdir(), "uncommitted-preview-malformed-"));
         await mkdir(join(homeDir, ".uncommitted"), { recursive: true });
         await writeFile(
@@ -1422,27 +1428,11 @@ describe("cli", () => {
           "{ not valid json ~~~",
           "utf8"
         );
-        const { io } = createIo();
-        await expect(runCli(["preview", "latest"], io, { homeDir })).rejects.toBeInstanceOf(PreviewConfigError);
-      });
-
-      it("thrown PreviewConfigError has code === 'config-corruption'", async () => {
-        const homeDir = await mkdtemp(join(tmpdir(), "uncommitted-preview-code-"));
-        await mkdir(join(homeDir, ".uncommitted"), { recursive: true });
-        await writeFile(
-          join(homeDir, ".uncommitted", "config.json"),
-          JSON.stringify({ schemaVersion: 2 }),
-          "utf8"
-        );
-        const { io } = createIo();
-        let caught: unknown;
-        try {
-          await runCli(["preview", "latest"], io, { homeDir });
-        } catch (e) {
-          caught = e;
-        }
-        expect(caught).toBeInstanceOf(PreviewConfigError);
-        expect((caught as PreviewConfigError).code).toBe("config-corruption");
+        const { io, stderr } = createIo();
+        const exitCode = await runCli(["preview", "latest"], io, { homeDir });
+        expect(exitCode).toBe(2);
+        expect(stderr.join("\n")).toContain("Config error:");
+        expect(stderr.join("\n")).toContain("is unreadable or malformed. Fix or remove the file.");
       });
 
       it("does not throw and returns resolved draftRoot when config has schemaVersion: 1", async () => {
@@ -1461,6 +1451,50 @@ describe("cli", () => {
         // No throw — falls back to default draft root (no latest draft so exits 1)
         const exitCode = await runCli(["preview", "latest"], io, { homeDir });
         expect(exitCode).toBe(1); // 1 because no draft exists, not because of config error
+      });
+    });
+
+    // UNC-178: Central config-corruption mapper tests
+    describe("central config-corruption mapper (UNC-178)", () => {
+      it("returns exit 2 + unified message for collect github with malformed config.json", async () => {
+        const homeDir = await mkdtemp(join(tmpdir(), "uncommitted-collect-github-malformed-"));
+        await mkdir(join(homeDir, ".uncommitted"), { recursive: true });
+        await writeFile(
+          join(homeDir, ".uncommitted", "config.json"),
+          "{ not valid json ~~~",
+          "utf8"
+        );
+        const { io, stderr } = createIo();
+        const exitCode = await runCli(["collect", "github"], io, { homeDir });
+        expect(exitCode).toBe(2);
+        expect(stderr.join("\n")).toContain("Config error:");
+        expect(stderr.join("\n")).toContain("is unreadable or malformed. Fix or remove the file.");
+      });
+
+      it("returns exit 2 + unified message for collect git with malformed config.json (SourceConfigError path)", async () => {
+        const homeDir = await mkdtemp(join(tmpdir(), "uncommitted-collect-git-malformed-"));
+        await mkdir(join(homeDir, ".uncommitted"), { recursive: true });
+        await writeFile(
+          join(homeDir, ".uncommitted", "config.json"),
+          "{ not valid json ~~~",
+          "utf8"
+        );
+        const { io, stderr } = createIo();
+        const exitCode = await runCli(["collect", "git"], io, { homeDir });
+        expect(exitCode).toBe(2);
+        expect(stderr.join("\n")).toContain("Config error:");
+        expect(stderr.join("\n")).toContain("is unreadable or malformed. Fix or remove the file.");
+      });
+
+      it("does not map exit 2 for valid config (no false positive)", async () => {
+        const homeDir = await mkdtemp(join(tmpdir(), "uncommitted-collect-git-valid-"));
+        const draftRoot = join(homeDir, "drafts");
+        await writeConfig(homeDir, draftRoot);
+        const { io, stderr } = createIo();
+        // collect git with valid config but no projects → exits 3 (collection error), not 2
+        const exitCode = await runCli(["collect", "git"], io, { homeDir });
+        expect(exitCode).toBe(3);
+        expect(stderr.join("\n")).not.toContain("Config error:");
       });
     });
 

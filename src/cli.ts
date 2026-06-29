@@ -100,6 +100,21 @@ export class PreviewConfigError extends Error {
   }
 }
 
+/**
+ * Returns true for any config-corruption error regardless of which reader
+ * produced it. Recognises both `SourceConfigError` (by class) and the
+ * `code === "config-corruption"` tag carried by `GitHubTokenConfigError`
+ * and `PreviewConfigError` — avoiding hard imports of those classes here.
+ */
+function isConfigCorruptionError(error: unknown): boolean {
+  if (error instanceof SourceConfigError) return true;
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    (error as { code?: unknown }).code === "config-corruption"
+  );
+}
+
 export type CliIo = {
   stdout: (message: string) => void;
   stderr: (message: string) => void;
@@ -186,54 +201,66 @@ export async function runCli(
     return result.exitCode;
   }
 
-  const [subcommand, value] = commandArgs;
+  // Central config-corruption mapper: any reader that throws a config-corruption
+  // error (GitHubTokenConfigError, PreviewConfigError, SourceConfigError) is
+  // caught here and converted to exit 2 + unified message. Non-config errors
+  // are rethrown so per-command handlers remain intact.
+  try {
+    const [subcommand, value] = commandArgs;
 
-  if (command === "project" && subcommand === "add") {
-    return await runProjectAdd(value, io, options);
+    if (command === "project" && subcommand === "add") {
+      return await runProjectAdd(value, io, options);
+    }
+
+    if (command === "project" && subcommand === "list") {
+      return await runProjectList(commandArgs.slice(1), io, options);
+    }
+
+    if (command === "project" && subcommand === "remove") {
+      return await runProjectRemove(value, commandArgs.slice(2), io, options);
+    }
+
+    if (command === "note") {
+      return await runNote(commandArgs, io, options);
+    }
+
+    if (command === "collect") {
+      return await runCollect(commandArgs, io, options);
+    }
+
+    if (command === "generate") {
+      return await runGenerate(commandArgs, io, options);
+    }
+
+    if (command === "render") {
+      return await runRender(commandArgs, io, options);
+    }
+
+    if (command === "preview") {
+      return await runPreview(commandArgs, io, options);
+    }
+
+    if (command === "export") {
+      return await runExport(commandArgs, io, options);
+    }
+
+    if (command === "schedule") {
+      return await runSchedule(commandArgs, io, options);
+    }
+
+    if (command === "feedback") {
+      return await runFeedback(commandArgs, io, options);
+    }
+
+    io.stderr(`Command not implemented yet: ${command}`);
+    return 1;
+  } catch (error) {
+    if (isConfigCorruptionError(error)) {
+      io.stderr(error instanceof Error ? error.message : String(error));
+      return 2;
+    }
+    throw error;
   }
-
-  if (command === "project" && subcommand === "list") {
-    return await runProjectList(commandArgs.slice(1), io, options);
-  }
-
-  if (command === "project" && subcommand === "remove") {
-    return await runProjectRemove(value, commandArgs.slice(2), io, options);
-  }
-
-  if (command === "note") {
-    return await runNote(commandArgs, io, options);
-  }
-
-  if (command === "collect") {
-    return await runCollect(commandArgs, io, options);
-  }
-
-  if (command === "generate") {
-    return await runGenerate(commandArgs, io, options);
-  }
-
-  if (command === "render") {
-    return await runRender(commandArgs, io, options);
-  }
-
-  if (command === "preview") {
-    return await runPreview(commandArgs, io, options);
-  }
-
-  if (command === "export") {
-    return await runExport(commandArgs, io, options);
-  }
-
-  if (command === "schedule") {
-    return await runSchedule(commandArgs, io, options);
-  }
-
-  if (command === "feedback") {
-    return await runFeedback(commandArgs, io, options);
-  }
-
-  io.stderr(`Command not implemented yet: ${command}`);
-  return 1;
 }
 
 async function runSchedule(
@@ -871,16 +898,7 @@ async function runCollect(
   }
 
   const paths = resolveConfigPaths({ homeDir: options.homeDir });
-  let sourceConfig;
-  try {
-    sourceConfig = await loadSourceConfig(paths.configFile);
-  } catch (error) {
-    if (error instanceof SourceConfigError) {
-      io.stderr(error.message);
-      return 2;
-    }
-    throw error;
-  }
+  const sourceConfig = await loadSourceConfig(paths.configFile);
   if (!sourceConfig[source].enabled) {
     io.stdout(
       `Source '${source}' is disabled in config; skipping collection.`
@@ -1037,22 +1055,13 @@ async function runCollectAllCommand(
   io: CliIo,
   options: CliOptions
 ): Promise<number> {
-  let summary;
-  try {
-    summary = await runCollectAll({
-      homeDir: options.homeDir,
-      claudeHome: options.claudeHome,
-      codexHome: options.codexHome,
-      now: options.now,
-      collectInvokers: options.collectInvokers
-    });
-  } catch (error) {
-    if (error instanceof SourceConfigError) {
-      io.stderr(error.message);
-      return 2;
-    }
-    throw error;
-  }
+  const summary = await runCollectAll({
+    homeDir: options.homeDir,
+    claudeHome: options.claudeHome,
+    codexHome: options.codexHome,
+    now: options.now,
+    collectInvokers: options.collectInvokers
+  });
 
   const enabledEntries = summary.entries.filter(
     (entry) => entry.status !== "disabled"

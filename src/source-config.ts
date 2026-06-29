@@ -55,11 +55,11 @@ export async function loadSourceConfig(
     // silently enabling all sources.
     case "read-error":
       throw new SourceConfigError(
-        `Unable to read source config at ${configFilePath}.`
+        `Config error: ${configFilePath} is unreadable or malformed. Fix or remove the file.`
       );
     case "parse-error":
       throw new SourceConfigError(
-        `Malformed source config at ${configFilePath}; fix or remove the file.`
+        `Config error: ${configFilePath} is unreadable or malformed. Fix or remove the file.`
       );
     case "ok":
       return buildSourceConfigMap(outcome.value);
