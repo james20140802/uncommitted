@@ -17,7 +17,7 @@ import {
   CarouselPngRenderError,
   type CarouselHtmlToPngRenderer
 } from "../src/carousel-renderer.js";
-import { isDirectRun, runCli } from "../src/cli.js";
+import { isDirectRun, PreviewConfigError, runCli } from "../src/cli.js";
 import type {
   AiProvider,
   AiProviderRawResponse,
@@ -1386,6 +1386,82 @@ describe("cli", () => {
       expect(exitCode).toBe(0);
       expect(stderr).toEqual([]);
       expect(stdout.join("\n")).toContain("Custom root caption");
+    });
+
+    // UNC-177: PreviewConfigError guard tests
+    describe("readPreviewDraftRoot config guards (UNC-177)", () => {
+      it("throws PreviewConfigError when config has schemaVersion: 2", async () => {
+        const homeDir = await mkdtemp(join(tmpdir(), "uncommitted-preview-schema-"));
+        await mkdir(join(homeDir, ".uncommitted"), { recursive: true });
+        await writeFile(
+          join(homeDir, ".uncommitted", "config.json"),
+          JSON.stringify({ schemaVersion: 2, draftRoot: join(homeDir, "drafts") }),
+          "utf8"
+        );
+        const { io } = createIo();
+        await expect(runCli(["preview", "latest"], io, { homeDir })).rejects.toBeInstanceOf(PreviewConfigError);
+      });
+
+      it("throws PreviewConfigError when config is a record missing schemaVersion", async () => {
+        const homeDir = await mkdtemp(join(tmpdir(), "uncommitted-preview-noschema-"));
+        await mkdir(join(homeDir, ".uncommitted"), { recursive: true });
+        await writeFile(
+          join(homeDir, ".uncommitted", "config.json"),
+          JSON.stringify({ draftRoot: join(homeDir, "drafts") }),
+          "utf8"
+        );
+        const { io } = createIo();
+        await expect(runCli(["preview", "latest"], io, { homeDir })).rejects.toBeInstanceOf(PreviewConfigError);
+      });
+
+      it("throws PreviewConfigError when config.json contains malformed JSON", async () => {
+        const homeDir = await mkdtemp(join(tmpdir(), "uncommitted-preview-malformed-"));
+        await mkdir(join(homeDir, ".uncommitted"), { recursive: true });
+        await writeFile(
+          join(homeDir, ".uncommitted", "config.json"),
+          "{ not valid json ~~~",
+          "utf8"
+        );
+        const { io } = createIo();
+        await expect(runCli(["preview", "latest"], io, { homeDir })).rejects.toBeInstanceOf(PreviewConfigError);
+      });
+
+      it("thrown PreviewConfigError has code === 'config-corruption'", async () => {
+        const homeDir = await mkdtemp(join(tmpdir(), "uncommitted-preview-code-"));
+        await mkdir(join(homeDir, ".uncommitted"), { recursive: true });
+        await writeFile(
+          join(homeDir, ".uncommitted", "config.json"),
+          JSON.stringify({ schemaVersion: 2 }),
+          "utf8"
+        );
+        const { io } = createIo();
+        let caught: unknown;
+        try {
+          await runCli(["preview", "latest"], io, { homeDir });
+        } catch (e) {
+          caught = e;
+        }
+        expect(caught).toBeInstanceOf(PreviewConfigError);
+        expect((caught as PreviewConfigError).code).toBe("config-corruption");
+      });
+
+      it("does not throw and returns resolved draftRoot when config has schemaVersion: 1", async () => {
+        const homeDir = await mkdtemp(join(tmpdir(), "uncommitted-preview-valid-"));
+        const customDraftRoot = join(homeDir, "custom", "drafts");
+        await writeConfig(homeDir, customDraftRoot);
+        const { io } = createIo();
+        // No throw — just reaches preview with the custom draft root (no latest draft so exits 1)
+        const exitCode = await runCli(["preview", "latest"], io, { homeDir });
+        expect(exitCode).toBe(1); // 1 because no draft exists, not because of config error
+      });
+
+      it("does not throw and returns default draftRoot when config.json is missing", async () => {
+        const homeDir = await mkdtemp(join(tmpdir(), "uncommitted-preview-missing-config-"));
+        const { io } = createIo();
+        // No throw — falls back to default draft root (no latest draft so exits 1)
+        const exitCode = await runCli(["preview", "latest"], io, { homeDir });
+        expect(exitCode).toBe(1); // 1 because no draft exists, not because of config error
+      });
     });
 
     it("exits 1 with usage message when no subcommand is given", async () => {

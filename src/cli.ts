@@ -84,6 +84,21 @@ import {
 } from "./feedback-command.js";
 import type { CarouselHtmlToPngRenderer } from "./carousel-renderer.js";
 import type { ImageAssetProvider } from "./visual-assets.js";
+import { isRecord } from "./type-guards.js";
+
+/**
+ * Thrown by readPreviewDraftRoot when config.json is unreadable, malformed,
+ * or has an unsupported schemaVersion. Task 3's exit-code mapper recognises
+ * this via `code === "config-corruption"`.
+ */
+export class PreviewConfigError extends Error {
+  readonly code = "config-corruption" as const;
+
+  constructor(message: string) {
+    super(message);
+    this.name = "PreviewConfigError";
+  }
+}
 
 export type CliIo = {
   stdout: (message: string) => void;
@@ -527,12 +542,21 @@ async function readPreviewDraftRoot(
   const outcome = await loadGlobalConfig(configFile);
 
   // Preview is best-effort: a missing config falls back to the default draft
-  // root, but an unreadable or malformed config surfaces its original error.
+  // root, but an unreadable or malformed config surfaces a typed error.
   if (outcome.status === "read-error" || outcome.status === "parse-error") {
-    throw outcome.error;
+    throw new PreviewConfigError(
+      `Config error: ${configFile} is unreadable or malformed. Fix or remove the file.`
+    );
   }
 
   if (outcome.status === "ok") {
+    // Guard: reject configs that are records with an unsupported schemaVersion.
+    // Non-record ok values (e.g. JSON primitives) fall through to the default.
+    if (isRecord(outcome.value) && outcome.value.schemaVersion !== 1) {
+      throw new PreviewConfigError(
+        `Config error: ${configFile} is unreadable or malformed. Fix or remove the file.`
+      );
+    }
     const draftRoot = selectDraftRoot(outcome.value);
     if (draftRoot !== undefined) {
       return resolveConfigPaths({ homeDir, draftRoot }).defaultDraftRoot;
