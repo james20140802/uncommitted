@@ -279,7 +279,8 @@ export async function runGenerateCommand(
     activitySummary,
     provider,
     persona: config.persona,
-    roastLevel: config.roastLevel
+    roastLevel: config.roastLevel,
+    rawNarrativeProjection
   });
   const caption = deriveCaptionText(captionResult);
   const baseMetadata: DraftMetadataBase = {

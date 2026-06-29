@@ -65,6 +65,7 @@ export type GenerateCaptionOptions = {
   provider: AiProvider;
   persona: string;
   roastLevel: number;
+  rawNarrativeProjection?: RawNarrativeProjection;
 };
 
 type DiaryDraftProviderData = JsonObject & {
@@ -293,6 +294,7 @@ export function buildCaptionInstructions(options: { quiet: boolean }): string {
     "4 to 8 short lines. Blank lines are allowed. Add 2 to 5 hashtags (each starting with #).",
     "Mild roast is allowed toward situations, workflow, bugs, TODOs, vague requirements, or developer habits. Never insult ability, worth, personality, identity, mental health, or real life.",
     quietInstruction,
+    "If rawNarrativeProjection is present, you may use its turns as concrete anchors for what actually happened today; it is already safety-filtered. Never copy it verbatim and never invent work it does not support.",
     "",
     "=== GOOD EXAMPLES ===",
     "",
@@ -398,11 +400,12 @@ function buildSafeCaptionInput(options: {
   activitySummary: ActivitySummary;
   persona: string;
   roastLevel: number;
+  rawNarrativeProjection?: RawNarrativeProjection;
 }): SafeActivitySummary {
   const summary = options.activitySummary;
   const quiet = summary.activityLevel === "none";
 
-  return {
+  const safeInput: SafeActivitySummary = {
     schemaVersion: 1,
     targetDate: summary.targetDate,
     quiet,
@@ -429,6 +432,17 @@ function buildSafeCaptionInput(options: {
       activityLevel: summary.activityLevel
     }
   };
+
+  // Tier 2 raw-narrative projection: concrete, already-safety-filtered anchors
+  // for days where the raw archive holds the only specific detail. The caption
+  // writer needs this just as much as the story writer (UNC-156 review).
+  if (options.rawNarrativeProjection !== undefined) {
+    safeInput.rawNarrativeProjection = toJsonValue(
+      options.rawNarrativeProjection
+    );
+  }
+
+  return safeInput;
 }
 
 function buildCaptionHighlights(summary: ActivitySummary): string[] {
@@ -461,7 +475,8 @@ export async function generateCaption(
     summary: buildSafeCaptionInput({
       activitySummary: options.activitySummary,
       persona: options.persona,
-      roastLevel: options.roastLevel
+      roastLevel: options.roastLevel,
+      rawNarrativeProjection: options.rawNarrativeProjection
     })
   });
 
