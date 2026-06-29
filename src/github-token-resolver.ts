@@ -1,5 +1,5 @@
-import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { loadGlobalConfig, selectGitHubToken } from "./global-config.js";
 
 export type ResolvedGitHubToken = {
   token: string | null;
@@ -20,22 +20,13 @@ export async function resolveGitHubToken(
     return { token: envToken, source: "env" };
   }
   const configPath = join(input.homeDir, ".uncommitted", "config.json");
-  try {
-    const raw = await readFile(configPath, "utf8");
-    const parsed = JSON.parse(raw) as unknown;
-    if (
-      typeof parsed === "object" &&
-      parsed !== null &&
-      typeof (parsed as { githubToken?: unknown }).githubToken === "string" &&
-      (parsed as { githubToken: string }).githubToken.length > 0
-    ) {
-      return {
-        token: (parsed as { githubToken: string }).githubToken,
-        source: "config"
-      };
+  const outcome = await loadGlobalConfig(configPath);
+  if (outcome.status === "ok") {
+    const token = selectGitHubToken(outcome.value);
+    if (token !== null) {
+      return { token, source: "config" };
     }
-  } catch {
-    // Missing / unreadable / invalid JSON → fall through to "missing".
   }
+  // Missing / unreadable / invalid JSON / no token → "missing".
   return { token: null, source: "missing" };
 }

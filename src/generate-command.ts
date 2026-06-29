@@ -18,6 +18,12 @@ import type { GitActivityEvent } from "./collect-git-command.js";
 import { isActivitySignal, type ActivitySignal } from "./event-source.js";
 import { resolveConfigPaths } from "./config-paths.js";
 import {
+  isRoastLevel,
+  loadGlobalConfig,
+  type GlobalConfig
+} from "./global-config.js";
+import { isNodeError, isRecord } from "./type-guards.js";
+import {
   deriveCaptionText,
   generateCaption,
   generateDiaryDraft,
@@ -104,13 +110,15 @@ type GenerateConfig = AiProviderConfig & {
   carouselVisualStyle: CarouselVisualStyleMode;
 };
 
-type GenerateConfigFile = {
-  schemaVersion: 1;
-  draftRoot: string;
+// On-disk view of the canonical GlobalConfig that `generate` needs, with
+// `aiProvider` narrowed to a known provider and `carouselVisualStyle` optional
+// (older configs may omit it).
+type GenerateConfigFile = Pick<
+  GlobalConfig,
+  "schemaVersion" | "draftRoot" | "persona" | "roastLevel"
+> & {
   aiProvider: AiProviderName;
   carouselVisualStyle?: CarouselVisualStyleMode;
-  persona: string;
-  roastLevel: number;
 };
 
 type DraftMetadataBase = {
@@ -598,37 +606,31 @@ async function readGenerateConfig(
   path: string,
   homeDir: string | undefined
 ): Promise<GenerateConfig> {
-  try {
-    const parsed = JSON.parse(await readFile(path, "utf8")) as unknown;
+  const outcome = await loadGlobalConfig(path);
 
-    if (!isGenerateConfigFile(parsed)) {
-      throw new GenerateCommandError("AI config is invalid.", "invalid-config");
-    }
+  if (outcome.status === "missing") {
+    throw new GenerateCommandError(
+      "AI config is missing. Run `uncommitted init` first.",
+      "invalid-config"
+    );
+  }
 
-    return {
-      draftRoot: resolveConfigPaths({
-        homeDir,
-        draftRoot: parsed.draftRoot
-      }).defaultDraftRoot,
-      provider: parsed.aiProvider,
-      carouselVisualStyle: parsed.carouselVisualStyle ?? "photo-first",
-      persona: parsed.persona,
-      roastLevel: parsed.roastLevel
-    };
-  } catch (error) {
-    if (error instanceof GenerateCommandError) {
-      throw error;
-    }
-
-    if (isNodeError(error) && error.code === "ENOENT") {
-      throw new GenerateCommandError(
-        "AI config is missing. Run `uncommitted init` first.",
-        "invalid-config"
-      );
-    }
-
+  if (outcome.status !== "ok" || !isGenerateConfigFile(outcome.value)) {
     throw new GenerateCommandError("AI config is invalid.", "invalid-config");
   }
+
+  const parsed = outcome.value;
+
+  return {
+    draftRoot: resolveConfigPaths({
+      homeDir,
+      draftRoot: parsed.draftRoot
+    }).defaultDraftRoot,
+    provider: parsed.aiProvider,
+    carouselVisualStyle: parsed.carouselVisualStyle ?? "photo-first",
+    persona: parsed.persona,
+    roastLevel: parsed.roastLevel
+  };
 }
 
 async function readProjectsFile(path: string): Promise<ProjectsFile> {
@@ -823,10 +825,7 @@ function isGenerateConfigFile(value: unknown): value is GenerateConfigFile {
     (value.carouselVisualStyle === undefined ||
       isCarouselVisualStyleMode(value.carouselVisualStyle)) &&
     typeof value.persona === "string" &&
-    typeof value.roastLevel === "number" &&
-    Number.isInteger(value.roastLevel) &&
-    value.roastLevel >= 0 &&
-    value.roastLevel <= 5
+    isRoastLevel(value.roastLevel)
   );
 }
 
@@ -946,12 +945,4 @@ function isAiProviderName(value: unknown): value is AiProviderName {
     typeof value === "string" &&
     providerNames.includes(value as AiProviderName)
   );
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
-
-function isNodeError(error: unknown): error is NodeJS.ErrnoException {
-  return error instanceof Error && "code" in error;
 }

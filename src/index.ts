@@ -225,6 +225,7 @@ export type {
   InitCommandResult,
   InitConfig
 } from "./init-command.js";
+export type { GlobalConfig } from "./global-config.js";
 export { addProject, ProjectAddError } from "./project-add.js";
 export type {
   AddProjectOptions,

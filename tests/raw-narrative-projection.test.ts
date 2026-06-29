@@ -149,6 +149,12 @@ describe("readCaptionProjectionTokenBudget", () => {
     expect(await readCaptionProjectionTokenBudget(file)).toBe(4000);
   });
 
+  it("falls back to the default for a fractional value below 1", async () => {
+    // 0.5 is positive but floors to 0, which would silently empty projections.
+    const file = await writeConfig({ captionProjectionTokenBudget: 0.5 });
+    expect(await readCaptionProjectionTokenBudget(file)).toBe(4000);
+  });
+
   it("falls back to the default for a nonexistent file", async () => {
     expect(
       await readCaptionProjectionTokenBudget(

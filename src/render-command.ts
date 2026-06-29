@@ -12,6 +12,8 @@ import {
   type CarouselPngVisualAsset
 } from "./carousel-renderer.js";
 import { resolveConfigPaths } from "./config-paths.js";
+import { loadGlobalConfig } from "./global-config.js";
+import { isRecord } from "./type-guards.js";
 import {
   DraftStorageError,
   readLatestDraftPointer,
@@ -45,11 +47,6 @@ export type RenderCommandResult = {
   outputDir: string;
   carouselDir: string;
   renderResult: CarouselPngRenderResult;
-};
-
-type RenderConfigFile = {
-  schemaVersion: 1;
-  draftRoot: string;
 };
 
 const usage = "Usage: uncommitted render latest";
@@ -130,31 +127,28 @@ async function readDraftRoot(
   configFile: string,
   homeDir: string | undefined
 ): Promise<string> {
-  try {
-    const parsed = JSON.parse(await readFile(configFile, "utf8")) as unknown;
+  const outcome = await loadGlobalConfig(configFile);
 
-    if (!isRenderConfigFile(parsed)) {
-      throw new RenderCommandError("AI config is invalid.", "invalid-config");
-    }
+  if (outcome.status === "missing") {
+    throw new RenderCommandError(
+      "AI config is missing. Run `uncommitted init` first.",
+      "invalid-config"
+    );
+  }
 
-    return resolveConfigPaths({
-      homeDir,
-      draftRoot: parsed.draftRoot
-    }).defaultDraftRoot;
-  } catch (error) {
-    if (error instanceof RenderCommandError) {
-      throw error;
-    }
-
-    if (isNodeError(error) && error.code === "ENOENT") {
-      throw new RenderCommandError(
-        "AI config is missing. Run `uncommitted init` first.",
-        "invalid-config"
-      );
-    }
-
+  if (
+    outcome.status !== "ok" ||
+    !isRecord(outcome.value) ||
+    outcome.value.schemaVersion !== 1 ||
+    typeof outcome.value.draftRoot !== "string"
+  ) {
     throw new RenderCommandError("AI config is invalid.", "invalid-config");
   }
+
+  return resolveConfigPaths({
+    homeDir,
+    draftRoot: outcome.value.draftRoot
+  }).defaultDraftRoot;
 }
 
 async function readLatestPointer(draftRoot: string) {
@@ -300,14 +294,6 @@ function mergeFiles(existingFiles: unknown, renderedFiles: string[]): string[] {
   return Array.from(new Set([...files, ...renderedFiles]));
 }
 
-function isRenderConfigFile(value: unknown): value is RenderConfigFile {
-  return (
-    isRecord(value) &&
-    value.schemaVersion === 1 &&
-    typeof value.draftRoot === "string"
-  );
-}
-
 function isVisualAssetMetadata(value: unknown): value is CarouselPngVisualAsset {
   return (
     isRecord(value) &&
@@ -330,12 +316,4 @@ function isPathInside(rootPath: string, valuePath: string): boolean {
       !relativePath.startsWith(`..${sep}`) &&
       !isAbsolute(relativePath))
   );
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
-
-function isNodeError(error: unknown): error is NodeJS.ErrnoException {
-  return error instanceof Error && "code" in error;
 }

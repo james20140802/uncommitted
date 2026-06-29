@@ -3,7 +3,11 @@ import process from "node:process";
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { ensureConfigDirectories, resolveConfigPaths } from "./config-paths.js";
-import { defaultSourceConfigMap, type SourceConfigMap } from "./source-config.js";
+import { clearGlobalConfigCache, type GlobalConfig } from "./global-config.js";
+import { defaultSourceConfigMap } from "./source-config.js";
+
+/** @deprecated Use {@link GlobalConfig}, the canonical config shape. */
+export type InitConfig = GlobalConfig;
 
 export type InitAnswers = {
   draftRoot?: string;
@@ -21,22 +25,9 @@ export type InitCommandOptions = {
   answers?: InitAnswers;
 };
 
-export type InitConfig = {
-  schemaVersion: 1;
-  draftRoot: string;
-  scheduleTime: string;
-  aiProvider: string;
-  carouselVisualStyle: "photo-first" | "story-card";
-  persona: string;
-  roastLevel: number;
-  rawRetentionDays: number;
-  captionProjectionTokenBudget: number;
-  sources: SourceConfigMap;
-};
-
 export type InitCommandResult = {
   created: true;
-  config: InitConfig;
+  config: GlobalConfig;
 };
 
 const defaultAnswers = {
@@ -87,7 +78,7 @@ export async function runInitCommand(
 
   await ensureConfigDirectories(paths);
 
-  const config: InitConfig = {
+  const config: GlobalConfig = {
     schemaVersion: 1,
     draftRoot: paths.defaultDraftRoot,
     scheduleTime,
@@ -101,6 +92,9 @@ export async function runInitCommand(
   };
 
   await writeJson(paths.configFile, config);
+  // Invalidate any config cached earlier in this process so a subsequent read
+  // in the same invocation reflects the freshly written config.
+  clearGlobalConfigCache();
   await writeJsonIfMissing(paths.projectsFile, { schemaVersion: 1, projects: [] });
   await writeJsonIfMissing(paths.formatHistoryFile, { schemaVersion: 1, formats: [] });
 

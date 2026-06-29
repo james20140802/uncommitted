@@ -1,4 +1,6 @@
-import { readdir, readFile, stat, unlink } from "node:fs/promises";
+import { readdir, stat, unlink } from "node:fs/promises";
+import { loadGlobalConfig } from "./global-config.js";
+import { isRecord } from "./type-guards.js";
 import { join } from "node:path";
 
 export type RawArchiveSource = "claude" | "codex" | "github";
@@ -83,22 +85,13 @@ export async function pruneRawArchives(
 export async function readRawRetentionDays(
   configFilePath: string
 ): Promise<number> {
-  let raw: string;
-  try {
-    raw = await readFile(configFilePath, "utf8");
-  } catch {
+  // 0 means "keep forever" (the unlimited sentinel), so every unreadable,
+  // malformed, or invalid case falls back to no pruning.
+  const outcome = await loadGlobalConfig(configFilePath);
+  if (outcome.status !== "ok" || !isRecord(outcome.value)) {
     return 0;
   }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return 0;
-  }
-  if (typeof parsed !== "object" || parsed === null) {
-    return 0;
-  }
-  const value = (parsed as Record<string, unknown>).rawRetentionDays;
+  const value = outcome.value.rawRetentionDays;
   if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
     return 0;
   }

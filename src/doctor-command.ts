@@ -1,10 +1,12 @@
 import { execFile } from "node:child_process";
 import { constants } from "node:fs";
-import { access, readFile } from "node:fs/promises";
+import { access } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import process from "node:process";
 import { promisify } from "node:util";
 import { resolveConfigPaths } from "./config-paths.js";
+import { loadGlobalConfig, type GlobalConfig } from "./global-config.js";
+import { isRecord } from "./type-guards.js";
 
 const execFileAsync = promisify(execFile);
 const minimumNodeVersion = "22.13.0";
@@ -37,11 +39,10 @@ export type DoctorOptions = {
   checkAccess?: (path: string, mode: number) => Promise<boolean>;
 };
 
-type DoctorConfig = {
-  schemaVersion: 1;
-  draftRoot: string;
-  aiProvider: string;
-};
+type DoctorConfig = Pick<
+  GlobalConfig,
+  "schemaVersion" | "draftRoot" | "aiProvider"
+>;
 
 const aiProviderEnvKeys: Record<string, string | undefined> = {
   none: undefined,
@@ -150,44 +151,21 @@ export function formatDoctorReport(report: DoctorReport): string {
 async function readConfig(
   configFile: string
 ): Promise<{ config?: DoctorConfig; check: DoctorCheck }> {
-  try {
-    const parsed = JSON.parse(await readFile(configFile, "utf8")) as unknown;
+  const outcome = await loadGlobalConfig(configFile);
 
-    if (!isDoctorConfig(parsed)) {
-      return {
-        check: {
-          id: "config",
-          label: "Global config",
-          status: "fail",
-          message: `Config file is invalid: ${configFile}`,
-          exitCode: 2
-        }
-      };
-    }
-
+  if (outcome.status === "missing") {
     return {
-      config: parsed,
       check: {
         id: "config",
         label: "Global config",
-        status: "pass",
-        message: "Config file found.",
-        detail: configFile
+        status: "fail",
+        message: `Config file is missing: ${configFile}`,
+        exitCode: 2
       }
     };
-  } catch (error) {
-    if (isNodeError(error) && error.code === "ENOENT") {
-      return {
-        check: {
-          id: "config",
-          label: "Global config",
-          status: "fail",
-          message: `Config file is missing: ${configFile}`,
-          exitCode: 2
-        }
-      };
-    }
+  }
 
+  if (outcome.status !== "ok" || !isDoctorConfig(outcome.value)) {
     return {
       check: {
         id: "config",
@@ -198,6 +176,17 @@ async function readConfig(
       }
     };
   }
+
+  return {
+    config: outcome.value,
+    check: {
+      id: "config",
+      label: "Global config",
+      status: "pass",
+      message: "Config file found.",
+      detail: configFile
+    }
+  };
 }
 
 function createNodeCheck(nodeVersion: string): DoctorCheck {
@@ -457,12 +446,4 @@ function isDoctorConfig(value: unknown): value is DoctorConfig {
     typeof value.draftRoot === "string" &&
     typeof value.aiProvider === "string"
   );
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
-
-function isNodeError(error: unknown): error is NodeJS.ErrnoException {
-  return error instanceof Error && "code" in error;
 }
