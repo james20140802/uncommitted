@@ -1,5 +1,6 @@
-import { join } from "node:path";
 import { loadGlobalConfig, selectGitHubToken } from "./global-config.js";
+import { resolveConfigPaths } from "./config-paths.js";
+import { isRecord } from "./type-guards.js";
 
 export type ResolvedGitHubToken = {
   token: string | null;
@@ -11,6 +12,15 @@ export type ResolveGitHubTokenInput = {
   env?: Record<string, string | undefined>;
 };
 
+export class GitHubTokenConfigError extends Error {
+  readonly code = "config-corruption" as const;
+
+  constructor(message: string) {
+    super(message);
+    this.name = "GitHubTokenConfigError";
+  }
+}
+
 export async function resolveGitHubToken(
   input: ResolveGitHubTokenInput
 ): Promise<ResolvedGitHubToken> {
@@ -19,14 +29,26 @@ export async function resolveGitHubToken(
   if (typeof envToken === "string" && envToken.length > 0) {
     return { token: envToken, source: "env" };
   }
-  const configPath = join(input.homeDir, ".uncommitted", "config.json");
+  const configPath = resolveConfigPaths({ homeDir: input.homeDir }).configFile;
   const outcome = await loadGlobalConfig(configPath);
+  if (outcome.status === "read-error" || outcome.status === "parse-error") {
+    throw new GitHubTokenConfigError(
+      `Config error: ${configPath} is unreadable or malformed. Fix or remove the file.`
+    );
+  }
   if (outcome.status === "ok") {
+    // Valid JSON that is not a config object (e.g. `[]`, `42`, `null`) is
+    // corruption, not "no token" — surface it rather than disguising it.
+    if (!isRecord(outcome.value)) {
+      throw new GitHubTokenConfigError(
+        `Config error: ${configPath} is unreadable or malformed. Fix or remove the file.`
+      );
+    }
     const token = selectGitHubToken(outcome.value);
     if (token !== null) {
       return { token, source: "config" };
     }
   }
-  // Missing / unreadable / invalid JSON / no token → "missing".
+  // Missing or ok-record-without-token → "missing".
   return { token: null, source: "missing" };
 }

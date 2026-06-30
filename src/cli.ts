@@ -84,6 +84,36 @@ import {
 } from "./feedback-command.js";
 import type { CarouselHtmlToPngRenderer } from "./carousel-renderer.js";
 import type { ImageAssetProvider } from "./visual-assets.js";
+import { isRecord } from "./type-guards.js";
+
+/**
+ * Thrown by readPreviewDraftRoot when config.json is unreadable, malformed,
+ * or has an unsupported schemaVersion. Task 3's exit-code mapper recognises
+ * this via `code === "config-corruption"`.
+ */
+export class PreviewConfigError extends Error {
+  readonly code = "config-corruption" as const;
+
+  constructor(message: string) {
+    super(message);
+    this.name = "PreviewConfigError";
+  }
+}
+
+/**
+ * Returns true for any config-corruption error regardless of which reader
+ * produced it. Recognises both `SourceConfigError` (by class) and the
+ * `code === "config-corruption"` tag carried by `GitHubTokenConfigError`
+ * and `PreviewConfigError` — avoiding hard imports of those classes here.
+ */
+function isConfigCorruptionError(error: unknown): boolean {
+  if (error instanceof SourceConfigError) return true;
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    (error as { code?: unknown }).code === "config-corruption"
+  );
+}
 
 export type CliIo = {
   stdout: (message: string) => void;
@@ -171,54 +201,66 @@ export async function runCli(
     return result.exitCode;
   }
 
-  const [subcommand, value] = commandArgs;
+  // Central config-corruption mapper: any reader that throws a config-corruption
+  // error (GitHubTokenConfigError, PreviewConfigError, SourceConfigError) is
+  // caught here and converted to exit 2 + unified message. Non-config errors
+  // are rethrown so per-command handlers remain intact.
+  try {
+    const [subcommand, value] = commandArgs;
 
-  if (command === "project" && subcommand === "add") {
-    return await runProjectAdd(value, io, options);
+    if (command === "project" && subcommand === "add") {
+      return await runProjectAdd(value, io, options);
+    }
+
+    if (command === "project" && subcommand === "list") {
+      return await runProjectList(commandArgs.slice(1), io, options);
+    }
+
+    if (command === "project" && subcommand === "remove") {
+      return await runProjectRemove(value, commandArgs.slice(2), io, options);
+    }
+
+    if (command === "note") {
+      return await runNote(commandArgs, io, options);
+    }
+
+    if (command === "collect") {
+      return await runCollect(commandArgs, io, options);
+    }
+
+    if (command === "generate") {
+      return await runGenerate(commandArgs, io, options);
+    }
+
+    if (command === "render") {
+      return await runRender(commandArgs, io, options);
+    }
+
+    if (command === "preview") {
+      return await runPreview(commandArgs, io, options);
+    }
+
+    if (command === "export") {
+      return await runExport(commandArgs, io, options);
+    }
+
+    if (command === "schedule") {
+      return await runSchedule(commandArgs, io, options);
+    }
+
+    if (command === "feedback") {
+      return await runFeedback(commandArgs, io, options);
+    }
+
+    io.stderr(`Command not implemented yet: ${command}`);
+    return 1;
+  } catch (error) {
+    if (isConfigCorruptionError(error)) {
+      io.stderr(error instanceof Error ? error.message : String(error));
+      return 2;
+    }
+    throw error;
   }
-
-  if (command === "project" && subcommand === "list") {
-    return await runProjectList(commandArgs.slice(1), io, options);
-  }
-
-  if (command === "project" && subcommand === "remove") {
-    return await runProjectRemove(value, commandArgs.slice(2), io, options);
-  }
-
-  if (command === "note") {
-    return await runNote(commandArgs, io, options);
-  }
-
-  if (command === "collect") {
-    return await runCollect(commandArgs, io, options);
-  }
-
-  if (command === "generate") {
-    return await runGenerate(commandArgs, io, options);
-  }
-
-  if (command === "render") {
-    return await runRender(commandArgs, io, options);
-  }
-
-  if (command === "preview") {
-    return await runPreview(commandArgs, io, options);
-  }
-
-  if (command === "export") {
-    return await runExport(commandArgs, io, options);
-  }
-
-  if (command === "schedule") {
-    return await runSchedule(commandArgs, io, options);
-  }
-
-  if (command === "feedback") {
-    return await runFeedback(commandArgs, io, options);
-  }
-
-  io.stderr(`Command not implemented yet: ${command}`);
-  return 1;
 }
 
 async function runSchedule(
@@ -527,12 +569,23 @@ async function readPreviewDraftRoot(
   const outcome = await loadGlobalConfig(configFile);
 
   // Preview is best-effort: a missing config falls back to the default draft
-  // root, but an unreadable or malformed config surfaces its original error.
+  // root, but an unreadable or malformed config surfaces a typed error.
   if (outcome.status === "read-error" || outcome.status === "parse-error") {
-    throw outcome.error;
+    throw new PreviewConfigError(
+      `Config error: ${configFile} is unreadable or malformed. Fix or remove the file.`
+    );
   }
 
   if (outcome.status === "ok") {
+    // Guard: a valid-JSON config must be a record with schemaVersion 1. A
+    // non-record (e.g. `[]`, `42`, `null`) or an unsupported schemaVersion is
+    // corruption, not a default-fallback case — surface it rather than
+    // silently previewing from the wrong root.
+    if (!isRecord(outcome.value) || outcome.value.schemaVersion !== 1) {
+      throw new PreviewConfigError(
+        `Config error: ${configFile} is unreadable or malformed. Fix or remove the file.`
+      );
+    }
     const draftRoot = selectDraftRoot(outcome.value);
     if (draftRoot !== undefined) {
       return resolveConfigPaths({ homeDir, draftRoot }).defaultDraftRoot;
@@ -847,16 +900,7 @@ async function runCollect(
   }
 
   const paths = resolveConfigPaths({ homeDir: options.homeDir });
-  let sourceConfig;
-  try {
-    sourceConfig = await loadSourceConfig(paths.configFile);
-  } catch (error) {
-    if (error instanceof SourceConfigError) {
-      io.stderr(error.message);
-      return 2;
-    }
-    throw error;
-  }
+  const sourceConfig = await loadSourceConfig(paths.configFile);
   if (!sourceConfig[source].enabled) {
     io.stdout(
       `Source '${source}' is disabled in config; skipping collection.`
@@ -1013,22 +1057,13 @@ async function runCollectAllCommand(
   io: CliIo,
   options: CliOptions
 ): Promise<number> {
-  let summary;
-  try {
-    summary = await runCollectAll({
-      homeDir: options.homeDir,
-      claudeHome: options.claudeHome,
-      codexHome: options.codexHome,
-      now: options.now,
-      collectInvokers: options.collectInvokers
-    });
-  } catch (error) {
-    if (error instanceof SourceConfigError) {
-      io.stderr(error.message);
-      return 2;
-    }
-    throw error;
-  }
+  const summary = await runCollectAll({
+    homeDir: options.homeDir,
+    claudeHome: options.claudeHome,
+    codexHome: options.codexHome,
+    now: options.now,
+    collectInvokers: options.collectInvokers
+  });
 
   const enabledEntries = summary.entries.filter(
     (entry) => entry.status !== "disabled"

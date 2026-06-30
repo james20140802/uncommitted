@@ -55,13 +55,22 @@ export async function loadSourceConfig(
     // silently enabling all sources.
     case "read-error":
       throw new SourceConfigError(
-        `Unable to read source config at ${configFilePath}.`
+        `Config error: ${configFilePath} is unreadable or malformed. Fix or remove the file.`
       );
     case "parse-error":
       throw new SourceConfigError(
-        `Malformed source config at ${configFilePath}; fix or remove the file.`
+        `Config error: ${configFilePath} is unreadable or malformed. Fix or remove the file.`
       );
     case "ok":
+      // A record declaring an unsupported schemaVersion is a malformed config,
+      // not a default-on first run — reject it so source gating cannot be
+      // silently bypassed by a schema-mismatched file (matches the preview
+      // reader's guard).
+      if (isRecord(outcome.value) && outcome.value.schemaVersion !== 1) {
+        throw new SourceConfigError(
+          `Config error: ${configFilePath} is unreadable or malformed. Fix or remove the file.`
+        );
+      }
       return buildSourceConfigMap(outcome.value);
   }
 }

@@ -159,7 +159,7 @@ describe("cli collect <source> per-source gating", () => {
     const exitCode = await runCli(["collect", "git"], io, { homeDir });
 
     expect(exitCode).toBe(2);
-    expect(stderr.join("\n")).toContain("Malformed source config");
+    expect(stderr.join("\n")).toContain("Config error:");
   });
 
   it("invokes the claude collector when sources.claude.enabled is true (sanity)", async () => {
