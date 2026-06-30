@@ -6,6 +6,8 @@ import {
   collectGitHubForRegisteredProjects,
   CollectGitHubCommandError
 } from "../src/collect-github-command.js";
+import { GitHubTokenConfigError } from "../src/github-token-resolver.js";
+import { clearGlobalConfigCache } from "../src/global-config.js";
 
 async function seedProjects(homeDir: string, projectRoot: string) {
   await mkdir(join(homeDir, ".uncommitted"), { recursive: true });
@@ -42,6 +44,23 @@ describe("collectGitHubForRegisteredProjects", () => {
         httpClient: async () => new Response("{}", { status: 200 })
       })
     ).rejects.toMatchObject({ code: "no-token" });
+  });
+
+  it("surfaces config corruption instead of no-token when config is valid JSON but not a record", async () => {
+    clearGlobalConfigCache();
+    const homeDir = await mkdtemp(join(tmpdir(), "gh-cmd-"));
+    const projectRoot = await mkdtemp(join(tmpdir(), "gh-proj-"));
+    await seedProjects(homeDir, projectRoot);
+    await writeFile(join(homeDir, ".uncommitted", "config.json"), "[]");
+    await expect(
+      collectGitHubForRegisteredProjects({
+        homeDir,
+        env: {},
+        targetDate: "2026-06-17",
+        remoteUrlReader: async () => "https://github.com/foo/bar.git",
+        httpClient: async () => new Response("{}", { status: 200 })
+      })
+    ).rejects.toBeInstanceOf(GitHubTokenConfigError);
   });
 
   it("graceful-skips a project whose origin is not on github.com", async () => {

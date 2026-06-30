@@ -577,9 +577,11 @@ async function readPreviewDraftRoot(
   }
 
   if (outcome.status === "ok") {
-    // Guard: reject configs that are records with an unsupported schemaVersion.
-    // Non-record ok values (e.g. JSON primitives) fall through to the default.
-    if (isRecord(outcome.value) && outcome.value.schemaVersion !== 1) {
+    // Guard: a valid-JSON config must be a record with schemaVersion 1. A
+    // non-record (e.g. `[]`, `42`, `null`) or an unsupported schemaVersion is
+    // corruption, not a default-fallback case — surface it rather than
+    // silently previewing from the wrong root.
+    if (!isRecord(outcome.value) || outcome.value.schemaVersion !== 1) {
       throw new PreviewConfigError(
         `Config error: ${configFile} is unreadable or malformed. Fix or remove the file.`
       );

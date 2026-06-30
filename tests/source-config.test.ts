@@ -93,6 +93,26 @@ describe("loadSourceConfig", () => {
     });
   });
 
+  it("rejects a config with an unsupported schemaVersion", async () => {
+    const home = await mkdtemp(join(tmpdir(), "uncommitted-source-config-"));
+    const configDir = join(home, ".uncommitted");
+    await mkdir(configDir, { recursive: true });
+    const configFile = join(configDir, "config.json");
+    await writeFile(
+      configFile,
+      JSON.stringify({
+        schemaVersion: 2,
+        sources: {
+          git: { enabled: false }
+        }
+      })
+    );
+
+    await expect(loadSourceConfig(configFile)).rejects.toBeInstanceOf(
+      SourceConfigError
+    );
+  });
+
   it("rejects a malformed config instead of silently enabling every source", async () => {
     const home = await mkdtemp(join(tmpdir(), "uncommitted-source-config-"));
     const configDir = join(home, ".uncommitted");

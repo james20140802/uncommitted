@@ -1420,6 +1420,21 @@ describe("cli", () => {
         expect(stderr.join("\n")).toContain("is unreadable or malformed. Fix or remove the file.");
       });
 
+      it("returns exit 2 with unified message when config is valid JSON but not a record", async () => {
+        const homeDir = await mkdtemp(join(tmpdir(), "uncommitted-preview-nonrecord-"));
+        await mkdir(join(homeDir, ".uncommitted"), { recursive: true });
+        await writeFile(
+          join(homeDir, ".uncommitted", "config.json"),
+          "[]",
+          "utf8"
+        );
+        const { io, stderr } = createIo();
+        const exitCode = await runCli(["preview", "latest"], io, { homeDir });
+        expect(exitCode).toBe(2);
+        expect(stderr.join("\n")).toContain("Config error:");
+        expect(stderr.join("\n")).toContain("is unreadable or malformed. Fix or remove the file.");
+      });
+
       it("returns exit 2 with unified message when config.json contains malformed JSON", async () => {
         const homeDir = await mkdtemp(join(tmpdir(), "uncommitted-preview-malformed-"));
         await mkdir(join(homeDir, ".uncommitted"), { recursive: true });
@@ -1466,6 +1481,21 @@ describe("cli", () => {
         );
         const { io, stderr } = createIo();
         const exitCode = await runCli(["collect", "github"], io, { homeDir });
+        expect(exitCode).toBe(2);
+        expect(stderr.join("\n")).toContain("Config error:");
+        expect(stderr.join("\n")).toContain("is unreadable or malformed. Fix or remove the file.");
+      });
+
+      it("returns exit 2 + unified message for collect git when config has an unsupported schemaVersion", async () => {
+        const homeDir = await mkdtemp(join(tmpdir(), "uncommitted-collect-git-schema-"));
+        await mkdir(join(homeDir, ".uncommitted"), { recursive: true });
+        await writeFile(
+          join(homeDir, ".uncommitted", "config.json"),
+          JSON.stringify({ schemaVersion: 2, sources: { git: { enabled: false } } }),
+          "utf8"
+        );
+        const { io, stderr } = createIo();
+        const exitCode = await runCli(["collect", "git"], io, { homeDir });
         expect(exitCode).toBe(2);
         expect(stderr.join("\n")).toContain("Config error:");
         expect(stderr.join("\n")).toContain("is unreadable or malformed. Fix or remove the file.");

@@ -66,6 +66,30 @@ describe("resolveGitHubToken", () => {
     }
   });
 
+  it("returns missing when config is a valid record without a token", async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), "ght-"));
+    await mkdir(join(homeDir, ".uncommitted"), { recursive: true });
+    await writeFile(
+      join(homeDir, ".uncommitted", "config.json"),
+      JSON.stringify({ schemaVersion: 1 })
+    );
+    const result = await resolveGitHubToken({ homeDir, env: {} });
+    expect(result).toEqual({ token: null, source: "missing" });
+  });
+
+  it("throws GitHubTokenConfigError when config is valid JSON but not a record", async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), "ght-"));
+    await mkdir(join(homeDir, ".uncommitted"), { recursive: true });
+    await writeFile(join(homeDir, ".uncommitted", "config.json"), "[]");
+    try {
+      await resolveGitHubToken({ homeDir, env: {} });
+      throw new Error("Expected GitHubTokenConfigError to be thrown");
+    } catch (err) {
+      expect(err).toBeInstanceOf(GitHubTokenConfigError);
+      expect((err as GitHubTokenConfigError).code).toBe("config-corruption");
+    }
+  });
+
   it("returns missing when config file does not exist", async () => {
     const homeDir = await mkdtemp(join(tmpdir(), "ght-"));
     // No .uncommitted dir or config.json written

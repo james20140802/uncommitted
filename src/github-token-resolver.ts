@@ -1,5 +1,6 @@
 import { loadGlobalConfig, selectGitHubToken } from "./global-config.js";
 import { resolveConfigPaths } from "./config-paths.js";
+import { isRecord } from "./type-guards.js";
 
 export type ResolvedGitHubToken = {
   token: string | null;
@@ -36,11 +37,18 @@ export async function resolveGitHubToken(
     );
   }
   if (outcome.status === "ok") {
+    // Valid JSON that is not a config object (e.g. `[]`, `42`, `null`) is
+    // corruption, not "no token" — surface it rather than disguising it.
+    if (!isRecord(outcome.value)) {
+      throw new GitHubTokenConfigError(
+        `Config error: ${configPath} is unreadable or malformed. Fix or remove the file.`
+      );
+    }
     const token = selectGitHubToken(outcome.value);
     if (token !== null) {
       return { token, source: "config" };
     }
   }
-  // Missing or ok-without-token → "missing".
+  // Missing or ok-record-without-token → "missing".
   return { token: null, source: "missing" };
 }
