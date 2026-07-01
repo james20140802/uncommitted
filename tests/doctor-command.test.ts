@@ -339,6 +339,38 @@ describe("doctor command", () => {
       expect(tokenCheck?.status).toBe("pass");
       expect(tokenCheck?.message.toLowerCase()).toContain("not set");
     });
+
+    it("treats an empty-string githubToken in config as not-set, matching selectGitHubToken semantics", async () => {
+      const homeDir = await createHomeWithConfig({ githubToken: "" });
+
+      const report = await createDoctorReport({
+        homeDir,
+        env: {},
+        nodeVersion: "v22.13.0",
+        checkCommand: async () => ({ ok: true, detail: "git version 2.49.0" })
+      });
+
+      const tokenCheck = report.checks.find((c) => c.id === "github-token");
+      expect(tokenCheck).toBeDefined();
+      expect(tokenCheck?.status).toBe("pass");
+      expect(tokenCheck?.message.toLowerCase()).toContain("not set");
+    });
+
+    it("treats an empty-string GITHUB_TOKEN env var as not-set and falls back to config", async () => {
+      const homeDir = await createHomeWithConfig({ githubToken: sampleToken });
+
+      const report = await createDoctorReport({
+        homeDir,
+        env: { GITHUB_TOKEN: "" },
+        nodeVersion: "v22.13.0",
+        checkCommand: async () => ({ ok: true, detail: "git version 2.49.0" })
+      });
+
+      const tokenCheck = report.checks.find((c) => c.id === "github-token");
+      expect(tokenCheck).toBeDefined();
+      expect(tokenCheck?.status).toBe("warn");
+      expect(tokenCheck?.message.toLowerCase()).toContain("config");
+    });
   });
 });
 
@@ -367,7 +399,9 @@ async function createHomeWithConfig(
       aiProvider: overrides.aiProvider ?? "none",
       persona: "wry coworker",
       roastLevel: 2,
-      ...(overrides.githubToken ? { githubToken: overrides.githubToken } : {})
+      ...(overrides.githubToken !== undefined
+        ? { githubToken: overrides.githubToken }
+        : {})
     })}\n`,
     "utf8"
   );

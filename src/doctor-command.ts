@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import process from "node:process";
 import { promisify } from "node:util";
 import { resolveConfigPaths } from "./config-paths.js";
-import { loadGlobalConfig, type GlobalConfig } from "./global-config.js";
+import { loadGlobalConfig, selectGitHubToken, type GlobalConfig } from "./global-config.js";
 import { describeGitHubTokenStatus } from "./github-token-safety.js";
 import { isRecord } from "./type-guards.js";
 
@@ -401,7 +401,7 @@ function createGitHubTokenCheck(
   const source: "env" | "config" | "missing" =
     typeof envToken === "string" && envToken.length > 0
       ? "env"
-      : typeof config.githubToken === "string" && config.githubToken.length > 0
+      : selectGitHubToken(config) !== null
         ? "config"
         : "missing";
 
