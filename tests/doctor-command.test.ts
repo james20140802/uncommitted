@@ -279,10 +279,75 @@ describe("doctor command", () => {
     const legacyCheck = report.checks.find((c) => c.id === "directory-legacy-exports");
     expect(legacyCheck).toBeUndefined();
   });
+
+  describe("github token check", () => {
+    const sampleToken = "ghp_superSecretTokenValue1234567890";
+
+    it("shows a config-plaintext status and never leaks the raw token when set only in config", async () => {
+      const homeDir = await createHomeWithConfig({ githubToken: sampleToken });
+
+      const report = await createDoctorReport({
+        homeDir,
+        env: {},
+        nodeVersion: "v22.13.0",
+        checkCommand: async () => ({ ok: true, detail: "git version 2.49.0" })
+      });
+
+      const tokenCheck = report.checks.find((c) => c.id === "github-token");
+      expect(tokenCheck).toBeDefined();
+      expect(tokenCheck?.status).toBe("warn");
+      expect(tokenCheck?.message.toLowerCase()).toContain("config");
+      expect(tokenCheck?.message.toLowerCase()).toContain("plaintext");
+
+      const rendered = formatDoctorReport(report);
+      expect(rendered).not.toContain(sampleToken);
+      expect(JSON.stringify(report)).not.toContain(sampleToken);
+    });
+
+    it("shows an env status when GITHUB_TOKEN is set, regardless of config", async () => {
+      const homeDir = await createHomeWithConfig({ githubToken: sampleToken });
+
+      const report = await createDoctorReport({
+        homeDir,
+        env: { GITHUB_TOKEN: sampleToken },
+        nodeVersion: "v22.13.0",
+        checkCommand: async () => ({ ok: true, detail: "git version 2.49.0" })
+      });
+
+      const tokenCheck = report.checks.find((c) => c.id === "github-token");
+      expect(tokenCheck).toBeDefined();
+      expect(tokenCheck?.status).toBe("pass");
+      expect(tokenCheck?.message.toLowerCase()).toContain("env");
+
+      const rendered = formatDoctorReport(report);
+      expect(rendered).not.toContain(sampleToken);
+      expect(JSON.stringify(report)).not.toContain(sampleToken);
+    });
+
+    it("shows a not-set status when neither env nor config has a token", async () => {
+      const homeDir = await createHomeWithConfig();
+
+      const report = await createDoctorReport({
+        homeDir,
+        env: {},
+        nodeVersion: "v22.13.0",
+        checkCommand: async () => ({ ok: true, detail: "git version 2.49.0" })
+      });
+
+      const tokenCheck = report.checks.find((c) => c.id === "github-token");
+      expect(tokenCheck).toBeDefined();
+      expect(tokenCheck?.status).toBe("pass");
+      expect(tokenCheck?.message.toLowerCase()).toContain("not set");
+    });
+  });
 });
 
 async function createHomeWithConfig(
-  overrides: Partial<{ aiProvider: string; draftRoot: string }> = {}
+  overrides: Partial<{
+    aiProvider: string;
+    draftRoot: string;
+    githubToken: string;
+  }> = {}
 ): Promise<string> {
   const homeDir = await mkdtemp(join(tmpdir(), "uncommitted-doctor-"));
   const configDir = join(homeDir, ".uncommitted");
@@ -301,7 +366,8 @@ async function createHomeWithConfig(
       scheduleTime: "23:30",
       aiProvider: overrides.aiProvider ?? "none",
       persona: "wry coworker",
-      roastLevel: 2
+      roastLevel: 2,
+      ...(overrides.githubToken ? { githubToken: overrides.githubToken } : {})
     })}\n`,
     "utf8"
   );
