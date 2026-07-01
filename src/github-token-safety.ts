@@ -16,7 +16,11 @@ export const GITHUB_TOKEN_MASK = "[redacted-github-token]";
  * Mask a GitHub token for display. Always returns the fixed mask; never
  * reveals any characters of the original token (not even a prefix/suffix).
  */
-export function maskGitHubToken(_token: string): string {
+export function maskGitHubToken(token: string): string {
+  // The parameter is part of the documented signature (callers pass the
+  // token being masked) but masking always returns the fixed constant and
+  // never derives output from the input, so nothing else reads it here.
+  void token;
   return GITHUB_TOKEN_MASK;
 }
 
