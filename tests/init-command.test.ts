@@ -192,6 +192,22 @@ describe("init command", () => {
     ).rejects.toThrow("Schedule time must use 24-hour HH:mm format.");
   });
 
+  it("surfaces env-first githubToken guidance and a plaintext warning", async () => {
+    const homeDir = await mkTestHome("github-token-guidance");
+
+    const result = await runInitCommand([], { homeDir });
+
+    expect(result.guidance).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("GITHUB_TOKEN"),
+        expect.stringMatching(/plaintext/i)
+      ])
+    );
+    expect(
+      result.guidance.some((line) => /plaintext/i.test(line) && /init/i.test(line))
+    ).toBe(true);
+  });
+
   it("rejects roast levels outside the MVP range", async () => {
     const homeDir = await mkTestHome("roast");
 
