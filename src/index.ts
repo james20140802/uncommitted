@@ -258,3 +258,9 @@ export type {
   RecordManualNoteOptions,
   RecordManualNoteResult
 } from "./note-command.js";
+export {
+  describeGitHubTokenStatus,
+  GITHUB_TOKEN_MASK,
+  maskGitHubToken,
+  redactGitHubTokenForDisplay
+} from "./github-token-safety.js";
