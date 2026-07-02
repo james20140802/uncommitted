@@ -24,6 +24,16 @@ export interface GlobalConfig {
   rawRetentionDays: number;
   captionProjectionTokenBudget: number;
   sources: SourceConfigMap;
+  /**
+   * Optional GitHub token used by GitHub-sourced collection.
+   *
+   * Not managed by `init` — the user adds it by hand. The `GITHUB_TOKEN`
+   * environment variable is the recommended way to supply it; storing it
+   * here as plaintext in config.json is discouraged (readable by anything
+   * with filesystem access, easy to accidentally commit/share). `doctor`
+   * only ever reports a masked status (env / config-plaintext / not-set)
+   * and never surfaces the value itself.
+   */
   githubToken?: string;
 }
 

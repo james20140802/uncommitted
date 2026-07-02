@@ -12,6 +12,10 @@ This project is in its initial CLI bootstrap phase. Commands are routed, but fea
 pnpm install
 ```
 
+### GitHub token
+
+If you use GitHub-sourced collection, prefer setting the `GITHUB_TOKEN` environment variable over storing a token in `config.json`; `init` does not manage `githubToken`, and storing it as plaintext in config is discouraged. `uncommitted doctor` reports only a masked status (env / config-plaintext / not-set) and never prints the token value.
+
 ## Development
 
 ```sh

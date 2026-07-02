@@ -186,8 +186,11 @@ export async function runCli(
 
   if (command === "init") {
     try {
-      await runInitCommand(commandArgs);
+      const result = await runInitCommand(commandArgs);
       io.stdout("Initialized Uncommitted config.");
+      for (const line of result.guidance) {
+        io.stdout(line);
+      }
       return 0;
     } catch (error) {
       io.stderr(error instanceof Error ? error.message : "Init failed.");

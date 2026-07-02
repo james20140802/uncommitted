@@ -28,7 +28,13 @@ export type InitCommandOptions = {
 export type InitCommandResult = {
   created: true;
   config: GlobalConfig;
+  guidance: string[];
 };
+
+const githubTokenGuidance: string[] = [
+  "GitHub token: set the GITHUB_TOKEN environment variable rather than storing it in config.",
+  "init does not manage githubToken; storing it as plaintext in config.json is discouraged — prefer GITHUB_TOKEN."
+];
 
 const defaultAnswers = {
   draftRoot: "~/Uncommitted/drafts",
@@ -98,7 +104,7 @@ export async function runInitCommand(
   await writeJsonIfMissing(paths.projectsFile, { schemaVersion: 1, projects: [] });
   await writeJsonIfMissing(paths.formatHistoryFile, { schemaVersion: 1, formats: [] });
 
-  return { created: true, config };
+  return { created: true, config, guidance: githubTokenGuidance };
 }
 
 function parseInitArgs(args: string[]): boolean {

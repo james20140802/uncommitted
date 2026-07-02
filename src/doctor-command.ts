@@ -5,7 +5,8 @@ import { dirname, join } from "node:path";
 import process from "node:process";
 import { promisify } from "node:util";
 import { resolveConfigPaths } from "./config-paths.js";
-import { loadGlobalConfig, type GlobalConfig } from "./global-config.js";
+import { loadGlobalConfig, selectGitHubToken, type GlobalConfig } from "./global-config.js";
+import { describeGitHubTokenStatus } from "./github-token-safety.js";
 import { isRecord } from "./type-guards.js";
 
 const execFileAsync = promisify(execFile);
@@ -41,7 +42,7 @@ export type DoctorOptions = {
 
 type DoctorConfig = Pick<
   GlobalConfig,
-  "schemaVersion" | "draftRoot" | "aiProvider"
+  "schemaVersion" | "draftRoot" | "aiProvider" | "githubToken"
 >;
 
 const aiProviderEnvKeys: Record<string, string | undefined> = {
@@ -119,6 +120,7 @@ export async function createDoctorReport(
 
   if (config) {
     checks.push(createAiApiKeyCheck(config.aiProvider, env));
+    checks.push(createGitHubTokenCheck(config, env));
   }
 
   return { checks };
@@ -391,6 +393,28 @@ function createAiApiKeyCheck(
   };
 }
 
+function createGitHubTokenCheck(
+  config: DoctorConfig,
+  env: Record<string, string | undefined>
+): DoctorCheck {
+  const envToken = env.GITHUB_TOKEN;
+  const source: "env" | "config" | "missing" =
+    typeof envToken === "string" && envToken.length > 0
+      ? "env"
+      : selectGitHubToken(config) !== null
+        ? "config"
+        : "missing";
+
+  const message = describeGitHubTokenStatus(source);
+
+  return {
+    id: "github-token",
+    label: "GitHub token",
+    status: source === "config" ? "warn" : "pass",
+    message
+  };
+}
+
 async function defaultCheckCommand(
   command: string,
   args: string[]
@@ -444,6 +468,7 @@ function isDoctorConfig(value: unknown): value is DoctorConfig {
     isRecord(value) &&
     value.schemaVersion === 1 &&
     typeof value.draftRoot === "string" &&
-    typeof value.aiProvider === "string"
+    typeof value.aiProvider === "string" &&
+    (value.githubToken === undefined || typeof value.githubToken === "string")
   );
 }
