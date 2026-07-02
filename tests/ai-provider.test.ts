@@ -487,6 +487,40 @@ describe("AI provider abstraction", () => {
     });
   });
 
+  it("reports a billing-class 429 recognized via error.code only (billing_hard_limit_reached)", async () => {
+    const provider = createAiProvider(
+      {
+        provider: "openai",
+        persona: "dry reviewer",
+        roastLevel: 3
+      },
+      {
+        env: { OPENAI_API_KEY: "sk-test-secret" },
+        transport: createTransport(
+          [],
+          { error: { code: "billing_hard_limit_reached" } },
+          429
+        )
+      }
+    );
+
+    await expect(
+      generateStructured(
+        provider,
+        createAiGenerationRequest({
+          task: "draft",
+          instructions: "Return JSON.",
+          summary: createQuietSummary()
+        })
+      )
+    ).rejects.toMatchObject({
+      code: "provider-failed",
+      exitCode: 4,
+      message:
+        "AI provider credit/billing quota exhausted. Check your plan and billing details."
+    });
+  });
+
   it("keeps the generic 429 message verbatim for a plain rate-limit body", async () => {
     const provider = createAiProvider(
       {

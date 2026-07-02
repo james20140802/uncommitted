@@ -11,6 +11,8 @@
  * Call sites keep their own verbatim generic rate-limit message.
  */
 
+import { isRecord } from "./type-guards.js";
+
 export type Provider429Classification = "billing" | "generic";
 
 /**
@@ -29,10 +31,6 @@ const BILLING_429_KEYS: ReadonlySet<string> = new Set([
  */
 export const BILLING_429_MESSAGE =
   "AI provider credit/billing quota exhausted. Check your plan and billing details.";
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 /**
  * Classify a 429 response body as billing-class vs generic rate-limit.
