@@ -453,6 +453,108 @@ describe("AI provider abstraction", () => {
     });
   });
 
+  it("reports a billing-class 429 (insufficient_quota) distinctly, not as a temporary rate limit", async () => {
+    const provider = createAiProvider(
+      {
+        provider: "openai",
+        persona: "dry reviewer",
+        roastLevel: 3
+      },
+      {
+        env: { OPENAI_API_KEY: "sk-test-secret" },
+        transport: createTransport(
+          [],
+          { error: { type: "insufficient_quota", code: "insufficient_quota" } },
+          429
+        )
+      }
+    );
+
+    await expect(
+      generateStructured(
+        provider,
+        createAiGenerationRequest({
+          task: "draft",
+          instructions: "Return JSON.",
+          summary: createQuietSummary()
+        })
+      )
+    ).rejects.toMatchObject({
+      code: "provider-failed",
+      exitCode: 4,
+      message:
+        "AI provider credit/billing quota exhausted. Check your plan and billing details."
+    });
+  });
+
+  it("keeps the generic 429 message verbatim for a plain rate-limit body", async () => {
+    const provider = createAiProvider(
+      {
+        provider: "openai",
+        persona: "dry reviewer",
+        roastLevel: 3
+      },
+      {
+        env: { OPENAI_API_KEY: "sk-test-secret" },
+        transport: createTransport(
+          [],
+          { error: { type: "rate_limit_exceeded" } },
+          429
+        )
+      }
+    );
+
+    await expect(
+      generateStructured(
+        provider,
+        createAiGenerationRequest({
+          task: "draft",
+          instructions: "Return JSON.",
+          summary: createQuietSummary()
+        })
+      )
+    ).rejects.toMatchObject({
+      code: "provider-failed",
+      exitCode: 4,
+      message: "AI provider rate limit exceeded. Try again later."
+    });
+  });
+
+  it("falls back to the generic 429 message when the 429 body cannot be parsed", async () => {
+    const provider = createAiProvider(
+      {
+        provider: "openai",
+        persona: "dry reviewer",
+        roastLevel: 3
+      },
+      {
+        env: { OPENAI_API_KEY: "sk-test-secret" },
+        transport: async () => ({
+          ok: false,
+          status: 429,
+          json: async () => {
+            throw new Error("not json");
+          }
+        })
+      }
+    );
+
+    await expect(
+      generateStructured(
+        provider,
+        createAiGenerationRequest({
+          task: "draft",
+          instructions: "Return JSON.",
+          summary: createQuietSummary()
+        })
+      )
+    ).rejects.toMatchObject({
+      code: "provider-failed",
+      exitCode: 4,
+      message: "AI provider rate limit exceeded. Try again later."
+    });
+  });
+
   it("normalizes Anthropic timeout via env override", async () => {
     const provider = createAiProvider(
       {

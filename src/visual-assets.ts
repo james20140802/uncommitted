@@ -17,6 +17,10 @@ import {
   writeDraftArtifactBinary
 } from "./draft-storage.js";
 import { checkDraftSafety } from "./safety-report.js";
+import {
+  BILLING_429_MESSAGE,
+  classify429ResponseBody
+} from "./provider-429-classifier.js";
 
 export type VisualAssetFallbackState =
   | "none"
@@ -273,7 +277,7 @@ class OpenAiImageAssetProvider implements ImageAssetProvider {
       });
 
       if (!response.ok) {
-        throwOpenAiImageHttpError(response.status);
+        await throwOpenAiImageHttpError(response);
       }
 
       return {
@@ -387,7 +391,11 @@ function decodeOpenAiImageResponse(value: unknown): Uint8Array {
   return Buffer.from(value.data[0].b64_json, "base64");
 }
 
-function throwOpenAiImageHttpError(status: number): never {
+async function throwOpenAiImageHttpError(
+  response: AiProviderHttpResponse
+): Promise<never> {
+  const status = response.status;
+
   if (status === 401 || status === 403) {
     throw new VisualAssetGenerationError(
       "Image provider authentication failed. Check API key.",
@@ -403,6 +411,10 @@ function throwOpenAiImageHttpError(status: number): never {
   }
 
   if (status === 429) {
+    if ((await classify429Response(response)) === "billing") {
+      throw new VisualAssetGenerationError(BILLING_429_MESSAGE, "provider-failed");
+    }
+
     throw new VisualAssetGenerationError(
       "Image provider rate limit exceeded. Try again later.",
       "provider-failed"
@@ -413,6 +425,20 @@ function throwOpenAiImageHttpError(status: number): never {
     "Visual generation failed. Check image provider configuration.",
     "provider-failed"
   );
+}
+
+async function classify429Response(
+  response: AiProviderHttpResponse
+): Promise<"billing" | "generic"> {
+  let body: unknown;
+
+  try {
+    body = await response.json();
+  } catch {
+    return "generic";
+  }
+
+  return classify429ResponseBody(body);
 }
 
 function resolveProviderTimeoutMs(

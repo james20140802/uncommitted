@@ -2,6 +2,10 @@ import process from "node:process";
 import { resolveConfigPaths } from "./config-paths.js";
 import { isRoastLevel, loadGlobalConfig } from "./global-config.js";
 import { isRecord } from "./type-guards.js";
+import {
+  BILLING_429_MESSAGE,
+  classify429ResponseBody
+} from "./provider-429-classifier.js";
 
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonObject | JsonValue[];
@@ -416,7 +420,7 @@ class OpenAiCompatibleProvider implements AiProvider {
       });
 
       if (!response.ok) {
-        throwProviderHttpError(response.status);
+        await throwProviderHttpError(response);
       }
 
       return { responseJson: extractChatCompletionContent(await readResponseJson(response)) };
@@ -476,7 +480,7 @@ class AnthropicProvider implements AiProvider {
       });
 
       if (!response.ok) {
-        throwProviderHttpError(response.status);
+        await throwProviderHttpError(response);
       }
 
       return {
@@ -744,7 +748,11 @@ async function readResponseJson(
   }
 }
 
-function throwProviderHttpError(status: number): never {
+async function throwProviderHttpError(
+  response: AiProviderHttpResponse
+): Promise<never> {
+  const status = response.status;
+
   if (status === 401 || status === 403) {
     throw new AiGenerationError(
       "AI provider authentication failed. Check API key.",
@@ -760,6 +768,10 @@ function throwProviderHttpError(status: number): never {
   }
 
   if (status === 429) {
+    if ((await classify429Response(response)) === "billing") {
+      throw new AiGenerationError(BILLING_429_MESSAGE, "provider-failed");
+    }
+
     throw new AiGenerationError(
       "AI provider rate limit exceeded. Try again later.",
       "provider-failed"
@@ -770,6 +782,20 @@ function throwProviderHttpError(status: number): never {
     "AI provider failed. Check provider configuration.",
     "provider-failed"
   );
+}
+
+async function classify429Response(
+  response: AiProviderHttpResponse
+): Promise<"billing" | "generic"> {
+  let body: unknown;
+
+  try {
+    body = await response.json();
+  } catch {
+    return "generic";
+  }
+
+  return classify429ResponseBody(body);
 }
 
 function throwInvalidProviderJson(): never {
