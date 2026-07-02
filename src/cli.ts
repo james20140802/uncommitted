@@ -40,7 +40,11 @@ import {
   type ProjectRecord
 } from "./project-registry.js";
 import { resolveConfigPaths } from "./config-paths.js";
-import { loadGlobalConfig, selectDraftRoot } from "./global-config.js";
+import {
+  loadGlobalConfig,
+  selectDraftRoot,
+  selectScheduleTime
+} from "./global-config.js";
 import {
   loadSourceConfig,
   SourceConfigError,
@@ -284,6 +288,18 @@ async function runSchedule(
     }
 
     if (!scheduleTime) {
+      // --time omitted: fall back to config.scheduleTime so the value the user
+      // set at `init` is actually honored instead of being write-only.
+      const configFile = resolveConfigPaths({
+        homeDir: options.homeDir
+      }).configFile;
+      const outcome = await loadGlobalConfig(configFile);
+      if (outcome.status === "ok") {
+        scheduleTime = selectScheduleTime(outcome.value);
+      }
+    }
+
+    if (!scheduleTime) {
       io.stderr("Usage: uncommitted schedule install --time HH:mm");
       return 1;
     }
@@ -342,6 +358,33 @@ async function runSchedule(
 
     io.stdout(`Scheduler: installed, ${loadedLabel}`);
     io.stdout(`Plist path: ${result.plistPath}`);
+
+    // Surface the stored config time vs the actual installed launchd time.
+    // Degrade gracefully: only compare when both are readable.
+    const configFile = resolveConfigPaths({ homeDir: options.homeDir }).configFile;
+    const configOutcome = await loadGlobalConfig(configFile);
+    const configScheduleTime =
+      configOutcome.status === "ok"
+        ? selectScheduleTime(configOutcome.value)
+        : undefined;
+    const installedScheduleTime = result.installedScheduleTime;
+
+    if (
+      configScheduleTime !== undefined &&
+      installedScheduleTime !== undefined &&
+      configScheduleTime !== installedScheduleTime
+    ) {
+      io.stdout(`Installed schedule time: ${installedScheduleTime}`);
+      io.stdout(`Config schedule time: ${configScheduleTime}`);
+      io.stdout(
+        "Warning: installed schedule time diverges from config.scheduleTime. " +
+          "Run `uncommitted schedule install` to realign."
+      );
+    } else if (installedScheduleTime !== undefined) {
+      io.stdout(`Schedule time: ${installedScheduleTime}`);
+    } else if (configScheduleTime !== undefined) {
+      io.stdout(`Schedule time: ${configScheduleTime} (from config)`);
+    }
 
     if (result.launchctlError) {
       io.stderr(`launchctl: ${result.launchctlError}`);

@@ -138,6 +138,27 @@ export function selectDraftRoot(value: unknown): string | undefined {
   return undefined;
 }
 
+/** 24-hour HH:mm shape, matching `parseScheduleTime` in scheduler.ts. */
+const scheduleTimePattern = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
+
+/**
+ * Extract a usable `scheduleTime` (24-hour HH:mm string) when present, else
+ * `undefined`. Callers fall back to their own default/usage error when the key
+ * is absent or not a valid time. Validated here so a malformed stored value is
+ * treated the same as "not set" rather than flowing into scheduler code as a
+ * throwing input.
+ */
+export function selectScheduleTime(value: unknown): string | undefined {
+  if (
+    isRecord(value) &&
+    typeof value.scheduleTime === "string" &&
+    scheduleTimePattern.test(value.scheduleTime)
+  ) {
+    return value.scheduleTime;
+  }
+  return undefined;
+}
+
 /** Extract a non-empty `githubToken`, else `null`. */
 export function selectGitHubToken(value: unknown): string | null {
   if (

@@ -1,6 +1,7 @@
-import { access } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import {
   getLaunchdLabel,
+  parseInstalledPlistScheduleTime,
   resolveLaunchAgentPlistPath,
   runLaunchctl,
   type LaunchctlRawRunner,
@@ -17,6 +18,11 @@ export type ScheduleStatusResult = {
   loaded: boolean | undefined;
   /** Resolved plist path (always present for display). */
   plistPath: string;
+  /**
+   * Actual scheduled time (24-hour `HH:mm`) parsed from the installed plist.
+   * Undefined when not installed or the plist lacks a valid Hour/Minute pair.
+   */
+  installedScheduleTime?: string;
   /** Short actionable error from launchctl, present when the check failed. */
   launchctlError?: string;
 };
@@ -37,6 +43,9 @@ export async function runScheduleStatus(
   const plistPath = resolveLaunchAgentPlistPath(options);
 
   const installed = await fileExists(plistPath);
+  const installedScheduleTime = installed
+    ? await readInstalledScheduleTime(plistPath)
+    : undefined;
 
   // Always query launchctl — a job may be loaded even when the plist is absent
   const launchctlResult = await runLaunchctl(["list"], options.runner);
@@ -46,13 +55,29 @@ export async function runScheduleStatus(
       installed,
       loaded: undefined,
       plistPath,
+      installedScheduleTime,
       launchctlError: launchctlResult.stderr || "launchctl check failed."
     };
   }
 
   const loaded = isJobLoaded(launchctlResult.stdout, getLaunchdLabel());
 
-  return { installed, loaded, plistPath };
+  return { installed, loaded, plistPath, installedScheduleTime };
+}
+
+/**
+ * Read the installed plist and parse its scheduled time. Returns undefined on
+ * any read/parse failure so status never throws over a hand-edited plist.
+ */
+async function readInstalledScheduleTime(
+  plistPath: string
+): Promise<string | undefined> {
+  try {
+    const xml = await readFile(plistPath, "utf8");
+    return parseInstalledPlistScheduleTime(xml);
+  } catch {
+    return undefined;
+  }
 }
 
 /**

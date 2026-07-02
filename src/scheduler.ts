@@ -183,6 +183,46 @@ export function parseScheduleTime(value: string): ScheduleTime {
   return { hour, minute };
 }
 
+/**
+ * Parse the scheduled Hour/Minute back out of an installed LaunchAgent plist's
+ * XML and return it as a zero-padded 24-hour `HH:mm` string. Returns `undefined`
+ * when the plist does not contain a valid `StartCalendarInterval` Hour/Minute
+ * pair (e.g. a stub or hand-edited file), so callers can degrade gracefully.
+ *
+ * Pure and injectable — the caller reads the file; this only parses the string.
+ */
+export function parseInstalledPlistScheduleTime(
+  xml: string
+): string | undefined {
+  const hour = extractPlistInteger(xml, "Hour");
+  const minute = extractPlistInteger(xml, "Minute");
+
+  if (hour === undefined || minute === undefined) {
+    return undefined;
+  }
+
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+    return undefined;
+  }
+
+  return `${pad2(hour)}:${pad2(minute)}`;
+}
+
+function extractPlistInteger(xml: string, key: string): number | undefined {
+  const pattern = new RegExp(
+    `<key>${key}</key>\\s*<integer>(-?\\d+)</integer>`
+  );
+  const match = pattern.exec(xml);
+  if (!match) {
+    return undefined;
+  }
+  return Number(match[1]);
+}
+
+function pad2(value: number): string {
+  return value.toString().padStart(2, "0");
+}
+
 export function buildLaunchAgentPlist(
   options: LaunchAgentPlistOptions
 ): LaunchAgentPlist {

@@ -7,7 +7,8 @@ import {
   isRoastLevel,
   loadGlobalConfig,
   selectDraftRoot,
-  selectGitHubToken
+  selectGitHubToken,
+  selectScheduleTime
 } from "../src/global-config.js";
 
 let homeDir: string;
@@ -86,6 +87,20 @@ describe("selectors", () => {
     expect(selectGitHubToken({})).toBeNull();
     expect(selectGitHubToken({ githubToken: 1 })).toBeNull();
     expect(selectGitHubToken(null)).toBeNull();
+  });
+
+  it("selectScheduleTime returns a valid HH:mm string or undefined", () => {
+    expect(selectScheduleTime({ scheduleTime: "23:30" })).toBe("23:30");
+    expect(selectScheduleTime({ scheduleTime: "00:00" })).toBe("00:00");
+    // Non-HH:mm strings are not usable schedule times.
+    expect(selectScheduleTime({ scheduleTime: "9:5" })).toBeUndefined();
+    expect(selectScheduleTime({ scheduleTime: "25:00" })).toBeUndefined();
+    expect(selectScheduleTime({ scheduleTime: "" })).toBeUndefined();
+    expect(selectScheduleTime({})).toBeUndefined();
+    expect(selectScheduleTime({ scheduleTime: 5 })).toBeUndefined();
+    expect(selectScheduleTime([])).toBeUndefined();
+    expect(selectScheduleTime(null)).toBeUndefined();
+    expect(selectScheduleTime(42)).toBeUndefined();
   });
 });
 
