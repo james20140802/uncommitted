@@ -284,12 +284,21 @@ async function runSchedule(
       if (subcommandArgs[i] === "--time" && i + 1 < subcommandArgs.length) {
         scheduleTime = subcommandArgs[i + 1];
         i++;
+      } else {
+        // Reject malformed/unknown arguments outright: only a genuinely
+        // argument-free invocation may fall back to config.scheduleTime,
+        // otherwise a typo would silently reschedule with the stored time.
+        if (subcommandArgs[i] !== "--time") {
+          io.stderr(`Unknown argument: ${subcommandArgs[i]}`);
+        }
+        io.stderr("Usage: uncommitted schedule install --time HH:mm");
+        return 1;
       }
     }
 
     if (!scheduleTime) {
-      // --time omitted: fall back to config.scheduleTime so the value the user
-      // set at `init` is actually honored instead of being write-only.
+      // --time omitted entirely: fall back to config.scheduleTime so the value
+      // the user set at `init` is actually honored instead of being write-only.
       const configFile = resolveConfigPaths({
         homeDir: options.homeDir
       }).configFile;

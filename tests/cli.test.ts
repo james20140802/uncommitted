@@ -983,6 +983,49 @@ describe("cli", () => {
     vi.unstubAllGlobals();
   });
 
+  it("rejects unknown install arguments instead of falling back to config", async () => {
+    vi.stubGlobal("process", { ...process, platform: "darwin" });
+    const { io, stdout, stderr } = createIo();
+    const directory = await mkdtemp(join(tmpdir(), "uncommitted-cli-schedule-bogus-"));
+    const homeDir = join(directory, "home");
+    await writeConfig(homeDir, join(directory, "drafts")); // writes scheduleTime "23:30"
+
+    const exitCode = await runCli(["schedule", "install", "--bogus"], io, {
+      homeDir,
+      schedulerExecutor: async () => ({ stdout: "", stderr: "" })
+    });
+
+    expect(exitCode).toBe(1);
+    expect(stdout).toEqual([]);
+    expect(stderr.join("\n")).toContain("Unknown argument: --bogus");
+    expect(stderr.join("\n")).toContain("Usage: uncommitted schedule install --time HH:mm");
+
+    const plistPath = join(homeDir, "Library", "LaunchAgents", "com.uncommitted.schedule.plist");
+    await expect(access(plistPath)).rejects.toThrow();
+    vi.unstubAllGlobals();
+  });
+
+  it("rejects --time without a value instead of falling back to config", async () => {
+    vi.stubGlobal("process", { ...process, platform: "darwin" });
+    const { io, stdout, stderr } = createIo();
+    const directory = await mkdtemp(join(tmpdir(), "uncommitted-cli-schedule-timenoval-"));
+    const homeDir = join(directory, "home");
+    await writeConfig(homeDir, join(directory, "drafts")); // writes scheduleTime "23:30"
+
+    const exitCode = await runCli(["schedule", "install", "--time"], io, {
+      homeDir,
+      schedulerExecutor: async () => ({ stdout: "", stderr: "" })
+    });
+
+    expect(exitCode).toBe(1);
+    expect(stdout).toEqual([]);
+    expect(stderr.join("\n")).toContain("Usage: uncommitted schedule install --time HH:mm");
+
+    const plistPath = join(homeDir, "Library", "LaunchAgents", "com.uncommitted.schedule.plist");
+    await expect(access(plistPath)).rejects.toThrow();
+    vi.unstubAllGlobals();
+  });
+
   it("rejects invalid schedule time", async () => {
     vi.stubGlobal("process", { ...process, platform: "darwin" });
     const { io, stdout, stderr } = createIo();
