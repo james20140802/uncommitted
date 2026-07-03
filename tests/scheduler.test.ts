@@ -4,6 +4,7 @@ import {
   buildLaunchAgentPlist,
   captureProviderEnv,
   getLaunchdLabel,
+  parseInstalledPlistScheduleTime,
   parseScheduleTime,
   resolveLaunchAgentPlistPath,
   resolveSchedulerLogPaths
@@ -260,6 +261,49 @@ describe("macOS scheduler plist helpers", () => {
 `;
 
     expect(plist.xml).toBe(expectedXml);
+  });
+});
+
+describe("parseInstalledPlistScheduleTime", () => {
+  it("parses Hour and Minute out of a generated plist as an HH:mm string", () => {
+    const plist = buildLaunchAgentPlist({
+      homeDir: "/tmp/uncommitted-scheduler-home",
+      scheduleTime: "23:30"
+    });
+
+    expect(parseInstalledPlistScheduleTime(plist.xml)).toBe("23:30");
+  });
+
+  it("zero-pads single-digit hour and minute integers", () => {
+    const plist = buildLaunchAgentPlist({
+      homeDir: "/tmp/uncommitted-scheduler-home",
+      scheduleTime: "08:05"
+    });
+
+    expect(parseInstalledPlistScheduleTime(plist.xml)).toBe("08:05");
+  });
+
+  it("tolerates whitespace between key and integer tags", () => {
+    const xml = `<dict>
+  <key>Hour</key>   <integer>9</integer>
+  <key>Minute</key>
+    <integer>7</integer>
+</dict>`;
+
+    expect(parseInstalledPlistScheduleTime(xml)).toBe("09:07");
+  });
+
+  it("returns undefined when Hour or Minute is absent or malformed", () => {
+    expect(parseInstalledPlistScheduleTime("")).toBeUndefined();
+    expect(parseInstalledPlistScheduleTime("<plist/>")).toBeUndefined();
+    expect(
+      parseInstalledPlistScheduleTime("<key>Hour</key><integer>9</integer>")
+    ).toBeUndefined();
+    expect(
+      parseInstalledPlistScheduleTime(
+        "<key>Hour</key><integer>99</integer><key>Minute</key><integer>0</integer>"
+      )
+    ).toBeUndefined();
   });
 });
 

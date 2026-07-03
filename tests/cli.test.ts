@@ -28,6 +28,7 @@ import {
   writeLatestDraftPointer
 } from "../src/draft-storage.js";
 import { addProject } from "../src/project-add.js";
+import { buildLaunchAgentPlist } from "../src/scheduler.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -920,15 +921,108 @@ describe("cli", () => {
     vi.unstubAllGlobals();
   });
 
-  it("rejects schedule install without --time", async () => {
+  it("rejects schedule install without --time when config has no usable scheduleTime", async () => {
     vi.stubGlobal("process", { ...process, platform: "darwin" });
     const { io, stdout, stderr } = createIo();
+    const directory = await mkdtemp(join(tmpdir(), "uncommitted-cli-schedule-notime-"));
+    const homeDir = join(directory, "home");
+    // No config file written → nothing to fall back to.
 
-    const exitCode = await runCli(["schedule", "install"], io);
+    const exitCode = await runCli(["schedule", "install"], io, { homeDir });
 
     expect(exitCode).toBe(1);
     expect(stdout).toEqual([]);
     expect(stderr.join("\n")).toContain("Usage: uncommitted schedule install --time HH:mm");
+    vi.unstubAllGlobals();
+  });
+
+  it("falls back to config.scheduleTime when --time is omitted", async () => {
+    vi.stubGlobal("process", { ...process, platform: "darwin" });
+    const { io, stdout, stderr } = createIo();
+    const directory = await mkdtemp(join(tmpdir(), "uncommitted-cli-schedule-configtime-"));
+    const homeDir = join(directory, "home");
+    await writeConfig(homeDir, join(directory, "drafts")); // writes scheduleTime "23:30"
+
+    const exitCode = await runCli(["schedule", "install"], io, {
+      homeDir,
+      schedulerExecutor: async () => ({ stdout: "", stderr: "" })
+    });
+
+    expect(exitCode).toBe(0);
+    expect(stderr).toEqual([]);
+    expect(stdout.join("\n")).toContain("Installed macOS schedule for 23:30.");
+
+    const plistPath = join(homeDir, "Library", "LaunchAgents", "com.uncommitted.schedule.plist");
+    const plistContent = await readFile(plistPath, "utf8");
+    expect(plistContent).toContain("<integer>23</integer>");
+    expect(plistContent).toContain("<integer>30</integer>");
+
+    vi.unstubAllGlobals();
+  });
+
+  it("prefers --time over config.scheduleTime when both are present", async () => {
+    vi.stubGlobal("process", { ...process, platform: "darwin" });
+    const { io, stdout } = createIo();
+    const directory = await mkdtemp(join(tmpdir(), "uncommitted-cli-schedule-override-"));
+    const homeDir = join(directory, "home");
+    await writeConfig(homeDir, join(directory, "drafts")); // config scheduleTime "23:30"
+
+    const exitCode = await runCli(["schedule", "install", "--time", "06:45"], io, {
+      homeDir,
+      schedulerExecutor: async () => ({ stdout: "", stderr: "" })
+    });
+
+    expect(exitCode).toBe(0);
+    expect(stdout.join("\n")).toContain("Installed macOS schedule for 06:45.");
+
+    const plistPath = join(homeDir, "Library", "LaunchAgents", "com.uncommitted.schedule.plist");
+    const plistContent = await readFile(plistPath, "utf8");
+    expect(plistContent).toContain("<integer>6</integer>");
+    expect(plistContent).toContain("<integer>45</integer>");
+
+    vi.unstubAllGlobals();
+  });
+
+  it("rejects unknown install arguments instead of falling back to config", async () => {
+    vi.stubGlobal("process", { ...process, platform: "darwin" });
+    const { io, stdout, stderr } = createIo();
+    const directory = await mkdtemp(join(tmpdir(), "uncommitted-cli-schedule-bogus-"));
+    const homeDir = join(directory, "home");
+    await writeConfig(homeDir, join(directory, "drafts")); // writes scheduleTime "23:30"
+
+    const exitCode = await runCli(["schedule", "install", "--bogus"], io, {
+      homeDir,
+      schedulerExecutor: async () => ({ stdout: "", stderr: "" })
+    });
+
+    expect(exitCode).toBe(1);
+    expect(stdout).toEqual([]);
+    expect(stderr.join("\n")).toContain("Unknown argument: --bogus");
+    expect(stderr.join("\n")).toContain("Usage: uncommitted schedule install --time HH:mm");
+
+    const plistPath = join(homeDir, "Library", "LaunchAgents", "com.uncommitted.schedule.plist");
+    await expect(access(plistPath)).rejects.toThrow();
+    vi.unstubAllGlobals();
+  });
+
+  it("rejects --time without a value instead of falling back to config", async () => {
+    vi.stubGlobal("process", { ...process, platform: "darwin" });
+    const { io, stdout, stderr } = createIo();
+    const directory = await mkdtemp(join(tmpdir(), "uncommitted-cli-schedule-timenoval-"));
+    const homeDir = join(directory, "home");
+    await writeConfig(homeDir, join(directory, "drafts")); // writes scheduleTime "23:30"
+
+    const exitCode = await runCli(["schedule", "install", "--time"], io, {
+      homeDir,
+      schedulerExecutor: async () => ({ stdout: "", stderr: "" })
+    });
+
+    expect(exitCode).toBe(1);
+    expect(stdout).toEqual([]);
+    expect(stderr.join("\n")).toContain("Usage: uncommitted schedule install --time HH:mm");
+
+    const plistPath = join(homeDir, "Library", "LaunchAgents", "com.uncommitted.schedule.plist");
+    await expect(access(plistPath)).rejects.toThrow();
     vi.unstubAllGlobals();
   });
 
@@ -1076,6 +1170,90 @@ describe("cli", () => {
     expect(exitCode).toBe(0);
     expect(stderr.join("\n")).toContain("launchctl");
     expect(stdout.join("\n")).toContain("Scheduler: installed, unknown");
+  });
+
+  it("reports a concise schedule time line when config and installed times match", async () => {
+    const { io, stdout } = createIo();
+    const directory = await mkdtemp(join(tmpdir(), "uncommitted-cli-status-match-"));
+    const homeDir = join(directory, "home");
+    await writeConfig(homeDir, join(directory, "drafts")); // scheduleTime "23:30"
+
+    const { xml } = buildLaunchAgentPlist({ homeDir, scheduleTime: "23:30" });
+    const plistDir = join(homeDir, "Library", "LaunchAgents");
+    await mkdir(plistDir, { recursive: true });
+    await writeFile(join(plistDir, "com.uncommitted.schedule.plist"), xml, "utf8");
+
+    const exitCode = await runCli(["schedule", "status"], io, {
+      homeDir,
+      schedulerRunner: async () => ({
+        exitCode: 0,
+        stdout: "123\t0\tcom.uncommitted.schedule\n",
+        stderr: ""
+      })
+    });
+
+    expect(exitCode).toBe(0);
+    const out = stdout.join("\n");
+    expect(out).toContain("Schedule time: 23:30");
+    expect(out).not.toMatch(/warning/i);
+    expect(out).not.toMatch(/diverge/i);
+  });
+
+  it("warns and shows both times when config and installed schedule times diverge", async () => {
+    const { io, stdout } = createIo();
+    const directory = await mkdtemp(join(tmpdir(), "uncommitted-cli-status-diverge-"));
+    const homeDir = join(directory, "home");
+    await writeConfig(homeDir, join(directory, "drafts")); // config scheduleTime "23:30"
+
+    const { xml } = buildLaunchAgentPlist({ homeDir, scheduleTime: "07:15" });
+    const plistDir = join(homeDir, "Library", "LaunchAgents");
+    await mkdir(plistDir, { recursive: true });
+    await writeFile(join(plistDir, "com.uncommitted.schedule.plist"), xml, "utf8");
+
+    const exitCode = await runCli(["schedule", "status"], io, {
+      homeDir,
+      schedulerRunner: async () => ({
+        exitCode: 0,
+        stdout: "123\t0\tcom.uncommitted.schedule\n",
+        stderr: ""
+      })
+    });
+
+    expect(exitCode).toBe(0);
+    const out = stdout.join("\n");
+    expect(out).toMatch(/warning/i);
+    expect(out).toContain("07:15"); // installed
+    expect(out).toContain("23:30"); // config
+  });
+
+  it("degrades gracefully in status when config is unreadable", async () => {
+    const { io, stdout, stderr } = createIo();
+    const directory = await mkdtemp(join(tmpdir(), "uncommitted-cli-status-noconfig-"));
+    const homeDir = join(directory, "home");
+    // No config file written.
+
+    const { xml } = buildLaunchAgentPlist({ homeDir, scheduleTime: "07:15" });
+    const plistDir = join(homeDir, "Library", "LaunchAgents");
+    await mkdir(plistDir, { recursive: true });
+    await writeFile(join(plistDir, "com.uncommitted.schedule.plist"), xml, "utf8");
+
+    const exitCode = await runCli(["schedule", "status"], io, {
+      homeDir,
+      schedulerRunner: async () => ({
+        exitCode: 0,
+        stdout: "123\t0\tcom.uncommitted.schedule\n",
+        stderr: ""
+      })
+    });
+
+    expect(exitCode).toBe(0);
+    const out = stdout.join("\n");
+    expect(out).toContain("Scheduler: installed, loaded");
+    // Installed time still surfaced even without config to compare against.
+    expect(out).toContain("07:15");
+    // No crash, no divergence warning when there is nothing to compare.
+    expect(out).not.toMatch(/warning/i);
+    expect(stderr).toEqual([]);
   });
 
   it("rejects schedule status with unexpected arguments", async () => {

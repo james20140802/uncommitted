@@ -3,7 +3,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { runScheduleStatus } from "../src/schedule-status-command.js";
-import { resolveLaunchAgentPlistPath, getLaunchdLabel } from "../src/scheduler.js";
+import {
+  buildLaunchAgentPlist,
+  resolveLaunchAgentPlistPath,
+  getLaunchdLabel
+} from "../src/scheduler.js";
 import type { LaunchctlRawRunner } from "../src/scheduler.js";
 
 /**
@@ -128,5 +132,39 @@ describe("runScheduleStatus", () => {
     expect(result.installed).toBe(false);
     expect(result.loaded).toBeUndefined();
     expect(result.launchctlError).toMatch(/launchctl not found/i);
+  });
+
+  it("surfaces the actual installed launchd time parsed from the plist", async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), "uncommitted-status-time-"));
+    const plistPath = resolveLaunchAgentPlistPath({ homeDir });
+    await mkdir(join(homeDir, "Library", "LaunchAgents"), { recursive: true });
+    const { xml } = buildLaunchAgentPlist({ homeDir, scheduleTime: "07:15" });
+    await writeFile(plistPath, xml, "utf8");
+
+    const result = await runScheduleStatus({ homeDir, runner: makeRunner(0, "", "") });
+
+    expect(result.installed).toBe(true);
+    expect(result.installedScheduleTime).toBe("07:15");
+  });
+
+  it("leaves installedScheduleTime undefined when the plist is absent", async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), "uncommitted-status-notime-"));
+
+    const result = await runScheduleStatus({ homeDir, runner: makeRunner(0, "", "") });
+
+    expect(result.installed).toBe(false);
+    expect(result.installedScheduleTime).toBeUndefined();
+  });
+
+  it("leaves installedScheduleTime undefined when the plist is unparseable", async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), "uncommitted-status-badtime-"));
+    const plistPath = resolveLaunchAgentPlistPath({ homeDir });
+    await mkdir(join(homeDir, "Library", "LaunchAgents"), { recursive: true });
+    await writeFile(plistPath, "<plist/>", "utf8");
+
+    const result = await runScheduleStatus({ homeDir, runner: makeRunner(0, "", "") });
+
+    expect(result.installed).toBe(true);
+    expect(result.installedScheduleTime).toBeUndefined();
   });
 });
