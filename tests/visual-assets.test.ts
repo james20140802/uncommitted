@@ -154,6 +154,109 @@ describe("visual asset generation", () => {
     );
   });
 
+  it("reports a billing-class 429 (insufficient_quota) distinctly, not as a temporary rate limit", async () => {
+    const calls: Array<{ url: string; request: AiProviderHttpRequest }> = [];
+    const provider = createImageAssetProvider(
+      {
+        provider: "openai",
+        persona: "wry coworker",
+        roastLevel: 2
+      },
+      {
+        env: { OPENAI_API_KEY: "sk-test-secret" },
+        transport: createTransport(
+          calls,
+          { error: { type: "insufficient_quota" } },
+          429
+        )
+      }
+    );
+
+    await expect(
+      provider?.generateImageAsset({
+        schemaVersion: 1,
+        slideIndex: 1,
+        assetSlotId: "slide-01-visual",
+        prompt: "safe visual prompt",
+        promptSummary: "safe visual prompt"
+      })
+    ).rejects.toEqual(
+      new VisualAssetGenerationError(
+        "AI provider credit/billing quota exhausted. Check your plan and billing details.",
+        "provider-failed"
+      )
+    );
+  });
+
+  it("keeps the generic image 429 message verbatim for a plain rate-limit body", async () => {
+    const calls: Array<{ url: string; request: AiProviderHttpRequest }> = [];
+    const provider = createImageAssetProvider(
+      {
+        provider: "openai",
+        persona: "wry coworker",
+        roastLevel: 2
+      },
+      {
+        env: { OPENAI_API_KEY: "sk-test-secret" },
+        transport: createTransport(
+          calls,
+          { error: { type: "rate_limit_exceeded" } },
+          429
+        )
+      }
+    );
+
+    await expect(
+      provider?.generateImageAsset({
+        schemaVersion: 1,
+        slideIndex: 1,
+        assetSlotId: "slide-01-visual",
+        prompt: "safe visual prompt",
+        promptSummary: "safe visual prompt"
+      })
+    ).rejects.toEqual(
+      new VisualAssetGenerationError(
+        "Image provider rate limit exceeded. Try again later.",
+        "provider-failed"
+      )
+    );
+  });
+
+  it("falls back to the generic image 429 message when the 429 body cannot be parsed", async () => {
+    const provider = createImageAssetProvider(
+      {
+        provider: "openai",
+        persona: "wry coworker",
+        roastLevel: 2
+      },
+      {
+        env: { OPENAI_API_KEY: "sk-test-secret" },
+        transport: async () => ({
+          ok: false,
+          status: 429,
+          json: async () => {
+            throw new Error("not json");
+          }
+        })
+      }
+    );
+
+    await expect(
+      provider?.generateImageAsset({
+        schemaVersion: 1,
+        slideIndex: 1,
+        assetSlotId: "slide-01-visual",
+        prompt: "safe visual prompt",
+        promptSummary: "safe visual prompt"
+      })
+    ).rejects.toEqual(
+      new VisualAssetGenerationError(
+        "Image provider rate limit exceeded. Try again later.",
+        "provider-failed"
+      )
+    );
+  });
+
   it("writes deterministic placeholder PNG assets with stable slide filenames", async () => {
     const revision = await createTestRevision();
     const cards = createCarouselHtmlCards(createStoryDraft());
