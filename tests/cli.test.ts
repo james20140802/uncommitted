@@ -891,6 +891,7 @@ describe("cli", () => {
 
     const exitCode = await runCli(["schedule", "install", "--time", "23:30"], io, {
       homeDir,
+      schedulerExecutablePath: "/usr/local/lib/node_modules/uncommitted/dist/cli.js",
       schedulerExecutor: async () => ({ stdout: "", stderr: "" })
     });
 
@@ -903,6 +904,80 @@ describe("cli", () => {
     expect(stdout.join("\n")).toContain("Installed macOS schedule for 23:30.");
     expect(plistContent).toContain("<key>Hour</key>");
     expect(plistContent).toContain("<integer>23</integer>");
+
+    vi.unstubAllGlobals();
+  });
+
+  it("refuses schedule install when the running entrypoint is a test worker path", async () => {
+    // Under vitest, process.argv[1] is a tinypool worker script — exactly the
+    // path shape that must never be baked into the launchd plist (UNC-190).
+    vi.stubGlobal("process", { ...process, platform: "darwin" });
+
+    const { io, stdout, stderr } = createIo();
+    const directory = await mkdtemp(join(tmpdir(), "uncommitted-cli-schedule-worker-"));
+    const homeDir = join(directory, "home");
+
+    const exitCode = await runCli(["schedule", "install", "--time", "23:30"], io, {
+      homeDir,
+      schedulerExecutor: async () => ({ stdout: "", stderr: "" })
+    });
+
+    expect(exitCode).toBe(2);
+    expect(stdout).toEqual([]);
+    expect(stderr.join("\n")).toContain("not a stable CLI entrypoint");
+
+    const plistPath = join(homeDir, "Library", "LaunchAgents", "com.uncommitted.schedule.plist");
+    await expect(access(plistPath)).rejects.toThrow();
+
+    vi.unstubAllGlobals();
+  });
+
+  it("records the injected stable executable path in the plist", async () => {
+    vi.stubGlobal("process", { ...process, platform: "darwin" });
+
+    const { io, stderr } = createIo();
+    const directory = await mkdtemp(join(tmpdir(), "uncommitted-cli-schedule-stable-"));
+    const homeDir = join(directory, "home");
+    const stableCliPath = "/usr/local/lib/node_modules/uncommitted/dist/cli.js";
+
+    const exitCode = await runCli(["schedule", "install", "--time", "23:30"], io, {
+      homeDir,
+      schedulerExecutablePath: stableCliPath,
+      schedulerExecutor: async () => ({ stdout: "", stderr: "" })
+    });
+
+    expect(exitCode).toBe(0);
+    expect(stderr).toEqual([]);
+
+    const plistPath = join(homeDir, "Library", "LaunchAgents", "com.uncommitted.schedule.plist");
+    const plistContent = await readFile(plistPath, "utf8");
+    expect(plistContent).toContain(`<string>${stableCliPath}</string>`);
+    expect(plistContent).not.toContain("tinypool");
+
+    vi.unstubAllGlobals();
+  });
+
+  it("refuses install and preserves an existing plist when the executable path is unstable", async () => {
+    vi.stubGlobal("process", { ...process, platform: "darwin" });
+
+    const { io, stdout, stderr } = createIo();
+    const directory = await mkdtemp(join(tmpdir(), "uncommitted-cli-schedule-preserve-"));
+    const homeDir = join(directory, "home");
+    const plistPath = join(homeDir, "Library", "LaunchAgents", "com.uncommitted.schedule.plist");
+    await mkdir(join(homeDir, "Library", "LaunchAgents"), { recursive: true });
+    await writeFile(plistPath, "<!-- existing healthy plist -->", "utf8");
+
+    const exitCode = await runCli(["schedule", "install", "--time", "23:30"], io, {
+      homeDir,
+      schedulerExecutablePath:
+        "/Users/user/repo/.claude/worktrees/clever-cerf-2fad25/dist/cli.js",
+      schedulerExecutor: async () => ({ stdout: "", stderr: "" })
+    });
+
+    expect(exitCode).toBe(2);
+    expect(stdout).toEqual([]);
+    expect(stderr.join("\n")).toContain("not a stable CLI entrypoint");
+    expect(await readFile(plistPath, "utf8")).toBe("<!-- existing healthy plist -->");
 
     vi.unstubAllGlobals();
   });
@@ -945,6 +1020,7 @@ describe("cli", () => {
 
     const exitCode = await runCli(["schedule", "install"], io, {
       homeDir,
+      schedulerExecutablePath: "/usr/local/lib/node_modules/uncommitted/dist/cli.js",
       schedulerExecutor: async () => ({ stdout: "", stderr: "" })
     });
 
@@ -969,6 +1045,7 @@ describe("cli", () => {
 
     const exitCode = await runCli(["schedule", "install", "--time", "06:45"], io, {
       homeDir,
+      schedulerExecutablePath: "/usr/local/lib/node_modules/uncommitted/dist/cli.js",
       schedulerExecutor: async () => ({ stdout: "", stderr: "" })
     });
 
@@ -1041,8 +1118,13 @@ describe("cli", () => {
   it("returns error code when schedule installation fails", async () => {
     vi.stubGlobal("process", { ...process, platform: "darwin" });
     const { io, stdout, stderr } = createIo();
+    // homeDir must be injected: without it this test would write the real
+    // ~/Library/LaunchAgents plist before the executor throws.
+    const directory = await mkdtemp(join(tmpdir(), "uncommitted-cli-schedule-fail-"));
 
     const exitCode = await runCli(["schedule", "install", "--time", "23:30"], io, {
+      homeDir: join(directory, "home"),
+      schedulerExecutablePath: "/usr/local/lib/node_modules/uncommitted/dist/cli.js",
       schedulerExecutor: async () => {
         throw new Error("launchctl failed");
       }

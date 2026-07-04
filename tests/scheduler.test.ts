@@ -7,7 +7,9 @@ import {
   parseInstalledPlistScheduleTime,
   parseScheduleTime,
   resolveLaunchAgentPlistPath,
-  resolveSchedulerLogPaths
+  resolveSchedulerLogPaths,
+  SchedulerExecutablePathError,
+  validateSchedulerExecutablePath
 } from "../src/scheduler.js";
 
 describe("macOS scheduler plist helpers", () => {
@@ -261,6 +263,65 @@ describe("macOS scheduler plist helpers", () => {
 `;
 
     expect(plist.xml).toBe(expectedXml);
+  });
+});
+
+describe("validateSchedulerExecutablePath", () => {
+  const unstablePaths = [
+    // vitest tinypool worker entry — the exact shape that poisoned the 6/28 plist
+    "/Users/user/repo/node_modules/.pnpm/tinypool@1.1.1/node_modules/tinypool/dist/entry/process.js",
+    // ephemeral Claude worktree, even when it points at a real cli.js
+    "/Users/user/repo/.claude/worktrees/clever-cerf-2fad25/dist/cli.js",
+    // foreign package cli.js inside the pnpm virtual store — not our CLI
+    "/Users/user/repo/node_modules/.pnpm/uncommitted@0.1.0/node_modules/uncommitted/dist/cli.js",
+    // generic non-CLI .js worker entry
+    "/opt/some-tool/dist/entry/worker.js",
+    // TypeScript source entry — launchd cannot execute it
+    "/Users/user/repo/src/cli.ts"
+  ];
+
+  it.each(unstablePaths)("rejects unstable executable path %s", (path) => {
+    const result = validateSchedulerExecutablePath(path);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("accepts stable CLI entrypoints and binaries", () => {
+    for (const path of [
+      "/usr/local/lib/node_modules/uncommitted/dist/cli.js",
+      "/Users/user/.nvm/versions/node/v22.0.0/lib/node_modules/uncommitted/dist/cli.js",
+      "/usr/local/bin/uncommitted",
+      "uncommitted"
+    ]) {
+      expect(validateSchedulerExecutablePath(path)).toEqual({ ok: true });
+    }
+  });
+
+  it("accepts this package's own cli.js resolved into the pnpm virtual store", () => {
+    // Documented install paths (README Option B): `pnpm add -g` resolves the
+    // bin shim into the virtual store before validation runs.
+    for (const path of [
+      "/Users/user/Library/pnpm/global/5/node_modules/.pnpm/@sangchu04+uncommitted@0.1.1/node_modules/@sangchu04/uncommitted/dist/cli.js",
+      "/Users/user/Library/pnpm/global/5/node_modules/.pnpm/@sangchu04+uncommitted@file+sangchu04-uncommitted-0.1.1.tgz/node_modules/@sangchu04/uncommitted/dist/cli.js"
+    ]) {
+      expect(validateSchedulerExecutablePath(path)).toEqual({ ok: true });
+    }
+  });
+
+  it("buildLaunchAgentPlist refuses to bake an unstable executable path into the plist", () => {
+    const homeDir = "/tmp/uncommitted-scheduler-home";
+    const executablePath =
+      "/Users/user/repo/node_modules/.pnpm/tinypool@1.1.1/node_modules/tinypool/dist/entry/process.js";
+
+    expect(() =>
+      buildLaunchAgentPlist({ homeDir, scheduleTime: "23:30", executablePath })
+    ).toThrow(SchedulerExecutablePathError);
+    expect(() =>
+      buildLaunchAgentPlist({ homeDir, scheduleTime: "23:30", executablePath })
+    ).toThrow(executablePath);
   });
 });
 
