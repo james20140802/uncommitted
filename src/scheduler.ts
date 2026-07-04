@@ -240,6 +240,11 @@ export type SchedulerExecutablePathValidation =
   | { ok: true }
   | { ok: false; reason: string };
 
+// pnpm global/tarball installs resolve the CLI bin shim into the virtual
+// store, so this suffix is a legitimate documented install path. Must match
+// the package name in package.json.
+const pnpmOwnCliPathSuffix = "/node_modules/@sangchu04/uncommitted/dist/cli.js";
+
 const unstableExecutablePathRules: Array<{
   matches: (executablePath: string) => boolean;
   reason: string;
@@ -249,7 +254,9 @@ const unstableExecutablePathRules: Array<{
     reason: "temporary git worktree path"
   },
   {
-    matches: (executablePath) => executablePath.includes("/node_modules/.pnpm/"),
+    matches: (executablePath) =>
+      executablePath.includes("/node_modules/.pnpm/") &&
+      !executablePath.endsWith(pnpmOwnCliPathSuffix),
     reason: "pnpm virtual store path"
   },
   {
