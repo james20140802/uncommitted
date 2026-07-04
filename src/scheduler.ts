@@ -223,10 +223,85 @@ function pad2(value: number): string {
   return value.toString().padStart(2, "0");
 }
 
+/**
+ * Thrown when a scheduler executable path would bake an ephemeral or
+ * non-CLI entry (test worker, worktree, pnpm virtual store) into the
+ * launchd plist. Callers map this to a config-style failure (exit 2)
+ * and must not overwrite an existing plist.
+ */
+export class SchedulerExecutablePathError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SchedulerExecutablePathError";
+  }
+}
+
+export type SchedulerExecutablePathValidation =
+  | { ok: true }
+  | { ok: false; reason: string };
+
+const unstableExecutablePathRules: Array<{
+  matches: (executablePath: string) => boolean;
+  reason: string;
+}> = [
+  {
+    matches: (executablePath) => executablePath.includes("/.claude/worktrees/"),
+    reason: "temporary git worktree path"
+  },
+  {
+    matches: (executablePath) => executablePath.includes("/node_modules/.pnpm/"),
+    reason: "pnpm virtual store path"
+  },
+  {
+    matches: (executablePath) => executablePath.includes("/tinypool/"),
+    reason: "test worker (tinypool) path"
+  },
+  {
+    matches: (executablePath) => /\.(ts|mts|cts)$/.test(executablePath),
+    reason: "TypeScript source entry"
+  },
+  {
+    matches: (executablePath) =>
+      /\.(js|mjs|cjs)$/.test(executablePath) &&
+      !/(^|\/)cli\.(js|mjs|cjs)$/.test(executablePath),
+    reason: "non-CLI script entry"
+  }
+];
+
+/**
+ * Checks whether an executable path is safe to persist into the launchd
+ * plist. `process.argv[1]` is not trustworthy here: under vitest it points
+ * at a tinypool worker inside (possibly pruned) worktree node_modules, and
+ * launchd would then fail every run with MODULE_NOT_FOUND (UNC-190).
+ */
+export function validateSchedulerExecutablePath(
+  executablePath: string
+): SchedulerExecutablePathValidation {
+  for (const rule of unstableExecutablePathRules) {
+    if (rule.matches(executablePath)) {
+      return { ok: false, reason: rule.reason };
+    }
+  }
+
+  return { ok: true };
+}
+
 export function buildLaunchAgentPlist(
   options: LaunchAgentPlistOptions
 ): LaunchAgentPlist {
   const { hour, minute } = parseScheduleTime(options.scheduleTime);
+
+  if (options.executablePath !== undefined) {
+    const validation = validateSchedulerExecutablePath(options.executablePath);
+    if (!validation.ok) {
+      throw new SchedulerExecutablePathError(
+        `Executable path is not a stable CLI entrypoint (${validation.reason}): ` +
+          `${options.executablePath}. Run schedule install via the installed CLI ` +
+          `(node dist/cli.js schedule install).`
+      );
+    }
+  }
+
   const plistPath = resolveLaunchAgentPlistPath(options);
   const logs = resolveSchedulerLogPaths(options);
   const executablePath = options.executablePath ?? defaultExecutableName;

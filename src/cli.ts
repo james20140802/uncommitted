@@ -76,6 +76,7 @@ import {
   buildLaunchAgentPlist,
   captureProviderEnv,
   installScheduler,
+  SchedulerExecutablePathError,
   type LaunchctlExecutor,
   type LaunchctlRawRunner
 } from "./scheduler.js";
@@ -137,6 +138,13 @@ export type CliOptions = {
   schedulerExecutor?: LaunchctlExecutor;
   /** Injectable structured launchctl runner for status/remove (tests). */
   schedulerRunner?: LaunchctlRawRunner;
+  /**
+   * Executable path recorded into the launchd plist by `schedule install`.
+   * When omitted, `process.argv[1]` is used as the last-resort candidate and
+   * validated — under vitest/worktrees it points at an ephemeral worker
+   * script, which must never reach the plist (UNC-190).
+   */
+  schedulerExecutablePath?: string;
   /** Injectable prompter for feedback command (tests). */
   feedbackPrompter?: FeedbackPrompter;
   /**
@@ -319,7 +327,8 @@ async function runSchedule(
     }
 
     try {
-      const executablePath = realpathSync.native(process.argv[1]);
+      const executablePath =
+        options.schedulerExecutablePath ?? realpathSync.native(process.argv[1]);
       const plist = buildLaunchAgentPlist({
         homeDir: options.homeDir,
         scheduleTime,
@@ -336,6 +345,10 @@ async function runSchedule(
       io.stdout(`Plist path: ${plist.plistPath}`);
       return 0;
     } catch (error) {
+      if (error instanceof SchedulerExecutablePathError) {
+        io.stderr(error.message);
+        return 2;
+      }
       io.stderr(error instanceof Error ? error.message : "Schedule install failed.");
       return 1;
     }
