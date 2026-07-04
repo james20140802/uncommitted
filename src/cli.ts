@@ -428,7 +428,11 @@ async function runSchedule(
       now: () => scheduledAt
     };
 
-    const collectExitCode = await runCollect(["git"], io, workflowOptions);
+    // Collect every source enabled in config (git/claude/codex/github), not
+    // just git — `collect all` reads sources[*].enabled and isolates per-source
+    // failures, so a flaky claude/codex/github collection cannot block the
+    // draft as long as one enabled source succeeds.
+    const collectExitCode = await runCollect(["all"], io, workflowOptions);
 
     if (collectExitCode !== 0) {
       return collectExitCode;
