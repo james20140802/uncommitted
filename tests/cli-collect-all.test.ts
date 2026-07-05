@@ -207,6 +207,67 @@ describe("cli collect all orchestration", () => {
     expect(out).toContain("Source 'github': failed");
   });
 
+  it("does not let a zero-work source mask another source's failure", async () => {
+    const { io, stdout } = createIo();
+    const directory = await mkdtemp(
+      join(tmpdir(), "uncommitted-collect-all-noop-mask-")
+    );
+    const homeDir = join(directory, "home");
+    await writeConfig(homeDir, configWithSources({ github: false }));
+
+    // git fails; claude/codex "succeed" but collected nothing (logs missing).
+    // A zero-work success must not satisfy the exit gate and hide git's failure.
+    const collectInvokers = {
+      git: async () => {
+        throw new Error("git broke");
+      },
+      claude: async () => ({
+        successCount: 0,
+        failureCount: 0,
+        detail: "no Claude session logs found"
+      }),
+      codex: async () => ({
+        successCount: 0,
+        failureCount: 0,
+        detail: "no Codex session logs found"
+      })
+    };
+
+    const exitCode = await runCli(["collect", "all"], io, {
+      homeDir,
+      collectInvokers
+    });
+
+    expect(exitCode).toBe(3);
+    expect(stdout.join("\n")).toContain("Source 'git': failed");
+  });
+
+  it("exits 0 when every enabled source is a no-op with no failures", async () => {
+    const { io } = createIo();
+    const directory = await mkdtemp(
+      join(tmpdir(), "uncommitted-collect-all-all-noop-")
+    );
+    const homeDir = join(directory, "home");
+    await writeConfig(
+      homeDir,
+      configWithSources({ git: false, github: false })
+    );
+
+    // Nothing failed; claude/codex simply had no logs to collect. A benign
+    // quiet state must stay exit 0, not be escalated to a collection error.
+    const collectInvokers = {
+      claude: async () => ({ successCount: 0, failureCount: 0 }),
+      codex: async () => ({ successCount: 0, failureCount: 0 })
+    };
+
+    const exitCode = await runCli(["collect", "all"], io, {
+      homeDir,
+      collectInvokers
+    });
+
+    expect(exitCode).toBe(0);
+  });
+
   it("marks a partially failed source as failed but still exits 0 when another source succeeds", async () => {
     const { io, stdout } = createIo();
     const directory = await mkdtemp(

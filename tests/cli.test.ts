@@ -751,7 +751,8 @@ describe("cli", () => {
       homeDir: fixture.homeDir,
       now: () => "2026-05-31T23:30:00.000Z",
       aiProvider: new ScheduleAiProvider(),
-      carouselRenderer: renderer
+      carouselRenderer: renderer,
+      collectInvokers: nonGitStubInvokers()
     });
 
     const renderedPng = await readFile(
@@ -760,7 +761,7 @@ describe("cli", () => {
 
     expect(exitCode).toBe(0);
     expect(stderr).toEqual([]);
-    expect(stdout.join("\n")).toContain("Collected Git activity for 1 project.");
+    expect(stdout.join("\n")).toContain("Source 'git': success");
     expect(stdout.join("\n")).toContain(
       `Generated text draft for 2026-05-31: ${join(
         fixture.draftRoot,
@@ -779,6 +780,78 @@ describe("cli", () => {
     expect(renderer.calls).toHaveLength(3);
   });
 
+  it("collects every config-enabled source and skips disabled ones", async () => {
+    const { io, stdout } = createIo();
+    const fixture = await createScheduleRunNowFixture({
+      git: { enabled: true },
+      claude: { enabled: true },
+      codex: { enabled: true },
+      github: { enabled: false }
+    });
+    const calls: string[] = [];
+    const spy = (name: string) => async () => {
+      calls.push(name);
+      return { successCount: 1, failureCount: 0, detail: `${name} stub` };
+    };
+
+    const exitCode = await runCli(["schedule", "run-now"], io, {
+      homeDir: fixture.homeDir,
+      now: () => "2026-05-31T23:30:00.000Z",
+      aiProvider: new ScheduleAiProvider(),
+      carouselRenderer: new RecordingPngRenderer(),
+      collectInvokers: {
+        claude: spy("claude"),
+        codex: spy("codex"),
+        github: spy("github")
+      }
+    });
+
+    expect(exitCode).toBe(0);
+    // Enabled claude/codex fan out via config; disabled github is never invoked.
+    expect(calls.sort()).toEqual(["claude", "codex"]);
+    const out = stdout.join("\n");
+    expect(out).toContain("Source 'git': success");
+    expect(out).toContain("Source 'github': disabled");
+  });
+
+  it("stops before generating when git fails and only no-op sources succeed", async () => {
+    const { io, stdout } = createIo();
+    const fixture = await createScheduleRunNowFixture({
+      git: { enabled: true },
+      claude: { enabled: true },
+      codex: { enabled: true },
+      github: { enabled: false }
+    });
+
+    const exitCode = await runCli(["schedule", "run-now"], io, {
+      homeDir: fixture.homeDir,
+      now: () => "2026-05-31T23:30:00.000Z",
+      aiProvider: new ScheduleAiProvider(),
+      carouselRenderer: new RecordingPngRenderer(),
+      collectInvokers: {
+        git: async () => {
+          throw new Error("git repo path is gone");
+        },
+        claude: async () => ({
+          successCount: 0,
+          failureCount: 0,
+          detail: "no Claude session logs found"
+        }),
+        codex: async () => ({
+          successCount: 0,
+          failureCount: 0,
+          detail: "no Codex session logs found"
+        })
+      }
+    });
+
+    // git failed and the enabled Claude/Codex sources collected nothing, so the
+    // scheduler must surface the collection failure (exit 3) instead of
+    // generating a draft from stale/empty data.
+    expect(exitCode).toBe(3);
+    expect(stdout.join("\n")).not.toContain("Generated text draft");
+  });
+
   it("uses one target date across schedule run-now steps", async () => {
     const { io, stdout, stderr } = createIo();
     const fixture = await createScheduleRunNowFixture();
@@ -793,7 +866,8 @@ describe("cli", () => {
       homeDir: fixture.homeDir,
       now: () => clockValues.shift() ?? "2026-06-01T00:00:03.000Z",
       aiProvider: new ScheduleAiProvider(),
-      carouselRenderer: renderer
+      carouselRenderer: renderer,
+      collectInvokers: nonGitStubInvokers()
     });
 
     const renderedPng = await readFile(
@@ -821,11 +895,14 @@ describe("cli", () => {
       carouselRenderer: new RecordingPngRenderer()
     });
 
+    // Every enabled source fails on the empty registry; collect all reports
+    // each per-source failure on stdout and run-now propagates exit 3 before
+    // generation.
     expect(exitCode).toBe(3);
-    expect(stdout).toEqual([]);
-    expect(stderr).toEqual([
-      "No registered projects. Run `uncommitted project add .` first."
-    ]);
+    const out = stdout.join("\n");
+    expect(out).toContain("Source 'git': failed");
+    expect(out).toContain("No registered projects");
+    expect(stderr).toEqual([]);
   });
 
   it("preserves collect output when schedule run-now generation fails", async () => {
@@ -836,11 +913,12 @@ describe("cli", () => {
       homeDir: fixture.homeDir,
       now: () => "2026-05-31T23:30:00.000Z",
       aiProvider: new ScheduleAiProvider({ fail: true }),
-      carouselRenderer: new RecordingPngRenderer()
+      carouselRenderer: new RecordingPngRenderer(),
+      collectInvokers: nonGitStubInvokers()
     });
 
     expect(exitCode).toBe(4);
-    expect(stdout.join("\n")).toContain("Collected Git activity for 1 project.");
+    expect(stdout.join("\n")).toContain("Source 'git': success");
     expect(stderr).toEqual([
       "AI provider failed. Check provider configuration."
     ]);
@@ -854,11 +932,12 @@ describe("cli", () => {
       homeDir: fixture.homeDir,
       now: () => "2026-05-31T23:30:00.000Z",
       aiProvider: new ScheduleAiProvider(),
-      carouselRenderer: new FailingPngRenderer()
+      carouselRenderer: new FailingPngRenderer(),
+      collectInvokers: nonGitStubInvokers()
     });
 
     expect(exitCode).toBe(5);
-    expect(stdout.join("\n")).toContain("Collected Git activity for 1 project.");
+    expect(stdout.join("\n")).toContain("Source 'git': success");
     expect(stdout.join("\n")).toContain("Generated text draft for 2026-05-31");
     expect(stderr).toEqual(["Could not render carousel PNGs."]);
   });
@@ -871,11 +950,12 @@ describe("cli", () => {
       homeDir: fixture.homeDir,
       now: () => "2026-05-31T23:30:00.000Z",
       aiProvider: new ScheduleAiProvider({ model: "TOKEN=abc123" }),
-      carouselRenderer: new RecordingPngRenderer()
+      carouselRenderer: new RecordingPngRenderer(),
+      collectInvokers: nonGitStubInvokers()
     });
 
     expect(exitCode).toBe(6);
-    expect(stdout.join("\n")).toContain("Collected Git activity for 1 project.");
+    expect(stdout.join("\n")).toContain("Source 'git': success");
     expect(stdout.join("\n")).not.toContain("Rendered carousel");
     expect(stderr).toEqual([
       "Draft blocked by safety checks. Remove blocked sensitive content."
@@ -2147,7 +2227,26 @@ async function createLatestDraftFixture(options: LatestDraftFixtureOptions = {})
   };
 }
 
-async function createScheduleRunNowFixture() {
+// `schedule run-now` now collects every config-enabled source. Stub the
+// non-git collectors so workflow tests stay deterministic and never touch the
+// host's real ~/.claude / ~/.codex; git still runs for real against the
+// fixture repo to feed generate/render.
+function nonGitStubInvokers() {
+  const ok = (detail: string) => async () => ({
+    successCount: 1,
+    failureCount: 0,
+    detail
+  });
+  return {
+    claude: ok("1 project, 0 signals (stub)"),
+    codex: ok("1 project, 0 signals (stub)"),
+    github: ok("0 projects, 0 signals (stub)")
+  };
+}
+
+async function createScheduleRunNowFixture(
+  sources?: Record<string, { enabled: boolean }>
+) {
   const directory = await mkdtemp(join(tmpdir(), "uncommitted-cli-schedule-"));
   const repoDir = join(directory, "repo");
   const homeDir = join(directory, "home");
@@ -2157,7 +2256,7 @@ async function createScheduleRunNowFixture() {
   await writeFile(join(repoDir, "scheduler.ts"), "const scheduled = true;\n", "utf8");
   await git(repoDir, ["add", "scheduler.ts"]);
   await commit(repoDir, "implement scheduled workflow", "2026-05-31T10:00:00Z");
-  await writeConfig(homeDir, draftRoot);
+  await writeConfig(homeDir, draftRoot, sources);
   await addProject(repoDir, {
     homeDir,
     now: () => "2026-05-31T00:00:00.000Z"
@@ -2171,7 +2270,11 @@ async function createScheduleRunNowFixture() {
   };
 }
 
-async function writeConfig(homeDir: string, draftRoot: string): Promise<void> {
+async function writeConfig(
+  homeDir: string,
+  draftRoot: string,
+  sources?: Record<string, { enabled: boolean }>
+): Promise<void> {
   await mkdir(join(homeDir, ".uncommitted"), { recursive: true });
   await writeJson(join(homeDir, ".uncommitted", "config.json"), {
     schemaVersion: 1,
@@ -2179,7 +2282,8 @@ async function writeConfig(homeDir: string, draftRoot: string): Promise<void> {
     scheduleTime: "23:30",
     aiProvider: "none",
     persona: "test persona",
-    roastLevel: 2
+    roastLevel: 2,
+    ...(sources ? { sources } : {})
   });
 }
 
