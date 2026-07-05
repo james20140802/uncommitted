@@ -102,6 +102,10 @@ const detectionRules: DetectionRule[] = [
     severity: "warning",
     replacement: "[redacted-email]",
     message: "Email address was redacted.",
+    // One shared instance is safe here: it is only ever consumed via
+    // String.replace (applyRule), which resets lastIndex before and after
+    // matching. Do NOT switch this to .test()/.exec(), which would carry
+    // lastIndex across calls. Use emailPattern() for a fresh instance instead.
     pattern: emailPattern("gi")
   },
   {
