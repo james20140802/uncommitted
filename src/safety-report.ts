@@ -1,3 +1,5 @@
+import { emailPattern } from "./redaction.js";
+
 export type SafetyStatus = "safe" | "warning" | "blocked";
 
 export type SafetyRiskCategory =
@@ -100,7 +102,7 @@ const detectionRules: DetectionRule[] = [
     severity: "warning",
     replacement: "[redacted-email]",
     message: "Email address was redacted.",
-    pattern: /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi
+    pattern: emailPattern("gi")
   },
   {
     category: "phone-number",

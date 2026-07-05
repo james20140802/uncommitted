@@ -10,6 +10,7 @@ import type {
   JsonValue,
   SafeActivitySummary
 } from "./ai-provider.js";
+import { emailPattern } from "./redaction.js";
 import type {
   ProjectPersonaHint,
   StoryFormatPlan
@@ -765,7 +766,7 @@ function containsUnsafeText(value: string): boolean {
     /\bBearer\s+[A-Za-z0-9._~+/=-]+/i.test(value) ||
     /\bsk-[A-Za-z0-9_-]{8,}\b/.test(value) ||
     /\b(?:https?|ssh|git):\/\/\S+|git@[\w.-]+:[^\s]+/.test(value) ||
-    /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i.test(value) ||
+    emailPattern("i").test(value) ||
     /(^|[\s(["'])\/[^\s)"']+/.test(value)
   );
 }

@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import type { ActivitySignal, EventSource } from "./event-source.js";
 import {
   categorizeRedactedSubject,
+  emailPattern,
   REDACTION_CATEGORY_ORDER,
   sanitizeText,
   type RedactionCategory,
@@ -360,14 +361,12 @@ function redactSensitiveText(value: string): RedactionResult {
   const categories = new Set<RedactionCategory>();
   let sanitized = value;
 
-  // Bounded quantifiers (see redaction.ts) keep email matching linear and
-  // clear the polynomial-ReDoS warning; real emails match identically.
-  if (/[A-Z0-9._%+-]{1,64}@[A-Z0-9.-]{1,255}\.[A-Z]{2,24}/i.test(sanitized)) {
+  // Bounded quantifiers (see emailPattern in redaction.ts) keep email
+  // matching linear and clear the polynomial-ReDoS warning; real emails
+  // match identically.
+  if (emailPattern("i").test(sanitized)) {
     categories.add("emails");
-    sanitized = sanitized.replace(
-      /[A-Z0-9._%+-]{1,64}@[A-Z0-9.-]{1,255}\.[A-Z]{2,24}/gi,
-      "[redacted-email]"
-    );
+    sanitized = sanitized.replace(emailPattern("gi"), "[redacted-email]");
   }
 
   if (/\b(?:https?|ssh|git):\/\/\S+|git@[\w.-]+:[^\s]+/.test(sanitized)) {

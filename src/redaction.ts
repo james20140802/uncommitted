@@ -31,6 +31,18 @@ export type RedactionResult = {
   categories: RedactionCategory[];
 };
 
+// Single source of the email-matching pattern for every redaction path.
+// Bounded quantifiers (RFC-5321-ish: local <=64, domain <=255, TLD 2-24) keep
+// matching linear and clear CodeQL's js/polynomial-redos; real emails match
+// identically to the previous unbounded form. Returns a FRESH RegExp each call
+// so callers never share lastIndex across .test()/.replace().
+const EMAIL_PATTERN_SOURCE =
+  "[A-Z0-9._%+-]{1,64}@[A-Z0-9.-]{1,255}\\.[A-Z]{2,24}";
+
+export function emailPattern(flags = "gi"): RegExp {
+  return new RegExp(EMAIL_PATTERN_SOURCE, flags);
+}
+
 /**
  * Full 4-rule sanitizer for raw text (commit subjects before collector
  * redaction, dirty-file paths, manual notes). Applies, in order, email →
@@ -41,15 +53,12 @@ export function sanitizeText(value: string): RedactionResult {
   const categories = new Set<RedactionCategory>();
   let sanitized = value;
 
-  // Quantifiers are bounded (RFC-5321-ish limits) to keep matching linear and
-  // avoid the polynomial-ReDoS CodeQL flags on the unbounded form. Real emails
-  // match identically.
-  if (/[A-Z0-9._%+-]{1,64}@[A-Z0-9.-]{1,255}\.[A-Z]{2,24}/i.test(sanitized)) {
+  // Bounded quantifiers (see emailPattern) keep matching linear and avoid the
+  // polynomial-ReDoS CodeQL flags on the unbounded form. Real emails match
+  // identically.
+  if (emailPattern("i").test(sanitized)) {
     categories.add("emails");
-    sanitized = sanitized.replace(
-      /[A-Z0-9._%+-]{1,64}@[A-Z0-9.-]{1,255}\.[A-Z]{2,24}/gi,
-      "[redacted-email]"
-    );
+    sanitized = sanitized.replace(emailPattern("gi"), "[redacted-email]");
   }
 
   if (/(^|[\s(["'])\/[^\s)"']+/.test(sanitized)) {
