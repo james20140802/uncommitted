@@ -66,8 +66,8 @@ export async function runCollectAll(
   const invokers = resolveInvokerMap(options);
 
   const entries: CollectAllEntry[] = [];
-  let enabledCount = 0;
-  let successCount = 0;
+  let realSuccessCount = 0;
+  let failureCount = 0;
 
   for (const source of SOURCE_NAMES) {
     if (!sourceConfig[source].enabled) {
@@ -75,7 +75,6 @@ export async function runCollectAll(
       continue;
     }
 
-    enabledCount += 1;
     const invoke = invokers[source];
 
     try {
@@ -87,20 +86,31 @@ export async function runCollectAll(
       // success and masking the failure.
       if (result.failureCount > 0) {
         entries.push({ source, status: "failed", detail });
+        failureCount += 1;
       } else {
         entries.push({ source, status: "success", detail });
-        successCount += 1;
+        // Only a source that collected actual work counts toward the exit
+        // gate. A zero-work result (e.g. Claude/Codex with no session logs)
+        // is a no-op: it must not mask another source's failure by pretending
+        // the run succeeded (otherwise a failed git collection would still
+        // exit 0 and let the scheduler generate a stale/empty draft).
+        if (result.successCount > 0) {
+          realSuccessCount += 1;
+        }
       }
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       entries.push({ source, status: "failed", detail });
+      failureCount += 1;
     }
   }
 
-  // No-op exit (zero sources enabled) and partial-success exit both 0. Only
-  // total enabled-source failure escalates to 3 (consistent with per-source
-  // collect exit codes).
-  const exitCode = enabledCount === 0 ? 0 : successCount > 0 ? 0 : 3;
+  // Exit 0 when a source did real work, or when nothing failed (zero sources
+  // enabled, or every enabled source was a benign no-op). Escalate to 3 only
+  // when nothing real was collected AND at least one enabled source failed, so
+  // a genuine collection failure is never hidden behind an empty success.
+  const exitCode =
+    realSuccessCount > 0 ? 0 : failureCount > 0 ? 3 : 0;
 
   return { exitCode, entries };
 }

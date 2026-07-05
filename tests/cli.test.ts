@@ -814,6 +814,44 @@ describe("cli", () => {
     expect(out).toContain("Source 'github': disabled");
   });
 
+  it("stops before generating when git fails and only no-op sources succeed", async () => {
+    const { io, stdout } = createIo();
+    const fixture = await createScheduleRunNowFixture({
+      git: { enabled: true },
+      claude: { enabled: true },
+      codex: { enabled: true },
+      github: { enabled: false }
+    });
+
+    const exitCode = await runCli(["schedule", "run-now"], io, {
+      homeDir: fixture.homeDir,
+      now: () => "2026-05-31T23:30:00.000Z",
+      aiProvider: new ScheduleAiProvider(),
+      carouselRenderer: new RecordingPngRenderer(),
+      collectInvokers: {
+        git: async () => {
+          throw new Error("git repo path is gone");
+        },
+        claude: async () => ({
+          successCount: 0,
+          failureCount: 0,
+          detail: "no Claude session logs found"
+        }),
+        codex: async () => ({
+          successCount: 0,
+          failureCount: 0,
+          detail: "no Codex session logs found"
+        })
+      }
+    });
+
+    // git failed and the enabled Claude/Codex sources collected nothing, so the
+    // scheduler must surface the collection failure (exit 3) instead of
+    // generating a draft from stale/empty data.
+    expect(exitCode).toBe(3);
+    expect(stdout.join("\n")).not.toContain("Generated text draft");
+  });
+
   it("uses one target date across schedule run-now steps", async () => {
     const { io, stdout, stderr } = createIo();
     const fixture = await createScheduleRunNowFixture();
