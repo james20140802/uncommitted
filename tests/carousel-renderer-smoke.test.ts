@@ -17,8 +17,12 @@ import {
 } from "../src/draft-storage.js";
 import type { DiaryDraft, DiarySlide } from "../src/diary-generator.js";
 
+// Real Chromium launches exceed the default 5s timeout when the full suite
+// runs in parallel; give the Playwright-backed tests an explicit budget.
+const PLAYWRIGHT_TEST_TIMEOUT_MS = 60_000;
+
 describe("carousel renderer smoke coverage", () => {
-  it("renders a quiet 3-slide fixture into non-empty 1080x1350 PNGs", async () => {
+  it("renders a quiet 3-slide fixture into non-empty 1080x1350 PNGs", { timeout: PLAYWRIGHT_TEST_TIMEOUT_MS }, async () => {
     await assertPlaywrightChromiumAvailable();
 
     const revision = await createTestRevision("uncommitted-smoke-quiet-");
@@ -67,7 +71,7 @@ describe("carousel renderer smoke coverage", () => {
     ]);
   });
 
-  it("renders a high-activity 8-slide photo-first fixture into expected PNG count", async () => {
+  it("renders a high-activity 8-slide photo-first fixture into expected PNG count", { timeout: PLAYWRIGHT_TEST_TIMEOUT_MS }, async () => {
     await assertPlaywrightChromiumAvailable();
 
     const revision = await createTestRevision("uncommitted-smoke-high-");
