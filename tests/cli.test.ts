@@ -1037,6 +1037,47 @@ describe("cli", () => {
     vi.unstubAllGlobals();
   });
 
+  it("persists an env GITHUB_TOKEN to config on schedule install without writing it to the plist (UNC-193)", async () => {
+    vi.stubGlobal("process", {
+      ...process,
+      platform: "darwin",
+      env: { ...process.env, GITHUB_TOKEN: "ghp_should_never_appear_in_plist" }
+    });
+
+    const { io, stdout, stderr } = createIo();
+    const directory = await mkdtemp(join(tmpdir(), "uncommitted-cli-schedule-ghtoken-"));
+    const homeDir = join(directory, "home");
+    await mkdir(join(homeDir, ".uncommitted"), { recursive: true });
+    await writeFile(
+      join(homeDir, ".uncommitted", "config.json"),
+      `${JSON.stringify({ schemaVersion: 1 }, null, 2)}\n`
+    );
+
+    const exitCode = await runCli(["schedule", "install", "--time", "23:30"], io, {
+      homeDir,
+      schedulerExecutablePath: "/usr/local/lib/node_modules/uncommitted/dist/cli.js",
+      schedulerExecutor: async () => ({ stdout: "", stderr: "" })
+    });
+
+    expect(exitCode).toBe(0);
+    expect(stderr).toEqual([]);
+
+    const plistPath = join(homeDir, "Library", "LaunchAgents", "com.uncommitted.schedule.plist");
+    const plistContent = await readFile(plistPath, "utf8");
+    expect(plistContent).not.toContain("GITHUB_TOKEN");
+    expect(plistContent).not.toContain("ghp_should_never_appear_in_plist");
+
+    expect(stdout.join("\n")).toContain(
+      "Saved GITHUB_TOKEN to config for scheduled GitHub collection (not written to the launchd plist)."
+    );
+
+    const configPath = join(homeDir, ".uncommitted", "config.json");
+    const configContent = JSON.parse(await readFile(configPath, "utf8"));
+    expect(configContent.githubToken).toBe("ghp_should_never_appear_in_plist");
+
+    vi.unstubAllGlobals();
+  });
+
   it("refuses install and preserves an existing plist when the executable path is unstable", async () => {
     vi.stubGlobal("process", { ...process, platform: "darwin" });
 

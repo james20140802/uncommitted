@@ -82,6 +82,7 @@ import {
 } from "./scheduler.js";
 import { runScheduleStatus } from "./schedule-status-command.js";
 import { runScheduleRemove } from "./schedule-remove-command.js";
+import { persistGitHubTokenForSchedule } from "./schedule-github-token.js";
 import {
   createReadlinePrompter,
   runFeedbackCommand,
@@ -343,6 +344,16 @@ async function runSchedule(
 
       io.stdout(`Installed macOS schedule for ${scheduleTime}.`);
       io.stdout(`Plist path: ${plist.plistPath}`);
+
+      const tokenPersistResult = await persistGitHubTokenForSchedule({
+        homeDir: options.homeDir
+      });
+      if (tokenPersistResult.persisted) {
+        io.stdout(
+          "Saved GITHUB_TOKEN to config for scheduled GitHub collection (not written to the launchd plist)."
+        );
+      }
+
       return 0;
     } catch (error) {
       if (error instanceof SchedulerExecutablePathError) {

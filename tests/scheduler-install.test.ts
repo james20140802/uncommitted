@@ -2,7 +2,11 @@ import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { buildLaunchAgentPlist, installScheduler } from "../src/scheduler.js";
+import {
+  buildLaunchAgentPlist,
+  captureProviderEnv,
+  installScheduler
+} from "../src/scheduler.js";
 
 describe("scheduler install", () => {
   it("writes the plist file and calls bootstrap on macOS", async () => {
@@ -157,6 +161,42 @@ describe("scheduler install", () => {
     await expect(installScheduler(plist)).rejects.toThrow(
       "macOS is required to install the scheduler."
     );
+
+    vi.unstubAllGlobals();
+  });
+
+  it("never writes GITHUB_TOKEN into the installed plist, even when set in the install env (UNC-193)", async () => {
+    vi.stubGlobal("process", {
+      ...process,
+      platform: "darwin",
+      getuid: () => 501
+    });
+
+    const homeDir = await mkdtemp(join(tmpdir(), "uncommitted-install-ghtoken-"));
+    const fakeEnv = {
+      GITHUB_TOKEN: "ghp_should_never_appear_in_plist",
+      OPENAI_API_KEY: "sk-should-appear"
+    };
+
+    // AC2 guard: captureProviderEnv must never surface GITHUB_TOKEN.
+    const capturedEnv = captureProviderEnv(fakeEnv);
+    expect(capturedEnv.GITHUB_TOKEN).toBeUndefined();
+
+    const plist = buildLaunchAgentPlist({
+      homeDir,
+      scheduleTime: "23:30",
+      environmentVariables: capturedEnv
+    });
+
+    await installScheduler(plist, {
+      homeDir,
+      executor: async () => ({ stdout: "", stderr: "" })
+    });
+
+    const writtenContent = await readFile(plist.plistPath, "utf8");
+    expect(writtenContent).not.toContain("GITHUB_TOKEN");
+    expect(writtenContent).not.toContain(fakeEnv.GITHUB_TOKEN);
+    expect(writtenContent).toContain("OPENAI_API_KEY");
 
     vi.unstubAllGlobals();
   });
