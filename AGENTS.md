@@ -19,9 +19,6 @@ Long-form context lives in Notion: `Uncommitted`, `기획서`, `MVP 기능 명�
 
 - GitHub Issues are the source of truth.
 - All code agents must follow this workflow; Codex is the baseline workflow for this repository.
-- For each task, read the issue first with `gh issue view <number>`.
-- Before implementation, inspect `git status --short` and the current branch.
-- Summarize the issue's goal, scope, out-of-scope items, acceptance criteria, and implementation notes before implementation.
 - If the user asked for planning first, said not to edit yet, invoked a planning workflow, or the issue scope is unclear, propose a plan and wait for acceptance before editing.
 - When the user replies `confirm` after a plan, move directly into implementation without reopening scope discussion.
 - One issue normally maps to one branch and one PR.
@@ -45,9 +42,18 @@ Default issue workflow:
 - Implement after the test target is clear.
 - Validate with relevant checks before reporting completion.
 
-Expected validation commands, when available: `pnpm test`, `pnpm lint`, `pnpm typecheck`, `pnpm build`. If a script does not exist, say so explicitly.
+Expected validation commands, when available: `pnpm check` (runs lint → typecheck → test → build in order). Individual scripts: `pnpm test`, `pnpm lint`, `pnpm typecheck`, `pnpm build`. If a script does not exist, say so explicitly.
 
 Also run `git diff --check` before commit or PR publication when possible.
+
+## Reporting Language (행동의 언어)
+
+Human-facing outputs — PR bodies, issue comments, completion reports — must let a reviewer judge the work against the issue's acceptance criteria without reading the diff.
+
+- Lead with the user-observable behavior change ("무엇이 달라지나"), not the implementation.
+- Map acceptance criteria by quoting each AC verbatim with a verdict and evidence (test name, commit, or manual check). Never paraphrase AC — paraphrased criteria cannot be judged by their author.
+- List every deviation from the issue (new dependencies, output-format or publishability impact, changed existing behavior). Write "없음" explicitly when there is none; an omitted section hides decisions.
+- Implementation terms (file names, internal modules) belong only in implementation-summary sections and commit messages.
 
 ## GitHub And Git Rules
 
