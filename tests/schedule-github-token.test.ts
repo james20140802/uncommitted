@@ -44,7 +44,7 @@ describe("persistGitHubTokenForSchedule", () => {
       scheduleTime: "23:30",
       aiProvider: "openai",
       roastLevel: 3,
-      sources: { git: { enabled: true }, github: { enabled: false } }
+      sources: { git: { enabled: true }, github: { enabled: true } }
     };
     await writeFile(configPath, JSON.stringify(original));
 
@@ -120,6 +120,72 @@ describe("persistGitHubTokenForSchedule", () => {
 
     const configPath = join(homeDir, ".uncommitted", "config.json");
     await expect(readFile(configPath, "utf8")).rejects.toThrow();
+  });
+
+  it("does not persist when config declares an unsupported schemaVersion", async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), "sgt-badschema-"));
+    await mkdir(join(homeDir, ".uncommitted"), { recursive: true });
+    const configPath = join(homeDir, ".uncommitted", "config.json");
+    // schemaVersion 2 is rejected as malformed by every other reader
+    // (source gating, preview); persisting a token here would be useless
+    // because `run-now` fails loading sources on the same guard.
+    const original = { schemaVersion: 2, draftRoot: "~/Uncommitted/drafts" };
+    await writeFile(configPath, JSON.stringify(original));
+
+    const result = await persistGitHubTokenForSchedule({
+      homeDir,
+      env: { GITHUB_TOKEN: "ghp_env_token" }
+    });
+
+    expect(result).toEqual({ persisted: false, reason: "unsupported-schema" });
+
+    // Config left byte-for-byte untouched: no token written.
+    expect(JSON.parse(await readFile(configPath, "utf8"))).toEqual(original);
+  });
+
+  it("does not persist when the GitHub source is explicitly disabled", async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), "sgt-ghoff-"));
+    await mkdir(join(homeDir, ".uncommitted"), { recursive: true });
+    const configPath = join(homeDir, ".uncommitted", "config.json");
+    // GitHub opted out: scheduled collection skips GitHub, so writing the
+    // token would leave a plaintext secret with no benefit.
+    const original = {
+      schemaVersion: 1,
+      sources: { git: { enabled: true }, github: { enabled: false } }
+    };
+    await writeFile(configPath, JSON.stringify(original));
+
+    const result = await persistGitHubTokenForSchedule({
+      homeDir,
+      env: { GITHUB_TOKEN: "ghp_env_token" }
+    });
+
+    expect(result).toEqual({ persisted: false, reason: "github-source-disabled" });
+
+    expect(JSON.parse(await readFile(configPath, "utf8"))).toEqual(original);
+  });
+
+  it("persists when the GitHub source is explicitly enabled", async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), "sgt-ghon-"));
+    await mkdir(join(homeDir, ".uncommitted"), { recursive: true });
+    const configPath = join(homeDir, ".uncommitted", "config.json");
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        schemaVersion: 1,
+        sources: { github: { enabled: true } }
+      })
+    );
+
+    const result = await persistGitHubTokenForSchedule({
+      homeDir,
+      env: { GITHUB_TOKEN: "ghp_env_token" }
+    });
+
+    expect(result).toEqual({ persisted: true, reason: "persisted" });
+    expect(JSON.parse(await readFile(configPath, "utf8")).githubToken).toBe(
+      "ghp_env_token"
+    );
   });
 
   it("returns config-unavailable when config.json is valid JSON but not a record", async () => {

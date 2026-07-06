@@ -7,6 +7,7 @@ import {
   loadGlobalConfig,
   selectGitHubToken
 } from "./global-config.js";
+import { isSourceEnabled } from "./source-config.js";
 import { isRecord } from "./type-guards.js";
 
 export type PersistGitHubTokenForScheduleInput = {
@@ -18,7 +19,9 @@ export type PersistGitHubTokenForScheduleReason =
   | "no-env-token"
   | "already-in-config"
   | "persisted"
-  | "config-unavailable";
+  | "config-unavailable"
+  | "unsupported-schema"
+  | "github-source-disabled";
 
 export type PersistGitHubTokenForScheduleResult = {
   persisted: boolean;
@@ -33,7 +36,10 @@ export type PersistGitHubTokenForScheduleResult = {
  *
  * Never overwrites an existing `githubToken`, never creates/overwrites a
  * config file that is missing or not a valid record — this only augments
- * an already-valid config object.
+ * an already-valid config object. Also skips persistence when the config
+ * declares an unsupported `schemaVersion` (corruption that `run-now` would
+ * reject anyway) or when the GitHub source is explicitly disabled (so no
+ * plaintext secret is stored when scheduled collection will not use it).
  */
 export async function persistGitHubTokenForSchedule(
   input: PersistGitHubTokenForScheduleInput
@@ -50,6 +56,23 @@ export async function persistGitHubTokenForSchedule(
 
   if (outcome.status !== "ok" || !isRecord(outcome.value)) {
     return { persisted: false, reason: "config-unavailable" };
+  }
+
+  // Reject a config declaring an unsupported schemaVersion for the same reason
+  // source gating and the preview reader do: it is corruption, not a
+  // default-fallback case. Persisting a token here would be useless because
+  // `schedule run-now` fails on the same schema guard while loading sources.
+  if (outcome.value.schemaVersion !== 1) {
+    return { persisted: false, reason: "unsupported-schema" };
+  }
+
+  // Only persist when GitHub is an active source. With GitHub opted out,
+  // scheduled collection skips it entirely, so writing the token would leave a
+  // plaintext secret on disk with no benefit. Absent/partial source config
+  // defaults to enabled (mirrors `isSourceEnabled`), so the common case still
+  // persists.
+  if (!isSourceEnabled(outcome.value, "github")) {
+    return { persisted: false, reason: "github-source-disabled" };
   }
 
   const existingToken = selectGitHubToken(outcome.value);
