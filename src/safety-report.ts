@@ -1,3 +1,5 @@
+import { emailPattern } from "./redaction.js";
+
 export type SafetyStatus = "safe" | "warning" | "blocked";
 
 export type SafetyRiskCategory =
@@ -100,7 +102,11 @@ const detectionRules: DetectionRule[] = [
     severity: "warning",
     replacement: "[redacted-email]",
     message: "Email address was redacted.",
-    pattern: /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi
+    // One shared instance is safe here: it is only ever consumed via
+    // String.replace (applyRule), which resets lastIndex before and after
+    // matching. Do NOT switch this to .test()/.exec(), which would carry
+    // lastIndex across calls. Use emailPattern() for a fresh instance instead.
+    pattern: emailPattern("gi")
   },
   {
     category: "phone-number",

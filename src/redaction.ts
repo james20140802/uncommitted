@@ -31,6 +31,24 @@ export type RedactionResult = {
   categories: RedactionCategory[];
 };
 
+// Single source of the email-matching pattern for every redaction path.
+// The local part is terminated by the literal '@' and each domain label by a
+// literal '.', so no quantified class overlaps the naive `[A-Z0-9.-]+\.[A-Z]`
+// form that CodeQL flags as js/polynomial-redos. The leading negative
+// look-behind anchors the match at the true start of the local-part run: this
+// keeps the unbounded `+` linear (interior positions are rejected in O(1)
+// instead of re-scanning the run) and — unlike the previous {1,64}/{1,255}
+// bounds — guarantees the WHOLE address is consumed, so an over-length local
+// part or domain can never leave a leading fragment (e.g. "a[redacted-email]")
+// exposed. Returns a FRESH RegExp each call so callers never share lastIndex
+// across .test()/.replace().
+const EMAIL_PATTERN_SOURCE =
+  "(?<![A-Z0-9._%+-])[A-Z0-9._%+-]+@(?:[A-Z0-9-]+\\.)+[A-Z]{2,24}";
+
+export function emailPattern(flags = "gi"): RegExp {
+  return new RegExp(EMAIL_PATTERN_SOURCE, flags);
+}
+
 /**
  * Full 4-rule sanitizer for raw text (commit subjects before collector
  * redaction, dirty-file paths, manual notes). Applies, in order, email →
@@ -41,15 +59,12 @@ export function sanitizeText(value: string): RedactionResult {
   const categories = new Set<RedactionCategory>();
   let sanitized = value;
 
-  // Quantifiers are bounded (RFC-5321-ish limits) to keep matching linear and
-  // avoid the polynomial-ReDoS CodeQL flags on the unbounded form. Real emails
-  // match identically.
-  if (/[A-Z0-9._%+-]{1,64}@[A-Z0-9.-]{1,255}\.[A-Z]{2,24}/i.test(sanitized)) {
+  // emailPattern anchors the match at the token start and consumes the whole
+  // address (see redaction.ts), so matching stays linear/ReDoS-safe and an
+  // over-length local part or domain leaves no leading fragment behind.
+  if (emailPattern("i").test(sanitized)) {
     categories.add("emails");
-    sanitized = sanitized.replace(
-      /[A-Z0-9._%+-]{1,64}@[A-Z0-9.-]{1,255}\.[A-Z]{2,24}/gi,
-      "[redacted-email]"
-    );
+    sanitized = sanitized.replace(emailPattern("gi"), "[redacted-email]");
   }
 
   if (/(^|[\s(["'])\/[^\s)"']+/.test(sanitized)) {

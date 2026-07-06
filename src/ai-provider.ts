@@ -1,6 +1,7 @@
 import process from "node:process";
 import { resolveConfigPaths } from "./config-paths.js";
 import { isRoastLevel, loadGlobalConfig } from "./global-config.js";
+import { emailPattern } from "./redaction.js";
 import { isRecord } from "./type-guards.js";
 import {
   BILLING_429_MESSAGE,
@@ -1038,7 +1039,7 @@ function redactSensitiveText(value: string): string {
       /\b(?:https?|ssh|git):\/\/\S+|git@[\w.-]+:[^\s]+/g,
       "[redacted-url]"
     )
-    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[redacted-email]")
+    .replace(emailPattern("gi"), "[redacted-email]")
     .replace(
       /(^|[\s(["'])\/[^\s)"']+/g,
       "$1[redacted-path]"
