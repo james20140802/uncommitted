@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, beforeEach } from "vitest";
@@ -31,6 +31,38 @@ describe("persistGitHubTokenForSchedule", () => {
 
     const { mode } = await stat(configPath);
     expect(mode & 0o777).toBe(0o600);
+  });
+
+  it("preserves all existing config fields through the atomic rename and leaves no temp file", async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), "sgt-atomic-"));
+    const configDir = join(homeDir, ".uncommitted");
+    await mkdir(configDir, { recursive: true });
+    const configPath = join(configDir, "config.json");
+    const original = {
+      schemaVersion: 1,
+      draftRoot: "~/Uncommitted/drafts",
+      scheduleTime: "23:30",
+      aiProvider: "openai",
+      roastLevel: 3,
+      sources: { git: { enabled: true }, github: { enabled: false } }
+    };
+    await writeFile(configPath, JSON.stringify(original));
+
+    const result = await persistGitHubTokenForSchedule({
+      homeDir,
+      env: { GITHUB_TOKEN: "ghp_env_token" }
+    });
+    expect(result).toEqual({ persisted: true, reason: "persisted" });
+
+    const written = JSON.parse(await readFile(configPath, "utf8"));
+    expect(written).toEqual({ ...original, githubToken: "ghp_env_token" });
+
+    const { mode } = await stat(configPath);
+    expect(mode & 0o777).toBe(0o600);
+
+    // No orphaned temp file left behind by the atomic write.
+    const entries = await readdir(configDir);
+    expect(entries).toEqual(["config.json"]);
   });
 
   it("does not overwrite an existing githubToken in config", async () => {

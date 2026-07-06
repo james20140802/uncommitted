@@ -1,4 +1,6 @@
-import { chmod, writeFile } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
+import { rename, unlink, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { resolveConfigPaths } from "./config-paths.js";
 import {
   clearGlobalConfigCache,
@@ -56,14 +58,29 @@ export async function persistGitHubTokenForSchedule(
   }
 
   const updatedConfig = { ...outcome.value, githubToken: envToken };
-  await writeFile(configFile, `${JSON.stringify(updatedConfig, null, 2)}\n`, {
-    encoding: "utf8",
-    mode: 0o600
-  });
-  // `mode` on writeFile only applies at file creation time; the config file
-  // already exists (created by `init`), so explicitly tighten permissions
-  // now that it holds a secret.
-  await chmod(configFile, 0o600);
+
+  // Write atomically so the token never sits on disk at a looser mode:
+  // `writeFile`'s `mode` only applies when the target is newly created, and the
+  // existing config.json is typically 0644 from `init`. Create a fresh temp
+  // file in the SAME directory (so `rename` is atomic on the same filesystem)
+  // at 0600, then rename it over config.json. The temp name is
+  // collision-resistant (pid + random) and cleaned up on failure.
+  const tempFile = join(
+    dirname(configFile),
+    `.config.json.${process.pid}.${randomBytes(6).toString("hex")}.tmp`
+  );
+  try {
+    await writeFile(tempFile, `${JSON.stringify(updatedConfig, null, 2)}\n`, {
+      encoding: "utf8",
+      mode: 0o600
+    });
+    await rename(tempFile, configFile);
+  } catch (error) {
+    await unlink(tempFile).catch(() => {
+      // Best-effort cleanup: the temp file may not exist if writeFile failed.
+    });
+    throw error;
+  }
 
   clearGlobalConfigCache();
 
