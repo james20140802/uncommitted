@@ -361,9 +361,9 @@ function redactSensitiveText(value: string): RedactionResult {
   const categories = new Set<RedactionCategory>();
   let sanitized = value;
 
-  // Bounded quantifiers (see emailPattern in redaction.ts) keep email
-  // matching linear and clear the polynomial-ReDoS warning; real emails
-  // match identically.
+  // emailPattern (see redaction.ts) keeps email matching linear/ReDoS-safe and
+  // consumes the whole address, so an over-length local part or domain leaves
+  // no leading fragment behind; real emails match identically.
   if (emailPattern("i").test(sanitized)) {
     categories.add("emails");
     sanitized = sanitized.replace(emailPattern("gi"), "[redacted-email]");
