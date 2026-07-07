@@ -83,7 +83,10 @@ import {
 import { runScheduleStatus } from "./schedule-status-command.js";
 import { runScheduleRemove } from "./schedule-remove-command.js";
 import { persistGitHubTokenForSchedule } from "./schedule-github-token.js";
-import { persistProviderKeysForSchedule } from "./schedule-provider-keys.js";
+import {
+  injectPersistedProviderKeysIntoEnv,
+  persistProviderKeysForSchedule
+} from "./schedule-provider-keys.js";
 import {
   createReadlinePrompter,
   runFeedbackCommand,
@@ -468,6 +471,18 @@ async function runSchedule(
       ...options,
       now: () => scheduledAt
     };
+
+    // Under launchd's minimal environment, provider API keys are not present as
+    // env vars (they are never baked into the plist). Inject any persisted at
+    // install time back into process.env so downstream AI/image generation
+    // resolves them via its existing env fallback. Env-set keys always win, and
+    // an injection failure must not block the run — a truly missing key still
+    // surfaces the consumers' clear "X is not set." message.
+    try {
+      await injectPersistedProviderKeysIntoEnv({ homeDir: options.homeDir });
+    } catch {
+      // Best-effort: proceed with whatever the environment already provides.
+    }
 
     // Collect every source enabled in config (git/claude/codex/github), not
     // just git — `collect all` reads sources[*].enabled and isolates per-source

@@ -101,6 +101,62 @@ export async function persistProviderKeysForSchedule(
   };
 }
 
+export type InjectPersistedProviderKeysInput = {
+  homeDir?: string;
+  env?: NodeJS.ProcessEnv;
+};
+
+export type InjectPersistedProviderKeysResult = {
+  /** Env var names injected from config (empty when nothing was injected). */
+  injected: string[];
+};
+
+/**
+ * Load persisted provider keys from the global config and inject each into
+ * `env` (defaults to `process.env`) — but only when the key is not already
+ * present, so an explicitly-set environment variable always wins.
+ *
+ * Called by `schedule run-now` before generation so that, under launchd's
+ * minimal environment, `ai-provider.ts` / `visual-assets.ts` resolve the keys
+ * unchanged via their existing `process.env` fallback. When a key is absent
+ * from both env and config it is left unset, so the consumers' existing
+ * "X is not set." guards still fire with their clear messages. Skips a config
+ * with an unsupported `schemaVersion`, matching the persistence guard.
+ */
+export async function injectPersistedProviderKeysIntoEnv(
+  input: InjectPersistedProviderKeysInput
+): Promise<InjectPersistedProviderKeysResult> {
+  const env = input.env ?? process.env;
+
+  const configFile = resolveConfigPaths({ homeDir: input.homeDir }).configFile;
+  const outcome = await loadGlobalConfig(configFile);
+
+  if (
+    outcome.status !== "ok" ||
+    !isRecord(outcome.value) ||
+    outcome.value.schemaVersion !== 1
+  ) {
+    return { injected: [] };
+  }
+
+  const injected: string[] = [];
+  for (const envKey of PROVIDER_ENV_KEYS) {
+    // Env precedence: never overwrite a key already present in the environment.
+    const current = env[envKey];
+    if (typeof current === "string" && current.trim() !== "") {
+      continue;
+    }
+
+    const persisted = selectProviderKey(outcome.value, envKey);
+    if (persisted !== null) {
+      env[envKey] = persisted;
+      injected.push(envKey);
+    }
+  }
+
+  return { injected };
+}
+
 type ProviderKeyUpdate = {
   envKey: ProviderEnvKey;
   field: string;

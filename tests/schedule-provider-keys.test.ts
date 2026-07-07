@@ -2,7 +2,10 @@ import { mkdir, mkdtemp, readFile, readdir, stat, writeFile } from "node:fs/prom
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
-import { persistProviderKeysForSchedule } from "../src/schedule-provider-keys.js";
+import {
+  injectPersistedProviderKeysIntoEnv,
+  persistProviderKeysForSchedule
+} from "../src/schedule-provider-keys.js";
 import { clearGlobalConfigCache } from "../src/global-config.js";
 
 async function makeConfig(
@@ -172,5 +175,96 @@ describe("persistProviderKeysForSchedule", () => {
     expect(entries.filter((name) => name.endsWith(".tmp"))).toEqual([]);
     const written = JSON.parse(await readFile(configPath, "utf8"));
     expect(written.sources).toEqual({ git: { enabled: true } });
+  });
+});
+
+describe("injectPersistedProviderKeysIntoEnv", () => {
+  beforeEach(() => {
+    clearGlobalConfigCache();
+  });
+
+  it("injects each persisted provider key into env when not already set", async () => {
+    const { homeDir } = await makeConfig({
+      schemaVersion: 1,
+      openaiApiKey: "sk-openai",
+      openrouterApiKey: "sk-or",
+      anthropicApiKey: "sk-ant"
+    });
+
+    const env: NodeJS.ProcessEnv = {};
+    const result = await injectPersistedProviderKeysIntoEnv({ homeDir, env });
+
+    expect(result.injected.sort()).toEqual([
+      "ANTHROPIC_API_KEY",
+      "OPENAI_API_KEY",
+      "OPENROUTER_API_KEY"
+    ]);
+    expect(env.OPENAI_API_KEY).toBe("sk-openai");
+    expect(env.OPENROUTER_API_KEY).toBe("sk-or");
+    expect(env.ANTHROPIC_API_KEY).toBe("sk-ant");
+  });
+
+  it("does not overwrite a provider key already present in env (env precedence)", async () => {
+    const { homeDir } = await makeConfig({
+      schemaVersion: 1,
+      openaiApiKey: "sk-from-config"
+    });
+
+    const env: NodeJS.ProcessEnv = { OPENAI_API_KEY: "sk-from-env" };
+    const result = await injectPersistedProviderKeysIntoEnv({ homeDir, env });
+
+    expect(result.injected).toEqual([]);
+    expect(env.OPENAI_API_KEY).toBe("sk-from-env");
+  });
+
+  it("treats a whitespace-only env value as unset and injects the config key", async () => {
+    const { homeDir } = await makeConfig({
+      schemaVersion: 1,
+      openaiApiKey: "sk-from-config"
+    });
+
+    const env: NodeJS.ProcessEnv = { OPENAI_API_KEY: "   " };
+    const result = await injectPersistedProviderKeysIntoEnv({ homeDir, env });
+
+    expect(result.injected).toEqual(["OPENAI_API_KEY"]);
+    expect(env.OPENAI_API_KEY).toBe("sk-from-config");
+  });
+
+  it("leaves a key unset when it is absent from both env and config (preserves failure guard)", async () => {
+    const { homeDir } = await makeConfig({
+      schemaVersion: 1,
+      openaiApiKey: "sk-openai"
+    });
+
+    const env: NodeJS.ProcessEnv = {};
+    const result = await injectPersistedProviderKeysIntoEnv({ homeDir, env });
+
+    expect(result.injected).toEqual(["OPENAI_API_KEY"]);
+    // Not stored in config → left unset so the consumer's "X is not set." guard fires.
+    expect(env.ANTHROPIC_API_KEY).toBeUndefined();
+    expect(env.OPENROUTER_API_KEY).toBeUndefined();
+  });
+
+  it("injects nothing when the config file is missing", async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), "spk-inject-missing-"));
+    const env: NodeJS.ProcessEnv = {};
+
+    const result = await injectPersistedProviderKeysIntoEnv({ homeDir, env });
+
+    expect(result).toEqual({ injected: [] });
+    expect(env.OPENAI_API_KEY).toBeUndefined();
+  });
+
+  it("injects nothing when the config declares an unsupported schemaVersion", async () => {
+    const { homeDir } = await makeConfig({
+      schemaVersion: 2,
+      openaiApiKey: "sk-openai"
+    });
+    const env: NodeJS.ProcessEnv = {};
+
+    const result = await injectPersistedProviderKeysIntoEnv({ homeDir, env });
+
+    expect(result).toEqual({ injected: [] });
+    expect(env.OPENAI_API_KEY).toBeUndefined();
   });
 });
