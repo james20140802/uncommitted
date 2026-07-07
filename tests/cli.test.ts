@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import {
   access,
+  chmod,
   mkdir,
   mkdtemp,
   readFile,
@@ -1035,6 +1036,95 @@ describe("cli", () => {
     expect(plistContent).not.toContain("tinypool");
 
     vi.unstubAllGlobals();
+  });
+
+  it("persists an env GITHUB_TOKEN to config on schedule install without writing it to the plist (UNC-193)", async () => {
+    vi.stubGlobal("process", {
+      ...process,
+      platform: "darwin",
+      env: { ...process.env, GITHUB_TOKEN: "ghp_should_never_appear_in_plist" }
+    });
+
+    const { io, stdout, stderr } = createIo();
+    const directory = await mkdtemp(join(tmpdir(), "uncommitted-cli-schedule-ghtoken-"));
+    const homeDir = join(directory, "home");
+    await mkdir(join(homeDir, ".uncommitted"), { recursive: true });
+    await writeFile(
+      join(homeDir, ".uncommitted", "config.json"),
+      `${JSON.stringify({ schemaVersion: 1 }, null, 2)}\n`
+    );
+
+    const exitCode = await runCli(["schedule", "install", "--time", "23:30"], io, {
+      homeDir,
+      schedulerExecutablePath: "/usr/local/lib/node_modules/uncommitted/dist/cli.js",
+      schedulerExecutor: async () => ({ stdout: "", stderr: "" })
+    });
+
+    expect(exitCode).toBe(0);
+    expect(stderr).toEqual([]);
+
+    const plistPath = join(homeDir, "Library", "LaunchAgents", "com.uncommitted.schedule.plist");
+    const plistContent = await readFile(plistPath, "utf8");
+    expect(plistContent).not.toContain("GITHUB_TOKEN");
+    expect(plistContent).not.toContain("ghp_should_never_appear_in_plist");
+
+    expect(stdout.join("\n")).toContain(
+      "Saved GITHUB_TOKEN to config for scheduled GitHub collection (not written to the launchd plist)."
+    );
+
+    const configPath = join(homeDir, ".uncommitted", "config.json");
+    const configContent = JSON.parse(await readFile(configPath, "utf8"));
+    expect(configContent.githubToken).toBe("ghp_should_never_appear_in_plist");
+
+    vi.unstubAllGlobals();
+  });
+
+  it("still succeeds (exit 0, scheduler installed) when GITHUB_TOKEN persistence fails (UNC-193)", async () => {
+    vi.stubGlobal("process", {
+      ...process,
+      platform: "darwin",
+      env: { ...process.env, GITHUB_TOKEN: "ghp_persist_will_fail" }
+    });
+
+    const { io, stdout, stderr } = createIo();
+    const directory = await mkdtemp(join(tmpdir(), "uncommitted-cli-schedule-persistfail-"));
+    const homeDir = join(directory, "home");
+    const configDir = join(homeDir, ".uncommitted");
+    await mkdir(configDir, { recursive: true });
+    // Pre-create the scheduler logs dir so installScheduler's recursive mkdir is
+    // a no-op even after we lock the config dir — the install itself must still
+    // succeed; only the token config write is made to fail below.
+    await mkdir(join(configDir, "logs"), { recursive: true });
+    await writeFile(
+      join(configDir, "config.json"),
+      `${JSON.stringify({ schemaVersion: 1 }, null, 2)}\n`
+    );
+
+    // Make the config directory read-only so the atomic temp-file write fails
+    // with EACCES; install already succeeded, so the command must still return 0.
+    await chmod(configDir, 0o500);
+
+    try {
+      const exitCode = await runCli(["schedule", "install", "--time", "23:30"], io, {
+        homeDir,
+        schedulerExecutablePath: "/usr/local/lib/node_modules/uncommitted/dist/cli.js",
+        schedulerExecutor: async () => ({ stdout: "", stderr: "" })
+      });
+
+      expect(exitCode).toBe(0);
+      expect(stdout.join("\n")).toContain("Installed macOS schedule for 23:30.");
+      // No token value must ever leak, even on the failure path.
+      expect(stdout.join("\n")).not.toContain("ghp_persist_will_fail");
+      expect(stderr.join("\n")).not.toContain("ghp_persist_will_fail");
+
+      // Scheduler really is installed.
+      const plistPath = join(homeDir, "Library", "LaunchAgents", "com.uncommitted.schedule.plist");
+      await expect(access(plistPath)).resolves.toBeUndefined();
+    } finally {
+      // Restore permissions so the temp dir can be cleaned up.
+      await chmod(configDir, 0o700);
+      vi.unstubAllGlobals();
+    }
   });
 
   it("refuses install and preserves an existing plist when the executable path is unstable", async () => {

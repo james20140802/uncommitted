@@ -82,6 +82,7 @@ import {
 } from "./scheduler.js";
 import { runScheduleStatus } from "./schedule-status-command.js";
 import { runScheduleRemove } from "./schedule-remove-command.js";
+import { persistGitHubTokenForSchedule } from "./schedule-github-token.js";
 import {
   createReadlinePrompter,
   runFeedbackCommand,
@@ -343,6 +344,26 @@ async function runSchedule(
 
       io.stdout(`Installed macOS schedule for ${scheduleTime}.`);
       io.stdout(`Plist path: ${plist.plistPath}`);
+
+      // Token persistence is best-effort and must never fail an install that
+      // already succeeded: the scheduler is installed at this point, so a
+      // config-write failure (EACCES/ENOSPC/etc.) must still return 0.
+      try {
+        const tokenPersistResult = await persistGitHubTokenForSchedule({
+          homeDir: options.homeDir
+        });
+        if (tokenPersistResult.persisted) {
+          io.stdout(
+            "Saved GITHUB_TOKEN to config for scheduled GitHub collection (not written to the launchd plist)."
+          );
+        }
+      } catch {
+        // Never print the token. The scheduler is installed regardless.
+        io.stderr(
+          "Note: could not save GITHUB_TOKEN to config; scheduled GitHub collection may need GITHUB_TOKEN configured manually."
+        );
+      }
+
       return 0;
     } catch (error) {
       if (error instanceof SchedulerExecutablePathError) {
