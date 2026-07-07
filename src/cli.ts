@@ -83,6 +83,7 @@ import {
 import { runScheduleStatus } from "./schedule-status-command.js";
 import { runScheduleRemove } from "./schedule-remove-command.js";
 import { persistGitHubTokenForSchedule } from "./schedule-github-token.js";
+import { persistProviderKeysForSchedule } from "./schedule-provider-keys.js";
 import {
   createReadlinePrompter,
   runFeedbackCommand,
@@ -361,6 +362,25 @@ async function runSchedule(
         // Never print the token. The scheduler is installed regardless.
         io.stderr(
           "Note: could not save GITHUB_TOKEN to config; scheduled GitHub collection may need GITHUB_TOKEN configured manually."
+        );
+      }
+
+      // Same best-effort contract for provider API keys: persist any set at
+      // install time to 0600 config (never the plist) so scheduled runs can
+      // resolve them, but never fail an install that already succeeded.
+      try {
+        const providerKeysResult = await persistProviderKeysForSchedule({
+          homeDir: options.homeDir
+        });
+        if (providerKeysResult.persisted.length > 0) {
+          io.stdout(
+            "Saved provider API keys to config for scheduled runs (not written to the launchd plist)."
+          );
+        }
+      } catch {
+        // Never print the keys. The scheduler is installed regardless.
+        io.stderr(
+          "Note: could not save provider API keys to config; scheduled AI/image generation may need them configured manually."
         );
       }
 

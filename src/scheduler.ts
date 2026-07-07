@@ -121,17 +121,23 @@ const launchdLabel = "com.uncommitted.schedule";
 const defaultExecutableName = "uncommitted";
 const scheduleCommand = ["schedule", "run-now"] as const;
 
-export const KNOWN_PROVIDER_ENV_KEYS = [
-  "OPENAI_API_KEY",
-  "OPENROUTER_API_KEY",
-  "ANTHROPIC_API_KEY",
-  "UNCOMMITTED_AI_TIMEOUT_MS"
-] as const;
+/**
+ * Provider-related env keys that are safe to write into the launchd plist's
+ * `EnvironmentVariables` as plaintext.
+ *
+ * The secret provider keys (`OPENAI_API_KEY` / `OPENROUTER_API_KEY` /
+ * `ANTHROPIC_API_KEY`) are intentionally NOT here: they must never be baked
+ * into the plist. `schedule install` persists them to 0600 config instead
+ * (see `persistProviderKeysForSchedule`), and `schedule run-now` injects them
+ * back into `process.env` — mirroring the `GITHUB_TOKEN` precedent. Only the
+ * non-secret `UNCOMMITTED_AI_TIMEOUT_MS` tuning value stays in the plist.
+ */
+export const KNOWN_PROVIDER_ENV_KEYS = ["UNCOMMITTED_AI_TIMEOUT_MS"] as const;
 
 /**
- * Reads only the known provider env keys from `source`, omits keys whose
- * value is undefined or empty string, and returns the remaining as a
- * Record<string, string>.
+ * Reads only the known (non-secret) provider env keys from `source`, omits
+ * keys whose value is undefined, empty, or whitespace-only, and returns the
+ * remaining as a Record<string, string> for the launchd plist.
  */
 export function captureProviderEnv(
   source: NodeJS.ProcessEnv = process.env

@@ -369,7 +369,7 @@ describe("parseInstalledPlistScheduleTime", () => {
 });
 
 describe("captureProviderEnv", () => {
-  it("captures only known provider env keys", () => {
+  it("captures only non-secret plist env keys and excludes secret provider keys (UNC-196)", () => {
     const result = captureProviderEnv({
       OPENAI_API_KEY: "sk-test",
       OPENROUTER_API_KEY: "sk-or-test",
@@ -379,46 +379,35 @@ describe("captureProviderEnv", () => {
       SOME_OTHER_VAR: "value"
     });
 
-    expect(result).toEqual({
-      OPENAI_API_KEY: "sk-test",
-      OPENROUTER_API_KEY: "sk-or-test",
-      ANTHROPIC_API_KEY: "sk-ant-test",
-      UNCOMMITTED_AI_TIMEOUT_MS: "5000"
-    });
+    // Secret provider keys must never be captured for the launchd plist —
+    // they are persisted to 0600 config by persistProviderKeysForSchedule.
+    expect(result).toEqual({ UNCOMMITTED_AI_TIMEOUT_MS: "5000" });
+    expect(result).not.toHaveProperty("OPENAI_API_KEY");
+    expect(result).not.toHaveProperty("OPENROUTER_API_KEY");
+    expect(result).not.toHaveProperty("ANTHROPIC_API_KEY");
     expect(result).not.toHaveProperty("HOME");
     expect(result).not.toHaveProperty("SOME_OTHER_VAR");
   });
 
-  it("omits keys with undefined values", () => {
+  it("omits the timeout key when its value is undefined", () => {
     const result = captureProviderEnv({
-      OPENAI_API_KEY: undefined,
-      OPENROUTER_API_KEY: "sk-or-test"
+      UNCOMMITTED_AI_TIMEOUT_MS: undefined,
+      OPENAI_API_KEY: "sk-test"
     });
 
-    expect(result).not.toHaveProperty("OPENAI_API_KEY");
-    expect(result).toEqual({ OPENROUTER_API_KEY: "sk-or-test" });
+    expect(result).toEqual({});
   });
 
-  it("omits keys with empty string values", () => {
-    const result = captureProviderEnv({
-      OPENAI_API_KEY: "",
-      OPENROUTER_API_KEY: "sk-or-test"
-    });
+  it("omits the timeout key when its value is empty string", () => {
+    const result = captureProviderEnv({ UNCOMMITTED_AI_TIMEOUT_MS: "" });
 
-    expect(result).not.toHaveProperty("OPENAI_API_KEY");
-    expect(result).toEqual({ OPENROUTER_API_KEY: "sk-or-test" });
+    expect(result).toEqual({});
   });
 
-  it("omits keys whose value is whitespace-only", () => {
-    const result = captureProviderEnv({
-      OPENAI_API_KEY: "   ",
-      OPENROUTER_API_KEY: "\t",
-      UNCOMMITTED_AI_TIMEOUT_MS: "5000"
-    });
+  it("omits the timeout key when its value is whitespace-only", () => {
+    const result = captureProviderEnv({ UNCOMMITTED_AI_TIMEOUT_MS: "\t" });
 
-    expect(result).not.toHaveProperty("OPENAI_API_KEY");
-    expect(result).not.toHaveProperty("OPENROUTER_API_KEY");
-    expect(result).toEqual({ UNCOMMITTED_AI_TIMEOUT_MS: "5000" });
+    expect(result).toEqual({});
   });
 
   it("returns empty object when no known keys are present", () => {

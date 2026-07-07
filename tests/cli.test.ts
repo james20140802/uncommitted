@@ -1079,6 +1079,54 @@ describe("cli", () => {
     vi.unstubAllGlobals();
   });
 
+  it("persists env provider API keys to config on schedule install without writing them to the plist (UNC-196)", async () => {
+    vi.stubGlobal("process", {
+      ...process,
+      platform: "darwin",
+      env: {
+        ...process.env,
+        OPENAI_API_KEY: "sk-openai-secret",
+        ANTHROPIC_API_KEY: "sk-ant-secret"
+      }
+    });
+
+    const { io, stdout, stderr } = createIo();
+    const directory = await mkdtemp(join(tmpdir(), "uncommitted-cli-schedule-provider-"));
+    const homeDir = join(directory, "home");
+    await mkdir(join(homeDir, ".uncommitted"), { recursive: true });
+    await writeFile(
+      join(homeDir, ".uncommitted", "config.json"),
+      `${JSON.stringify({ schemaVersion: 1 }, null, 2)}\n`
+    );
+
+    const exitCode = await runCli(["schedule", "install", "--time", "23:30"], io, {
+      homeDir,
+      schedulerExecutablePath: "/usr/local/lib/node_modules/uncommitted/dist/cli.js",
+      schedulerExecutor: async () => ({ stdout: "", stderr: "" })
+    });
+
+    expect(exitCode).toBe(0);
+    expect(stderr).toEqual([]);
+
+    const plistPath = join(homeDir, "Library", "LaunchAgents", "com.uncommitted.schedule.plist");
+    const plistContent = await readFile(plistPath, "utf8");
+    expect(plistContent).not.toContain("OPENAI_API_KEY");
+    expect(plistContent).not.toContain("ANTHROPIC_API_KEY");
+    expect(plistContent).not.toContain("sk-openai-secret");
+    expect(plistContent).not.toContain("sk-ant-secret");
+
+    expect(stdout.join("\n")).toContain(
+      "Saved provider API keys to config for scheduled runs (not written to the launchd plist)."
+    );
+
+    const configPath = join(homeDir, ".uncommitted", "config.json");
+    const configContent = JSON.parse(await readFile(configPath, "utf8"));
+    expect(configContent.openaiApiKey).toBe("sk-openai-secret");
+    expect(configContent.anthropicApiKey).toBe("sk-ant-secret");
+
+    vi.unstubAllGlobals();
+  });
+
   it("still succeeds (exit 0, scheduler installed) when GITHUB_TOKEN persistence fails (UNC-193)", async () => {
     vi.stubGlobal("process", {
       ...process,
