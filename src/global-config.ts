@@ -35,7 +35,39 @@ export interface GlobalConfig {
    * and never surfaces the value itself.
    */
   githubToken?: string;
+  /**
+   * Optional provider API keys persisted so a launchd-invoked `schedule
+   * run-now` (which runs under a minimal environment) can resolve them,
+   * without ever writing them into the launchd plist as plaintext.
+   *
+   * Not managed by `init` — populated best-effort by `schedule install`
+   * (see `schedule-provider-keys.ts`) from the install-time environment,
+   * mirroring the `githubToken` precedent. Supplying them via the
+   * corresponding environment variable remains the recommended path;
+   * storing them here is a scheduled-run fallback, not the primary source.
+   */
+  openaiApiKey?: string;
+  openrouterApiKey?: string;
+  anthropicApiKey?: string;
 }
+
+/**
+ * Maps each secret provider environment variable to its flat GlobalConfig
+ * field. Single source of truth shared by the persistence writer and the
+ * `run-now` env-injection reader so the two never drift.
+ */
+export const PROVIDER_KEY_CONFIG_FIELDS = {
+  OPENAI_API_KEY: "openaiApiKey",
+  OPENROUTER_API_KEY: "openrouterApiKey",
+  ANTHROPIC_API_KEY: "anthropicApiKey"
+} as const;
+
+export type ProviderEnvKey = keyof typeof PROVIDER_KEY_CONFIG_FIELDS;
+
+/** The three secret provider env keys, in a stable iteration order. */
+export const PROVIDER_ENV_KEYS = Object.keys(
+  PROVIDER_KEY_CONFIG_FIELDS
+) as ProviderEnvKey[];
 
 /**
  * Outcome of attempting to load the global config. Readers map these neutral
@@ -167,6 +199,26 @@ export function selectGitHubToken(value: unknown): string | null {
     value.githubToken.length > 0
   ) {
     return value.githubToken;
+  }
+  return null;
+}
+
+/**
+ * Extract the persisted provider key for `envKey` (mapped to its flat config
+ * field via {@link PROVIDER_KEY_CONFIG_FIELDS}) when present as a non-empty
+ * string, else `null`. Mirrors `selectGitHubToken`.
+ */
+export function selectProviderKey(
+  value: unknown,
+  envKey: ProviderEnvKey
+): string | null {
+  const field = PROVIDER_KEY_CONFIG_FIELDS[envKey];
+  if (
+    isRecord(value) &&
+    typeof value[field] === "string" &&
+    (value[field] as string).length > 0
+  ) {
+    return value[field] as string;
   }
   return null;
 }
