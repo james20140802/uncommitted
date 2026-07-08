@@ -175,7 +175,7 @@ describe("scheduler install", () => {
     const homeDir = await mkdtemp(join(tmpdir(), "uncommitted-install-ghtoken-"));
     const fakeEnv = {
       GITHUB_TOKEN: "ghp_should_never_appear_in_plist",
-      OPENAI_API_KEY: "sk-should-appear"
+      UNCOMMITTED_AI_TIMEOUT_MS: "5000"
     };
 
     // AC2 guard: captureProviderEnv must never surface GITHUB_TOKEN.
@@ -196,7 +196,57 @@ describe("scheduler install", () => {
     const writtenContent = await readFile(plist.plistPath, "utf8");
     expect(writtenContent).not.toContain("GITHUB_TOKEN");
     expect(writtenContent).not.toContain(fakeEnv.GITHUB_TOKEN);
-    expect(writtenContent).toContain("OPENAI_API_KEY");
+    // Non-secret tuning value is still allowed through into the plist.
+    expect(writtenContent).toContain("UNCOMMITTED_AI_TIMEOUT_MS");
+
+    vi.unstubAllGlobals();
+  });
+
+  it("never writes provider API keys into the installed plist, even when set in the install env (UNC-196)", async () => {
+    vi.stubGlobal("process", {
+      ...process,
+      platform: "darwin",
+      getuid: () => 501
+    });
+
+    const homeDir = await mkdtemp(join(tmpdir(), "uncommitted-install-provider-"));
+    const fakeEnv = {
+      OPENAI_API_KEY: "sk-openai-should-never-appear",
+      OPENROUTER_API_KEY: "sk-or-should-never-appear",
+      ANTHROPIC_API_KEY: "sk-ant-should-never-appear",
+      UNCOMMITTED_AI_TIMEOUT_MS: "5000"
+    };
+
+    // AC guard: captureProviderEnv must never surface the secret provider keys.
+    const capturedEnv = captureProviderEnv(fakeEnv);
+    expect(capturedEnv.OPENAI_API_KEY).toBeUndefined();
+    expect(capturedEnv.OPENROUTER_API_KEY).toBeUndefined();
+    expect(capturedEnv.ANTHROPIC_API_KEY).toBeUndefined();
+
+    const plist = buildLaunchAgentPlist({
+      homeDir,
+      scheduleTime: "23:30",
+      environmentVariables: capturedEnv
+    });
+
+    await installScheduler(plist, {
+      homeDir,
+      executor: async () => ({ stdout: "", stderr: "" })
+    });
+
+    const writtenContent = await readFile(plist.plistPath, "utf8");
+    for (const key of [
+      "OPENAI_API_KEY",
+      "OPENROUTER_API_KEY",
+      "ANTHROPIC_API_KEY"
+    ]) {
+      expect(writtenContent).not.toContain(key);
+    }
+    expect(writtenContent).not.toContain("sk-openai-should-never-appear");
+    expect(writtenContent).not.toContain("sk-or-should-never-appear");
+    expect(writtenContent).not.toContain("sk-ant-should-never-appear");
+    // The non-secret timeout value remains in the plist.
+    expect(writtenContent).toContain("UNCOMMITTED_AI_TIMEOUT_MS");
 
     vi.unstubAllGlobals();
   });
