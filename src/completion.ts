@@ -69,7 +69,15 @@ ${subcommandCases}
   fi
 }
 
-_uncommitted "$@"
+# Dual-mode footer: when compinit autoloads this file from $fpath the function
+# is invoked directly (funcstack[1] == _uncommitted); when the script is instead
+# eval'd/sourced (e.g. \`eval "$(uncommitted completion zsh)"\`) the #compdef tag
+# is just a comment, so bind the completer explicitly with compdef.
+if [ "$funcstack[1]" = "_uncommitted" ]; then
+  _uncommitted "$@"
+else
+  compdef _uncommitted uncommitted
+fi
 `;
 }
 
@@ -130,15 +138,20 @@ export function generateCompletionScript(
 export function completionInstallHint(shell: CompletionShell): string {
   if (shell === "zsh") {
     return [
-      "To enable zsh completion, write the script to a directory on your $fpath:",
-      '  uncommitted completion zsh > "${fpath[1]}/_uncommitted"',
-      "then restart your shell. Or eval it directly from ~/.zshrc:",
-      '  eval "$(uncommitted completion zsh)"'
+      "To enable zsh completion, write the script to a user-writable dir on your $fpath:",
+      "  mkdir -p ~/.zsh/completions",
+      "  uncommitted completion zsh > ~/.zsh/completions/_uncommitted",
+      "then add this to ~/.zshrc BEFORE `compinit`:",
+      "  fpath=(~/.zsh/completions $fpath)",
+      'Or eval it directly from ~/.zshrc:  eval "$(uncommitted completion zsh)"'
     ].join("\n");
   }
 
   return [
-    "To enable bash completion, source the script from ~/.bashrc:",
-    "  source <(uncommitted completion bash)"
+    "To enable bash completion, add this to ~/.bashrc (works on macOS bash 3.2 and 5.x):",
+    '  eval "$(uncommitted completion bash)"',
+    "Or write it to a file and source that:",
+    "  uncommitted completion bash > ~/.uncommitted-completion.bash",
+    "  echo 'source ~/.uncommitted-completion.bash' >> ~/.bashrc"
   ].join("\n");
 }

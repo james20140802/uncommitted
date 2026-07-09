@@ -34,6 +34,20 @@ describe("cli completion command", () => {
     expect(out).toContain("uncommitted");
   });
 
+  it("writes the install hint to stderr, keeping stdout script-only", async () => {
+    const { io, stdout, stderr } = createIo();
+    const exitCode = await runCli(["completion", "zsh"], io);
+
+    expect(exitCode).toBe(0);
+    const out = stdout.join("\n");
+    const err = stderr.join("\n");
+    // Hint belongs on stderr so `uncommitted completion zsh > _uncommitted`
+    // captures only the script.
+    expect(err).toContain("uncommitted completion zsh");
+    expect(out).not.toContain("~/.zsh/completions");
+    expect(out).not.toContain("uncommitted completion zsh >");
+  });
+
   it("requires a shell argument", async () => {
     const { io, stderr } = createIo();
     const exitCode = await runCli(["completion"], io);
