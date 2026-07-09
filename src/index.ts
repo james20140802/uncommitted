@@ -17,6 +17,13 @@ export type { CliIo, CliOptions } from "./cli.js";
 export { commands, isKnownCommand } from "./commands.js";
 export type { Command } from "./commands.js";
 export {
+  COMPLETION_SHELLS,
+  completionInstallHint,
+  generateCompletionScript,
+  isCompletionShell
+} from "./completion.js";
+export type { CompletionShell } from "./completion.js";
+export {
   CarouselPngRenderError,
   CarouselRenderInputError,
   createCarouselHtmlCards,

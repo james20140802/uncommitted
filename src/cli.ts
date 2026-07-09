@@ -20,6 +20,11 @@ import {
 } from "./collect-github-command.js";
 import { AiGenerationError, type AiProvider } from "./ai-provider.js";
 import { commands, isKnownCommand } from "./commands.js";
+import {
+  completionInstallHint,
+  generateCompletionScript,
+  isCompletionShell
+} from "./completion.js";
 import { formatDoctorReport, runDoctorCommand } from "./doctor-command.js";
 import {
   GenerateCommandError,
@@ -219,6 +224,23 @@ export async function runCli(
     const result = await runDoctorCommand(options);
     io.stdout(formatDoctorReport(result.report));
     return result.exitCode;
+  }
+
+  if (command === "completion") {
+    // Handled early like init/doctor: generating a completion script needs no
+    // config, so it stays out of the config-corruption try/catch below. The
+    // script goes to stdout (so `uncommitted completion zsh > _uncommitted`
+    // captures only the script) and the install hint goes to stderr.
+    const [shell] = commandArgs;
+
+    if (!shell || !isCompletionShell(shell)) {
+      io.stderr("Usage: uncommitted completion <zsh|bash>");
+      return 1;
+    }
+
+    io.stdout(generateCompletionScript(shell));
+    io.stderr(completionInstallHint(shell));
+    return 0;
   }
 
   // Central config-corruption mapper: any reader that throws a config-corruption
