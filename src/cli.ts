@@ -133,6 +133,14 @@ function isConfigCorruptionError(error: unknown): boolean {
 export type CliIo = {
   stdout: (message: string) => void;
   stderr: (message: string) => void;
+  /**
+   * Whether stdout is an interactive terminal. Used to gate advisory output
+   * (e.g. the completion install hint) so it is suppressed when stdout is
+   * captured or redirected — as it is under the documented
+   * `eval "$(uncommitted completion bash)"` rc form. Defaults to non-TTY when
+   * absent so callers that omit it never spam programmatic consumers.
+   */
+  isStdoutTty?: () => boolean;
 };
 
 export type CliOptions = {
@@ -167,7 +175,8 @@ export type CliOptions = {
 
 const defaultIo: CliIo = {
   stdout: (message) => console.log(message),
-  stderr: (message) => console.error(message)
+  stderr: (message) => console.error(message),
+  isStdoutTty: () => Boolean(process.stdout.isTTY)
 };
 
 export function getHelpText(): string {
@@ -230,7 +239,7 @@ export async function runCli(
     // Handled early like init/doctor: generating a completion script needs no
     // config, so it stays out of the config-corruption try/catch below. The
     // script goes to stdout (so `uncommitted completion zsh > _uncommitted`
-    // captures only the script) and the install hint goes to stderr.
+    // captures only the script).
     const [shell] = commandArgs;
 
     if (!shell || !isCompletionShell(shell)) {
@@ -239,7 +248,17 @@ export async function runCli(
     }
 
     io.stdout(generateCompletionScript(shell));
-    io.stderr(completionInstallHint(shell));
+    // The install hint goes to stderr, but only when stdout is an interactive
+    // terminal. Under the documented `eval "$(uncommitted completion bash)"`
+    // rc form, command substitution captures stdout while stderr writes
+    // straight to the terminal — printing the hint there would spam it on
+    // every shell startup (UNC-124 review P2). Capture and redirect both make
+    // stdout a non-TTY, so gating on TTY suppresses the hint exactly in those
+    // programmatic-consumption cases while still showing it during interactive
+    // inspection (where the user first learns the `> file` install command).
+    if (io.isStdoutTty?.() ?? false) {
+      io.stderr(completionInstallHint(shell));
+    }
     return 0;
   }
 
