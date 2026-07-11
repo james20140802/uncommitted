@@ -22,6 +22,7 @@ import {
   loadGlobalConfig,
   type GlobalConfig
 } from "./global-config.js";
+import { isPersona, selectPersona, type Persona } from "./persona.js";
 import { isNodeError, isRecord } from "./type-guards.js";
 import {
   deriveCaptionText,
@@ -105,20 +106,28 @@ export type GenerateCommandResult = {
   exportReady: boolean;
 };
 
-type GenerateConfig = AiProviderConfig & {
+// `persona` is structured (`Persona`) here, not the legacy `AiProviderConfig`
+// string — see `toAiProviderConfig` for the adapter used at AI-provider
+// construction boundaries that still expect the legacy string shape.
+type GenerateConfig = Omit<AiProviderConfig, "persona"> & {
   draftRoot: string;
   carouselVisualStyle: CarouselVisualStyleMode;
+  persona: Persona;
 };
 
 // On-disk view of the canonical GlobalConfig that `generate` needs, with
 // `aiProvider` narrowed to a known provider and `carouselVisualStyle` optional
-// (older configs may omit it).
+// (older configs may omit it). `persona` accepts both the structured shape
+// and the legacy free-text string still found in unmigrated config files;
+// `isGenerateConfigFile` accepts either at runtime and `selectPersona`
+// normalizes it.
 type GenerateConfigFile = Pick<
   GlobalConfig,
-  "schemaVersion" | "draftRoot" | "persona" | "roastLevel"
+  "schemaVersion" | "draftRoot" | "roastLevel"
 > & {
   aiProvider: AiProviderName;
   carouselVisualStyle?: CarouselVisualStyleMode;
+  persona: Persona | string;
 };
 
 type DraftMetadataBase = {
@@ -264,14 +273,15 @@ export async function runGenerateCommand(
     writeDraftArtifactJson(draftRevision, "activity-summary.json", activitySummary)
   );
 
-  const provider = options.aiProvider ?? createAiProvider(config);
+  const provider =
+    options.aiProvider ?? createAiProvider(toAiProviderConfig(config));
   const recentFormats = await loadRecentStoryFormatHistory({
     homeDir: options.homeDir
   });
   const storyFormatPlan = await generateStoryFormatPlan({
     activitySummary,
     provider,
-    persona: config.persona,
+    persona: config.persona.identity.backstory,
     roastLevel: config.roastLevel,
     recentFormats
   });
@@ -279,14 +289,15 @@ export async function runGenerateCommand(
     activitySummary,
     storyFormatPlan,
     provider,
-    persona: config.persona,
+    persona: config.persona.identity.backstory,
     roastLevel: config.roastLevel,
     rawNarrativeProjection
   });
   const captionResult = await generateCaption({
     activitySummary,
     provider,
-    persona: config.persona,
+    // TODO(UNC-211): pass structured persona
+    persona: config.persona.identity.backstory,
     roastLevel: config.roastLevel,
     rawNarrativeProjection
   });
@@ -483,7 +494,7 @@ async function resolveImageAssetProvider(options: {
   }
 
   try {
-    return createImageAssetProvider(options.config);
+    return createImageAssetProvider(toAiProviderConfig(options.config));
   } catch (error) {
     if (error instanceof VisualAssetGenerationError) {
       return undefined;
@@ -628,8 +639,25 @@ async function readGenerateConfig(
     }).defaultDraftRoot,
     provider: parsed.aiProvider,
     carouselVisualStyle: parsed.carouselVisualStyle ?? "photo-first",
-    persona: parsed.persona,
+    persona: selectPersona(parsed),
     roastLevel: parsed.roastLevel
+  };
+}
+
+/**
+ * Adapt a structured-persona `GenerateConfig` back to the legacy
+ * `AiProviderConfig` shape expected at AI-provider construction boundaries
+ * (`createAiProvider`, `createImageAssetProvider`), neither of which reads
+ * `persona` — only `provider` drives provider selection.
+ *
+ * TODO(UNC-211): drop this adapter once those provider constructors accept
+ * the structured `Persona` directly.
+ */
+function toAiProviderConfig(config: GenerateConfig): AiProviderConfig {
+  return {
+    provider: config.provider,
+    persona: config.persona.identity.backstory,
+    roastLevel: config.roastLevel
   };
 }
 
@@ -824,7 +852,7 @@ function isGenerateConfigFile(value: unknown): value is GenerateConfigFile {
     isAiProviderName(value.aiProvider) &&
     (value.carouselVisualStyle === undefined ||
       isCarouselVisualStyleMode(value.carouselVisualStyle)) &&
-    typeof value.persona === "string" &&
+    (isPersona(value.persona) || typeof value.persona === "string") &&
     isRoastLevel(value.roastLevel)
   );
 }

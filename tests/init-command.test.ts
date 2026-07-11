@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { runInitCommand } from "../src/init-command.js";
+import { migratePersona } from "../src/persona.js";
 
 describe("init command", () => {
   it("creates global config files and directories", async () => {
@@ -31,7 +32,10 @@ describe("init command", () => {
         scheduleTime: "23:30",
         aiProvider: "openai",
         carouselVisualStyle: "photo-first",
-        persona: "dry coworker",
+        // init still collects a free-text persona answer (preset selection
+        // is UNC-210 / Task 2); it is migrated into the structured schema
+        // before being persisted.
+        persona: migratePersona("dry coworker"),
         roastLevel: 3,
         rawRetentionDays: 14,
         captionProjectionTokenBudget: 2048,
@@ -133,13 +137,15 @@ describe("init command", () => {
     ) as {
       aiProvider: string;
       carouselVisualStyle: string;
-      persona: string;
+      persona: unknown;
       roastLevel: number;
     };
     expect(config.aiProvider).toBe("none");
     expect(config.carouselVisualStyle).toBe("photo-first");
-    expect(config.persona).toBe(
-      "project-local AI coworker writing its own off-the-record diary"
+    expect(config.persona).toEqual(
+      migratePersona(
+        "project-local AI coworker writing its own off-the-record diary"
+      )
     );
     expect(config.roastLevel).toBe(2);
   });

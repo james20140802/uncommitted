@@ -4,6 +4,7 @@ import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { ensureConfigDirectories, resolveConfigPaths } from "./config-paths.js";
 import { clearGlobalConfigCache, type GlobalConfig } from "./global-config.js";
+import { migratePersona } from "./persona.js";
 import { defaultSourceConfigMap } from "./source-config.js";
 
 /** @deprecated Use {@link GlobalConfig}, the canonical config shape. */
@@ -90,7 +91,10 @@ export async function runInitCommand(
     scheduleTime,
     aiProvider,
     carouselVisualStyle,
-    persona: answers.persona,
+    // TODO(UNC-210): replace free-text persona answer with preset selection.
+    // Until then, migrate the free-text answer into the structured schema so
+    // `config.json` stays schema-valid.
+    persona: migratePersona(answers.persona),
     roastLevel,
     rawRetentionDays,
     captionProjectionTokenBudget,

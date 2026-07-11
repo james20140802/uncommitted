@@ -12,6 +12,7 @@ import type {
 import { runCli } from "../src/cli.js";
 import type { GitActivityEvent } from "../src/collect-git-command.js";
 import type { CaptionResult, DiaryDraft } from "../src/diary-generator.js";
+import { PERSONA_PRESETS, type Persona } from "../src/persona.js";
 import { addProject, type ProjectRecord } from "../src/project-add.js";
 import type { StoryFormatPlan } from "../src/story-format-plan.js";
 import type { ImageAssetProvider, ImageAssetRequest } from "../src/visual-assets.js";
@@ -167,6 +168,60 @@ describe("generate command", () => {
     expect(JSON.stringify({ activitySummary, story, metadata, safetyReport })).not.toContain(
       fixture.repoDir
     );
+  });
+
+  it("accepts a structured persona config and threads its backstory into generation requests", async () => {
+    const { io, stderr } = createIo();
+    const fixture = await createRegisteredProjectFixture();
+    const provider = new TaskAwareProvider();
+    const structuredPersona = PERSONA_PRESETS["까칠한 시니어"].persona;
+
+    await writeConfigWithPersona(
+      fixture.homeDir,
+      fixture.draftRoot,
+      structuredPersona,
+      PERSONA_PRESETS["까칠한 시니어"].roastLevel
+    );
+    await writeGitEvent(fixture.project, "2026-05-12");
+
+    const exitCode = await runCli(["generate", "today"], io, {
+      homeDir: fixture.homeDir,
+      now: () => "2026-05-12T23:30:00.000Z",
+      aiProvider: provider
+    });
+
+    expect(exitCode).toBe(0);
+    expect(stderr).toEqual([]);
+    const captionRequest = provider.requests.find(
+      (request) => request.task === "caption"
+    );
+    expect(captionRequest?.input.overview).toContain(
+      structuredPersona.identity.backstory
+    );
+  });
+
+  it("migrates a legacy free-text persona config and threads it into generation requests", async () => {
+    const { io, stderr } = createIo();
+    const fixture = await createRegisteredProjectFixture();
+    const provider = new TaskAwareProvider();
+
+    await writeGitEvent(fixture.project, "2026-05-12");
+
+    const exitCode = await runCli(["generate", "today"], io, {
+      homeDir: fixture.homeDir,
+      now: () => "2026-05-12T23:30:00.000Z",
+      aiProvider: provider
+    });
+
+    expect(exitCode).toBe(0);
+    expect(stderr).toEqual([]);
+    const captionRequest = provider.requests.find(
+      (request) => request.task === "caption"
+    );
+    // writeConfig() (the default fixture setup) writes the legacy string
+    // persona "wry coworker" — migratePersona() should carry it through as
+    // the migrated persona's backstory.
+    expect(captionRequest?.input.overview).toContain("wry coworker");
   });
 
   it("incorporates collected Claude signals into the activity summary", async () => {
@@ -829,6 +884,38 @@ async function writeConfig(homeDir: string, draftRoot: string): Promise<void> {
         aiProvider: "mock",
         persona: "wry coworker",
         roastLevel: 2
+      },
+      null,
+      2
+    )}\n`,
+    "utf8"
+  );
+  await writeFile(
+    join(configDir, "history", "formats.json"),
+    `${JSON.stringify({ schemaVersion: 1, formats: [] })}\n`,
+    "utf8"
+  );
+}
+
+async function writeConfigWithPersona(
+  homeDir: string,
+  draftRoot: string,
+  persona: Persona,
+  roastLevel: number
+): Promise<void> {
+  const configDir = join(homeDir, ".uncommitted");
+
+  await mkdir(join(configDir, "history"), { recursive: true });
+  await writeFile(
+    join(configDir, "config.json"),
+    `${JSON.stringify(
+      {
+        schemaVersion: 1,
+        draftRoot,
+        scheduleTime: "23:30",
+        aiProvider: "mock",
+        persona,
+        roastLevel
       },
       null,
       2

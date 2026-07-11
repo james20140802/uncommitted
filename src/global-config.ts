@@ -1,6 +1,9 @@
 import { readFile } from "node:fs/promises";
+import type { Persona } from "./persona.js";
 import type { SourceConfigMap } from "./source-config.js";
 import { isNodeError, isRecord } from "./type-guards.js";
+
+export { selectPersona } from "./persona.js";
 
 export type CarouselVisualStyleMode = "photo-first" | "story-card";
 
@@ -19,7 +22,7 @@ export interface GlobalConfig {
   scheduleTime: string;
   aiProvider: string;
   carouselVisualStyle: CarouselVisualStyleMode;
-  persona: string;
+  persona: Persona;
   roastLevel: number;
   rawRetentionDays: number;
   captionProjectionTokenBudget: number;
