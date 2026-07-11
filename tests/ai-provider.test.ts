@@ -15,6 +15,7 @@ import type {
   AiProviderHttpResponse,
   SafeActivitySummary
 } from "../src/ai-provider.js";
+import { PERSONA_PRESETS } from "../src/persona.js";
 
 describe("AI provider abstraction", () => {
   it("loads provider configuration from the existing MVP config shape", async () => {
@@ -28,6 +29,33 @@ describe("AI provider abstraction", () => {
       provider: "mock",
       persona: "dry reviewer",
       roastLevel: 4
+    });
+  });
+
+  it("accepts a structured persona config and returns its backstory", async () => {
+    const structuredPersona = PERSONA_PRESETS["까칠한 시니어"].persona;
+    const homeDir = await mkdtemp(
+      join(tmpdir(), "uncommitted-ai-provider-structured-")
+    );
+    const configDir = join(homeDir, ".uncommitted");
+    await mkdir(configDir, { recursive: true });
+    await writeFile(
+      join(configDir, "config.json"),
+      `${JSON.stringify({
+        schemaVersion: 1,
+        draftRoot: join(homeDir, "Uncommitted", "drafts"),
+        scheduleTime: "23:30",
+        aiProvider: "mock",
+        persona: structuredPersona,
+        roastLevel: 3
+      })}\n`,
+      "utf8"
+    );
+
+    await expect(loadAiProviderConfig({ homeDir })).resolves.toEqual({
+      provider: "mock",
+      persona: structuredPersona.identity.backstory,
+      roastLevel: 3
     });
   });
 

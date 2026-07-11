@@ -1,6 +1,7 @@
 import process from "node:process";
 import { resolveConfigPaths } from "./config-paths.js";
 import { isRoastLevel, loadGlobalConfig } from "./global-config.js";
+import { isPersona, selectPersona } from "./persona.js";
 import { emailPattern } from "./redaction.js";
 import { isRecord } from "./type-guards.js";
 import {
@@ -240,7 +241,11 @@ export async function loadAiProviderConfig(
 
   return {
     provider,
-    persona: outcome.value.persona,
+    // Config `persona` may be a structured `Persona` (written by `init` /
+    // `persona set`) or a legacy free-text string. `selectPersona` normalizes
+    // both to a structured persona; its backstory is the free-text voice this
+    // legacy `AiProviderConfig.persona` string carries.
+    persona: selectPersona(outcome.value).identity.backstory,
     roastLevel: outcome.value.roastLevel
   };
 }
@@ -952,14 +957,16 @@ function isOpenAiCompatibleProviderName(
 function isAiConfigFile(value: unknown): value is {
   schemaVersion: 1;
   aiProvider: string;
-  persona: string;
+  persona: unknown;
   roastLevel: number;
 } {
   return (
     isRecord(value) &&
     value.schemaVersion === 1 &&
     typeof value.aiProvider === "string" &&
-    typeof value.persona === "string" &&
+    // Accept both the structured `Persona` (current shape) and a legacy
+    // free-text string; `loadAiProviderConfig` normalizes via `selectPersona`.
+    (typeof value.persona === "string" || isPersona(value.persona)) &&
     isRoastLevel(value.roastLevel)
   );
 }
