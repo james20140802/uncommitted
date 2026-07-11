@@ -385,16 +385,16 @@ export function migratePersona(rawPersona: unknown): Persona {
   const defaultPersona = PERSONA_PRESETS[DEFAULT_PERSONA_PRESET].persona;
 
   if (typeof rawPersona === "string" && rawPersona.length > 0) {
-    return {
-      ...defaultPersona,
-      identity: {
-        ...defaultPersona.identity,
-        backstory: rawPersona
-      }
-    };
+    // Clone before mutating: a shallow spread would still share the default
+    // preset's voice/humor/reactions objects and arrays, leaking a mutable
+    // handle onto the shared PERSONA_PRESETS singleton (see clonePersona).
+    const migrated = clonePersona(defaultPersona);
+    migrated.identity.backstory = rawPersona;
+    return migrated;
   }
 
-  return defaultPersona;
+  // Never hand back the shared PERSONA_PRESETS singleton by reference.
+  return clonePersona(defaultPersona);
 }
 
 /** Extract and migrate `.persona` off a config record (mirrors `selectDraftRoot`). */

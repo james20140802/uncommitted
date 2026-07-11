@@ -70,6 +70,22 @@ describe("migratePersona", () => {
     const structured = PERSONA_PRESETS["까칠한 시니어"].persona;
     expect(migratePersona(structured)).toEqual(structured);
   });
+
+  it("returns a fresh object that cannot corrupt the shared default preset", () => {
+    const pristine = JSON.parse(
+      JSON.stringify(PERSONA_PRESETS[DEFAULT_PERSONA_PRESET].persona)
+    );
+
+    const fromString = migratePersona("legacy free text");
+    fromString.identity.backstory = "mutated";
+    fromString.voice.verbalTics.push("mutated");
+    fromString.reactions.notices.push("mutated");
+
+    const fromDefault = migratePersona(undefined);
+    fromDefault.humor.targets.push("mutated");
+
+    expect(PERSONA_PRESETS[DEFAULT_PERSONA_PRESET].persona).toEqual(pristine);
+  });
 });
 
 describe("selectPersona", () => {
