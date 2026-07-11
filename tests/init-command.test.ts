@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { runInitCommand } from "../src/init-command.js";
+import { DEFAULT_PERSONA_PRESET, isPersona, resolvePersonaPreset } from "../src/persona.js";
 
 describe("init command", () => {
   it("creates global config files and directories", async () => {
@@ -16,14 +17,14 @@ describe("init command", () => {
         scheduleTime: "23:30",
         aiProvider: "openai",
         carouselVisualStyle: "photo-first",
-        persona: "dry coworker",
-        roastLevel: "3",
+        persona: "까칠한 시니어",
         rawRetentionDays: "14",
         captionProjectionTokenBudget: "2048"
       }
     });
 
     expect(result.created).toBe(true);
+    const { roastLevel, persona } = resolvePersonaPreset("까칠한 시니어");
     expect(JSON.parse(await readFile(join(homeDir, ".uncommitted", "config.json"), "utf8")))
       .toEqual({
         schemaVersion: 1,
@@ -31,8 +32,10 @@ describe("init command", () => {
         scheduleTime: "23:30",
         aiProvider: "openai",
         carouselVisualStyle: "photo-first",
-        persona: "dry coworker",
-        roastLevel: 3,
+        // init now offers preset selection (UNC-210 / Task 2): the chosen
+        // preset's structured persona and roastLevel are written directly.
+        persona,
+        roastLevel,
         rawRetentionDays: 14,
         captionProjectionTokenBudget: 2048,
         sources: {
@@ -49,6 +52,47 @@ describe("init command", () => {
     await expectDirectory(join(homeDir, ".uncommitted", "drafts"));
     await expectDirectory(join(homeDir, ".uncommitted", "logs"));
     await expectDirectory(join(homeDir, "diary-drafts"));
+  });
+
+  it("writes the structured persona and roastLevel for a chosen preset name", async () => {
+    const homeDir = await mkTestHome("persona-preset");
+
+    await runInitCommand([], {
+      homeDir,
+      answers: { persona: "다정한 페어" }
+    });
+
+    const config = JSON.parse(
+      await readFile(join(homeDir, ".uncommitted", "config.json"), "utf8")
+    ) as { persona: unknown; roastLevel: number };
+
+    expect(isPersona(config.persona)).toBe(true);
+    expect((config.persona as { preset: string }).preset).toBe("다정한 페어");
+    expect(config.roastLevel).toBe(resolvePersonaPreset("다정한 페어").roastLevel);
+  });
+
+  it("defaults to DEFAULT_PERSONA_PRESET when no persona answer is given", async () => {
+    const homeDir = await mkTestHome("persona-default");
+
+    await runInitCommand([], { homeDir });
+
+    const config = JSON.parse(
+      await readFile(join(homeDir, ".uncommitted", "config.json"), "utf8")
+    ) as { persona: unknown; roastLevel: number };
+
+    expect(config.persona).toEqual(resolvePersonaPreset(DEFAULT_PERSONA_PRESET).persona);
+    expect(config.roastLevel).toBe(resolvePersonaPreset(DEFAULT_PERSONA_PRESET).roastLevel);
+  });
+
+  it("rejects an unknown persona preset name", async () => {
+    const homeDir = await mkTestHome("persona-invalid");
+
+    await expect(
+      runInitCommand([], {
+        homeDir,
+        answers: { persona: "not a real preset" }
+      })
+    ).rejects.toThrow(/Persona preset must be one of/);
   });
 
   it("does not overwrite existing config by default", async () => {
@@ -71,11 +115,11 @@ describe("init command", () => {
 
     await runInitCommand(["--force"], {
       homeDir,
-      answers: { roastLevel: "5" }
+      answers: { persona: "까칠한 시니어" }
     });
 
     const config = JSON.parse(await readFile(configFile, "utf8")) as { roastLevel: number };
-    expect(config.roastLevel).toBe(5);
+    expect(config.roastLevel).toBe(resolvePersonaPreset("까칠한 시니어").roastLevel);
   });
 
   it("preserves existing registry and format history when forced", async () => {
@@ -100,7 +144,7 @@ describe("init command", () => {
 
     await runInitCommand(["--force"], {
       homeDir,
-      answers: { roastLevel: "4" }
+      answers: { persona: "텐션 높은 주니어" }
     });
 
     expect(JSON.parse(await readFile(projectsFile, "utf8"))).toEqual(existingProjects);
@@ -133,14 +177,14 @@ describe("init command", () => {
     ) as {
       aiProvider: string;
       carouselVisualStyle: string;
-      persona: string;
+      persona: unknown;
       roastLevel: number;
     };
     expect(config.aiProvider).toBe("none");
     expect(config.carouselVisualStyle).toBe("photo-first");
-    expect(config.persona).toBe(
-      "project-local AI coworker writing its own off-the-record diary"
-    );
+    // No persona answer given: init falls back to DEFAULT_PERSONA_PRESET
+    // (preset selection is UNC-210 / Task 2), which currently ships roastLevel 2.
+    expect(config.persona).toEqual(resolvePersonaPreset(DEFAULT_PERSONA_PRESET).persona);
     expect(config.roastLevel).toBe(2);
   });
 
@@ -208,16 +252,6 @@ describe("init command", () => {
     ).toBe(true);
   });
 
-  it("rejects roast levels outside the MVP range", async () => {
-    const homeDir = await mkTestHome("roast");
-
-    await expect(
-      runInitCommand([], {
-        homeDir,
-        answers: { roastLevel: "6" }
-      })
-    ).rejects.toThrow("Roast level must be a number from 0 to 5.");
-  });
 
   it("includes Source Expansion defaults (30 day retention, 4000 token caption budget) when omitted", async () => {
     const homeDir = await mkTestHome("source-expansion-defaults");

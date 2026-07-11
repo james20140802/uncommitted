@@ -592,6 +592,82 @@ describe("cli", () => {
     expect(stderr).toEqual(["Usage: uncommitted project remove <project-id>"]);
   });
 
+  it("routes persona set to the persona command handler, persisting the preset", async () => {
+    const { io, stdout, stderr } = createIo();
+    const directory = await mkdtemp(join(tmpdir(), "uncommitted-cli-persona-set-"));
+    const homeDir = join(directory, "home");
+    const draftRoot = join(directory, "drafts");
+    await writeConfig(homeDir, draftRoot);
+
+    const exitCode = await runCli(["persona", "set", "까칠한 시니어"], io, { homeDir });
+
+    expect(exitCode).toBe(0);
+    expect(stderr).toEqual([]);
+    expect(stdout.join("\n")).toContain("까칠한 시니어");
+
+    const config = JSON.parse(
+      await readFile(join(homeDir, ".uncommitted", "config.json"), "utf8")
+    );
+    expect(config.persona.preset).toBe("까칠한 시니어");
+    expect(config.draftRoot).toBe(draftRoot);
+  });
+
+  it("routes persona set with a per-knob override", async () => {
+    const { io, stderr } = createIo();
+    const directory = await mkdtemp(join(tmpdir(), "uncommitted-cli-persona-override-"));
+    const homeDir = join(directory, "home");
+    await writeConfig(homeDir, join(directory, "drafts"));
+
+    const exitCode = await runCli(
+      ["persona", "set", "까칠한 시니어", "--emoji", "heavy"],
+      io,
+      { homeDir }
+    );
+
+    expect(exitCode).toBe(0);
+    expect(stderr).toEqual([]);
+
+    const config = JSON.parse(
+      await readFile(join(homeDir, ".uncommitted", "config.json"), "utf8")
+    );
+    expect(config.persona.voice.emoji).toBe("heavy");
+  });
+
+  it("returns a config error exit code when persona set runs before init", async () => {
+    const { io, stdout, stderr } = createIo();
+    const directory = await mkdtemp(join(tmpdir(), "uncommitted-cli-persona-noinit-"));
+    const homeDir = join(directory, "home");
+
+    const exitCode = await runCli(["persona", "set", "까칠한 시니어"], io, { homeDir });
+
+    expect(exitCode).toBe(2);
+    expect(stdout).toEqual([]);
+    expect(stderr.join("\n")).toContain("Run `uncommitted init` first.");
+  });
+
+  it("returns usage when persona set is missing a preset", async () => {
+    const { io, stdout, stderr } = createIo();
+
+    const exitCode = await runCli(["persona", "set"], io);
+
+    expect(exitCode).toBe(1);
+    expect(stdout).toEqual([]);
+    expect(stderr.join("\n")).toContain("Usage: uncommitted persona set");
+  });
+
+  it("returns usage for an unknown persona preset", async () => {
+    const { io, stdout, stderr } = createIo();
+    const directory = await mkdtemp(join(tmpdir(), "uncommitted-cli-persona-badpreset-"));
+    const homeDir = join(directory, "home");
+    await writeConfig(homeDir, join(directory, "drafts"));
+
+    const exitCode = await runCli(["persona", "set", "not a real preset"], io, { homeDir });
+
+    expect(exitCode).toBe(1);
+    expect(stdout).toEqual([]);
+    expect(stderr.join("\n")).toContain("Unknown persona preset");
+  });
+
   it("renders the latest draft carousel with existing visual assets", async () => {
     const { io, stdout, stderr } = createIo();
     const fixture = await createLatestDraftFixture();

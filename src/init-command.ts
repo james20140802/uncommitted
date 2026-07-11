@@ -4,6 +4,12 @@ import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { ensureConfigDirectories, resolveConfigPaths } from "./config-paths.js";
 import { clearGlobalConfigCache, type GlobalConfig } from "./global-config.js";
+import {
+  DEFAULT_PERSONA_PRESET,
+  PERSONA_PRESET_NAMES,
+  resolvePersonaPreset,
+  type PersonaPresetName
+} from "./persona.js";
 import { defaultSourceConfigMap } from "./source-config.js";
 
 /** @deprecated Use {@link GlobalConfig}, the canonical config shape. */
@@ -14,8 +20,8 @@ export type InitAnswers = {
   scheduleTime?: string;
   aiProvider?: string;
   carouselVisualStyle?: string;
+  /** A `PersonaPresetName` (see `src/persona.ts`); validated by `parsePersonaPreset`. */
   persona?: string;
-  roastLevel?: string;
   rawRetentionDays?: string;
   captionProjectionTokenBudget?: string;
 };
@@ -41,8 +47,7 @@ const defaultAnswers = {
   scheduleTime: "23:30",
   aiProvider: "none",
   carouselVisualStyle: "photo-first",
-  persona: "project-local AI coworker writing its own off-the-record diary",
-  roastLevel: "2",
+  persona: DEFAULT_PERSONA_PRESET,
   rawRetentionDays: "30",
   captionProjectionTokenBudget: "4000"
 };
@@ -68,7 +73,7 @@ export async function runInitCommand(
   const carouselVisualStyle = parseCarouselVisualStyle(
     answers.carouselVisualStyle
   );
-  const roastLevel = parseRoastLevel(answers.roastLevel);
+  const personaPreset = parsePersonaPreset(answers.persona);
   const rawRetentionDays = parseRawRetentionDays(answers.rawRetentionDays);
   const captionProjectionTokenBudget = parseCaptionProjectionTokenBudget(
     answers.captionProjectionTokenBudget
@@ -84,13 +89,15 @@ export async function runInitCommand(
 
   await ensureConfigDirectories(paths);
 
+  const { roastLevel, persona } = resolvePersonaPreset(personaPreset);
+
   const config: GlobalConfig = {
     schemaVersion: 1,
     draftRoot: paths.defaultDraftRoot,
     scheduleTime,
     aiProvider,
     carouselVisualStyle,
-    persona: answers.persona,
+    persona,
     roastLevel,
     rawRetentionDays,
     captionProjectionTokenBudget,
@@ -131,7 +138,6 @@ async function resolveAnswers(answers: InitAnswers = {}): Promise<Required<InitA
       carouselVisualStyle:
         answers.carouselVisualStyle ?? defaultAnswers.carouselVisualStyle,
       persona: answers.persona ?? defaultAnswers.persona,
-      roastLevel: answers.roastLevel ?? defaultAnswers.roastLevel,
       rawRetentionDays:
         answers.rawRetentionDays ?? defaultAnswers.rawRetentionDays,
       captionProjectionTokenBudget:
@@ -156,8 +162,11 @@ async function resolveAnswers(answers: InitAnswers = {}): Promise<Required<InitA
         "Carousel visual style",
         defaultAnswers.carouselVisualStyle
       ),
-      persona: await ask(readline, "Persona", defaultAnswers.persona),
-      roastLevel: await ask(readline, "Roast level 0-5", defaultAnswers.roastLevel),
+      persona: await ask(
+        readline,
+        `Persona preset (${PERSONA_PRESET_NAMES.join(" | ")})`,
+        defaultAnswers.persona
+      ),
       rawRetentionDays: await ask(
         readline,
         "Raw event retention days (0 or 'unlimited' to keep forever)",
@@ -183,14 +192,16 @@ async function ask(
   return answer.trim() || defaultValue;
 }
 
-function parseRoastLevel(value: string): number {
-  const parsed = Number(value);
+function parsePersonaPreset(value: string): PersonaPresetName {
+  const normalized = value.trim();
 
-  if (!Number.isInteger(parsed) || parsed < 0 || parsed > 5) {
-    throw new Error("Roast level must be a number from 0 to 5.");
+  if (!(PERSONA_PRESET_NAMES as readonly string[]).includes(normalized)) {
+    throw new Error(
+      `Persona preset must be one of: ${PERSONA_PRESET_NAMES.join(", ")}.`
+    );
   }
 
-  return parsed;
+  return normalized as PersonaPresetName;
 }
 
 function parseRawRetentionDays(value: string): number {

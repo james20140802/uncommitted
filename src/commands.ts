@@ -40,6 +40,11 @@ export const commands: Command[] = [
     subcommands: ["install", "status", "remove", "run-now"]
   },
   {
+    name: "persona",
+    summary: "Select or customize the AI persona.",
+    subcommands: ["set"]
+  },
+  {
     name: "feedback",
     summary: "Record feedback on a draft.",
     subcommands: ["latest", "report"]

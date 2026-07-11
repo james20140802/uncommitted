@@ -7,7 +7,10 @@ import {
   generateCaption,
   generateDiaryDraft
 } from "../src/diary-generator.js";
+import { PERSONA_PRESETS, type Persona } from "../src/persona.js";
 import type { StoryFormatPlan } from "../src/story-format-plan.js";
+
+const captionTestPersona: Persona = PERSONA_PRESETS["시니컬한 관찰자"].persona;
 
 describe("diary generator", () => {
   it("returns a validated story draft and derives caption text", async () => {
@@ -356,7 +359,10 @@ describe("diary generator", () => {
 
 describe("caption generator", () => {
   it("buildCaptionInstructions includes few-shot good and bad examples", () => {
-    const instructions = buildCaptionInstructions({ quiet: false });
+    const instructions = buildCaptionInstructions({
+      quiet: false,
+      persona: captionTestPersona
+    });
 
     // Good example anchors
     expect(instructions).toContain("caption 몇 줄만 손보자고 했는데");
@@ -367,15 +373,79 @@ describe("caption generator", () => {
     expect(instructions).toContain("오늘도 개발했습니다");
 
     // Core style rules
-    expect(instructions).toContain("AI 동료");
+    expect(instructions).toContain("AI");
     expect(instructions).toContain("Instagram");
     expect(instructions).not.toContain("captionStyle");
   });
 
   it("buildCaptionInstructions quiet-day variant mentions absence of work", () => {
-    const instructions = buildCaptionInstructions({ quiet: true });
+    const instructions = buildCaptionInstructions({
+      quiet: true,
+      persona: captionTestPersona
+    });
 
     expect(instructions).toContain("조용한 날");
+  });
+
+  it("buildCaptionInstructions derives identity/voice/humor from the persona and changes across presets", () => {
+    const personaA = PERSONA_PRESETS["까칠한 시니어"].persona;
+    const personaB = PERSONA_PRESETS["텐션 높은 주니어"].persona;
+
+    const instructionsA = buildCaptionInstructions({
+      quiet: false,
+      persona: personaA
+    });
+    const instructionsB = buildCaptionInstructions({
+      quiet: false,
+      persona: personaB
+    });
+
+    expect(instructionsA).not.toBe(instructionsB);
+
+    expect(instructionsA).toContain(personaA.identity.name);
+    expect(instructionsA).toContain(personaA.identity.relationship);
+    expect(instructionsA).toContain(personaA.identity.backstory);
+    expect(instructionsA).toContain(personaA.humor.style);
+
+    expect(instructionsB).toContain(personaB.identity.name);
+    expect(instructionsB).toContain(personaB.identity.relationship);
+    expect(instructionsB).toContain(personaB.identity.backstory);
+    expect(instructionsB).toContain(personaB.humor.style);
+
+    // The old hardcoded coworker identity literal must no longer be a
+    // constant baked into the instructions regardless of persona.
+    expect(instructionsA).not.toContain("You are Uncommitted, an AI 동료");
+    expect(instructionsB).not.toContain("You are Uncommitted, an AI 동료");
+  });
+
+  it("buildCaptionInstructions appends the register-diversification rule when registerVariety is true", () => {
+    expect(captionTestPersona.voice.registerVariety).toBe(true);
+
+    const instructions = buildCaptionInstructions({
+      quiet: false,
+      persona: captionTestPersona
+    });
+
+    expect(instructions).toContain("음");
+    expect(instructions).toContain("슴");
+    expect(instructions).toContain("요체");
+    expect(instructions).toContain("질문");
+    expect(instructions).toContain("긴 문장");
+    expect(instructions).toContain("일변도 금지");
+  });
+
+  it("buildCaptionInstructions omits the register-diversification rule when registerVariety is false", () => {
+    const uniformPersona: Persona = {
+      ...captionTestPersona,
+      voice: { ...captionTestPersona.voice, registerVariety: false }
+    };
+
+    const instructions = buildCaptionInstructions({
+      quiet: false,
+      persona: uniformPersona
+    });
+
+    expect(instructions).not.toContain("일변도 금지");
   });
 
   it("generateCaption sends commitSubjects as caption anchor in prompt input", async () => {
@@ -399,7 +469,7 @@ describe("caption generator", () => {
         }
       }),
       provider,
-      persona: "wry coworker",
+      persona: captionTestPersona,
       roastLevel: 2
     });
 
@@ -422,7 +492,7 @@ describe("caption generator", () => {
     await generateCaption({
       activitySummary: createActivitySummary(),
       provider,
-      persona: "wry coworker",
+      persona: captionTestPersona,
       roastLevel: 2,
       rawNarrativeProjection: {
         turns: [
@@ -458,7 +528,7 @@ describe("caption generator", () => {
     const result = await generateCaption({
       activitySummary: createActivitySummary(),
       provider,
-      persona: "wry coworker",
+      persona: captionTestPersona,
       roastLevel: 2
     });
 
@@ -491,7 +561,7 @@ describe("caption generator", () => {
       generateCaption({
         activitySummary: createActivitySummary(),
         provider: emptyProvider,
-        persona: "wry coworker",
+        persona: captionTestPersona,
         roastLevel: 2
       })
     ).rejects.toMatchObject({ code: "malformed-response" });
@@ -500,7 +570,7 @@ describe("caption generator", () => {
       generateCaption({
         activitySummary: createActivitySummary(),
         provider: missingHashtagsProvider,
-        persona: "wry coworker",
+        persona: captionTestPersona,
         roastLevel: 2
       })
     ).rejects.toMatchObject({ code: "malformed-response" });
@@ -509,7 +579,7 @@ describe("caption generator", () => {
       generateCaption({
         activitySummary: createActivitySummary(),
         provider: badHashtagProvider,
-        persona: "wry coworker",
+        persona: captionTestPersona,
         roastLevel: 2
       })
     ).rejects.toMatchObject({ code: "malformed-response" });
@@ -518,7 +588,7 @@ describe("caption generator", () => {
       generateCaption({
         activitySummary: createActivitySummary(),
         provider: failingProvider,
-        persona: "wry coworker",
+        persona: captionTestPersona,
         roastLevel: 2
       })
     ).rejects.toBeInstanceOf(AiGenerationError);
@@ -551,7 +621,7 @@ describe("caption generator", () => {
             hashtags: ["#Uncommitted"]
           }
         }),
-        persona: "wry coworker",
+        persona: captionTestPersona,
         roastLevel: 2
       })
     ).rejects.toMatchObject({
@@ -568,7 +638,7 @@ describe("caption generator", () => {
             hashtags: ["#Uncommitted"]
           }
         }),
-        persona: "wry coworker",
+        persona: captionTestPersona,
         roastLevel: 2
       })
     ).rejects.toMatchObject({
@@ -584,7 +654,7 @@ describe("caption generator", () => {
             hashtags: ["#Uncommitted", "#조용한날"]
           }
         }),
-        persona: "wry coworker",
+        persona: captionTestPersona,
         roastLevel: 2
       })
     ).resolves.toMatchObject({
@@ -647,7 +717,7 @@ describe("caption generator", () => {
     await generateCaption({
       activitySummary: noteOnlySummary,
       provider,
-      persona: "wry coworker",
+      persona: captionTestPersona,
       roastLevel: 2
     });
 

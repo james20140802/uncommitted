@@ -31,6 +31,7 @@ import {
   runGenerateCommand
 } from "./generate-command.js";
 import { runInitCommand } from "./init-command.js";
+import { PersonaCommandError, runPersonaCommand } from "./persona-command.js";
 import {
   listManualNotes,
   type ManualNoteEvent,
@@ -309,6 +310,10 @@ export async function runCli(
       return await runSchedule(commandArgs, io, options);
     }
 
+    if (command === "persona") {
+      return await runPersona(commandArgs, io, options);
+    }
+
     if (command === "feedback") {
       return await runFeedback(commandArgs, io, options);
     }
@@ -580,6 +585,28 @@ async function runSchedule(
 
   io.stderr("Usage: uncommitted schedule <install|status|remove|run-now> [options]");
   return 1;
+}
+
+async function runPersona(
+  args: string[],
+  io: CliIo,
+  options: CliOptions
+): Promise<number> {
+  try {
+    const result = await runPersonaCommand(args, { homeDir: options.homeDir });
+
+    io.stdout(
+      `Persona set: ${result.preset} (roastLevel ${result.config.roastLevel}).`
+    );
+    return 0;
+  } catch (error) {
+    if (error instanceof PersonaCommandError) {
+      io.stderr(error.message);
+      return error.code === "missing-config" ? 2 : 1;
+    }
+
+    throw error;
+  }
 }
 
 async function runRender(
