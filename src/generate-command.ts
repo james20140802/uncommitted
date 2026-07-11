@@ -296,8 +296,7 @@ export async function runGenerateCommand(
   const captionResult = await generateCaption({
     activitySummary,
     provider,
-    // TODO(UNC-211): pass structured persona
-    persona: config.persona.identity.backstory,
+    persona: config.persona,
     roastLevel: config.roastLevel,
     rawNarrativeProjection
   });

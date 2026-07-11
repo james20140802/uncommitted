@@ -10,6 +10,7 @@ import type {
   JsonValue,
   SafeActivitySummary
 } from "./ai-provider.js";
+import type { Persona } from "./persona.js";
 import { emailPattern } from "./redaction.js";
 import type {
   ProjectPersonaHint,
@@ -64,7 +65,7 @@ export type CaptionResult = {
 export type GenerateCaptionOptions = {
   activitySummary: ActivitySummary;
   provider: AiProvider;
-  persona: string;
+  persona: Persona;
   roastLevel: number;
   rawNarrativeProjection?: RawNarrativeProjection;
 };
@@ -281,21 +282,57 @@ function buildDiaryInstructions(options: {
   ].join("\n");
 }
 
-export function buildCaptionInstructions(options: { quiet: boolean }): string {
+/**
+ * Build the identity/voice/humor instruction lines FROM the persona's knobs
+ * (UNC-211 / Task 3), replacing the previous hardcoded coworker-identity
+ * literal. The global safety-boundary lines are NOT part of this helper —
+ * they stay as fixed lines in `buildCaptionInstructions` regardless of
+ * persona.
+ */
+function buildPersonaCaptionLines(persona: Persona): string[] {
+  const { identity, voice, humor } = persona;
+
+  const lines = [
+    `You are ${identity.name}, the user's AI ${identity.relationship} writing on your own Instagram-like account about today's work with your human developer.`,
+    `Backstory: ${identity.backstory}`,
+    `Voice: ${voice.register} register, ${voice.sentenceLength} sentences, ${voice.emoji} emoji usage, ${voice.koreanEnglishMix} Korean-English mix.`,
+    `Humor style: ${humor.style}. Roast targets when appropriate: ${humor.targets.join(", ")}.`
+  ];
+
+  if (voice.verbalTics.length > 0) {
+    lines.push(
+      `Signature phrases you may use naturally (do not force every line): ${voice.verbalTics.join(", ")}.`
+    );
+  }
+
+  if (voice.registerVariety) {
+    lines.push(
+      "어미 다양화 규칙: 음/슴, 요체, 질문형, 가끔 긴 문장을 섞어 써라. 음/슴 일변도 금지 — 모든 줄을 음/슴으로 끝내지 마라."
+    );
+  }
+
+  return lines;
+}
+
+export function buildCaptionInstructions(options: {
+  quiet: boolean;
+  persona: Persona;
+}): string {
   const quietInstruction = options.quiet
     ? "This is a quiet day with no recorded Git activity. Acknowledge the absence of recorded work honestly. Write a caption about the quiet — the narrator observed little activity and says so plainly. Do not invent work. A 조용한 날 caption is valid and honest content."
     : "Use the concrete commitSubjects from the input as caption anchors. Pick one or two specific work moments as the single topic of the caption — do not list all tasks. Do not invent work not in the input.";
 
   return [
     "Return JSON with exactly two fields: caption (string) and hashtags (array of strings).",
-    "You are Uncommitted, an AI 동료 writing on your own Instagram-like account about today's work with your human developer.",
+    ...buildPersonaCaptionLines(options.persona),
     "This is NOT the user's diary. This is NOT a work report. This is NOT product marketing copy.",
-    "Write in Korean. Instagram-native. Casual, readable, slightly meme-like.",
+    "Write in Korean. Instagram-native, readable, in the voice described above.",
     "First-person AI coworker perspective. You may say '우리 개발자', '인간', '제가 봄', '저는 옆에서 봤습니다', or similar.",
     "4 to 8 short lines. Blank lines are allowed. Add 2 to 5 hashtags (each starting with #).",
     "Mild roast is allowed toward situations, workflow, bugs, TODOs, vague requirements, or developer habits. Never insult ability, worth, personality, identity, mental health, or real life.",
     quietInstruction,
     "If rawNarrativeProjection is present, you may use its turns as concrete anchors for what actually happened today; it is already safety-filtered. Never copy it verbatim and never invent work it does not support.",
+    "The examples below illustrate STRUCTURE and PACING only (anchor choice, line rhythm, hashtag count) — write in the persona voice described above, not necessarily these exact words or tone.",
     "",
     "=== GOOD EXAMPLES ===",
     "",
@@ -399,18 +436,19 @@ export function buildCaptionInstructions(options: { quiet: boolean }): string {
 
 function buildSafeCaptionInput(options: {
   activitySummary: ActivitySummary;
-  persona: string;
+  persona: Persona;
   roastLevel: number;
   rawNarrativeProjection?: RawNarrativeProjection;
 }): SafeActivitySummary {
   const summary = options.activitySummary;
   const quiet = summary.activityLevel === "none";
+  const { identity } = options.persona;
 
   const safeInput: SafeActivitySummary = {
     schemaVersion: 1,
     targetDate: summary.targetDate,
     quiet,
-    overview: `${summary.activityLevel} day. Persona: ${options.persona}. Roast level: ${options.roastLevel}.`,
+    overview: `${summary.activityLevel} day. Persona: ${identity.name} (${identity.relationship}). ${identity.backstory} Roast level: ${options.roastLevel}.`,
     highlights: quiet
       ? ["No recorded Git activity or manual notes today."]
       : buildCaptionHighlights(summary),
@@ -471,7 +509,8 @@ export async function generateCaption(
   const request = createAiGenerationRequest({
     task: "caption",
     instructions: buildCaptionInstructions({
-      quiet: options.activitySummary.activityLevel === "none"
+      quiet: options.activitySummary.activityLevel === "none",
+      persona: options.persona
     }),
     summary: buildSafeCaptionInput({
       activitySummary: options.activitySummary,
