@@ -193,6 +193,84 @@ export const PERSONA_PRESETS: Record<PersonaPresetName, PersonaPresetBundle> = {
 /** Matches the current medium-register / roast-2 default voice. */
 export const DEFAULT_PERSONA_PRESET: PersonaPresetName = "시니컬한 관찰자";
 
+/**
+ * Per-knob-group override applied on top of a preset. Each present group is
+ * shallow-merged over the preset's group (preset < override); `roastLevel`
+ * sits outside `Persona` (it stays the existing top-level config field) and
+ * wins over the preset's `roastLevel` when supplied.
+ */
+export type PersonaOverride = Partial<{
+  identity: Partial<PersonaIdentity>;
+  voice: Partial<PersonaVoice>;
+  humor: Partial<PersonaHumor>;
+  reactions: Partial<PersonaReactions>;
+  roastLevel: number;
+}>;
+
+/**
+ * Deep-enough clone of a `Persona`: every knob group (and the string arrays
+ * they hold) gets a fresh object/array, so callers can freely mutate the
+ * result without ever touching a `PERSONA_PRESETS` entry. `PERSONA_PRESETS`
+ * and `migratePersona` return the shared default persona object by
+ * reference, so anything that resolves/overrides a preset must clone before
+ * handing a persona back to a caller.
+ */
+function clonePersona(persona: Persona): Persona {
+  return {
+    preset: persona.preset,
+    identity: { ...persona.identity },
+    voice: { ...persona.voice, verbalTics: [...persona.voice.verbalTics] },
+    humor: { ...persona.humor, targets: [...persona.humor.targets] },
+    reactions: {
+      notices: [...persona.reactions.notices],
+      annoyedBy: [...persona.reactions.annoyedBy],
+      delightedBy: [...persona.reactions.delightedBy]
+    }
+  };
+}
+
+/**
+ * Shallow-merge `partial` over `base`, one knob group at a time: a group
+ * present in `partial` is merged key-by-key over the matching group in
+ * `base`; a group absent from `partial` is carried over unchanged. Always
+ * returns a freshly cloned `Persona` — never mutates `base` (or, transitively,
+ * a `PERSONA_PRESETS` entry passed in as `base`).
+ */
+export function applyPersonaOverride(base: Persona, partial: PersonaOverride): Persona {
+  const cloned = clonePersona(base);
+
+  return {
+    preset: cloned.preset,
+    identity: partial.identity
+      ? { ...cloned.identity, ...partial.identity }
+      : cloned.identity,
+    voice: partial.voice ? { ...cloned.voice, ...partial.voice } : cloned.voice,
+    humor: partial.humor ? { ...cloned.humor, ...partial.humor } : cloned.humor,
+    reactions: partial.reactions
+      ? { ...cloned.reactions, ...partial.reactions }
+      : cloned.reactions
+  };
+}
+
+/**
+ * Resolve a preset name (+ optional per-knob override) into the
+ * `{ roastLevel, persona }` bundle to persist into `GlobalConfig`. Always
+ * returns a fresh `Persona` (via `clonePersona`/`applyPersonaOverride`), so
+ * repeated calls never corrupt the shared `PERSONA_PRESETS` entry.
+ */
+export function resolvePersonaPreset(
+  name: PersonaPresetName,
+  override?: PersonaOverride
+): { roastLevel: number; persona: Persona } {
+  const bundle = PERSONA_PRESETS[name];
+  const persona = override
+    ? applyPersonaOverride(bundle.persona, override)
+    : clonePersona(bundle.persona);
+  const roastLevel = override?.roastLevel ?? bundle.roastLevel;
+
+  return { roastLevel, persona };
+}
+
 function isPersonaPresetName(value: unknown): value is PersonaPresetName {
   return (
     typeof value === "string" &&
