@@ -3,7 +3,7 @@
 [![npm version](https://img.shields.io/npm/v/@sangchu04/uncommitted)](https://www.npmjs.com/package/@sangchu04/uncommitted)
 [![Node.js](https://img.shields.io/node/v/@sangchu04/uncommitted)](package.json)
 
-Uncommitted is a local-first TypeScript/Node.js CLI that turns your Git activity and manual notes into AI coworker diary drafts — captions, story cards, and 4:5 Instagram carousel images — all generated and stored on your machine.
+Uncommitted is a local-first TypeScript/Node.js CLI that turns your Git activity and manual notes into AI coworker diary drafts — captions, story cards, and 4:5 Instagram carousel images. Drafts, config, and history are stored locally on your machine; the AI text generation runs through a provider you configure, which may call a remote API (OpenAI, OpenRouter, or Anthropic).
 
 ## Status
 
@@ -11,7 +11,7 @@ Uncommitted is published on npm as [`@sangchu04/uncommitted`](https://www.npmjs.
 
 ## Features
 
-- **Local-first by design.** Activity collection, generation, and rendering all run on your machine. Drafts, config, and history live under your home directory — nothing is posted automatically.
+- **Local-first by design.** Activity collection and card rendering run on your machine, and drafts, config, and history live under your home directory — nothing is posted automatically. AI text generation uses a provider you configure, which may call a remote API.
 - **Git-aware diary drafts.** Point Uncommitted at your projects and it summarizes the day's Git activity (commits, changed files, dirty state) into an honest draft — quiet days included.
 - **Manual notes.** Capture context the commits don't show, and fold it into the same daily draft.
 - **AI coworker voice.** Drafts read like a coworker's diary. The tone can lightly roast tools, TODOs, and recurring patterns — never you.
@@ -73,11 +73,14 @@ See [`docs/release/MVP-CHECKLIST.md`](docs/release/MVP-CHECKLIST.md) for the ful
 
 ## Quick start
 
+`generate` needs an AI provider. `uncommitted init` defaults the provider to `none`, which makes `generate` fail — choose `openai`, `openrouter`, or `anthropic` during `init` (or edit your config) and export the matching API key before running `generate`.
+
 ```sh
-uncommitted init                 # create local config
+uncommitted init                 # create local config (pick an AI provider, not "none")
+export OPENAI_API_KEY=...         # or OPENROUTER_API_KEY / ANTHROPIC_API_KEY, matching your provider
 uncommitted project add .        # register the current repo
 uncommitted collect git          # gather today's Git activity
-uncommitted generate today       # draft today's diary
+uncommitted generate today       # draft today's diary (requires a provider + API key)
 uncommitted render latest        # render carousel cards
 uncommitted preview latest       # inspect the latest draft
 uncommitted export instagram     # export Instagram-ready assets
