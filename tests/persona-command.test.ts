@@ -130,6 +130,40 @@ describe("runPersonaCommand", () => {
     }
   });
 
+  it("rejects a config that is a record but not an initialized schema-1 object", async () => {
+    const homeDir = await mkTestHome("malformed-empty");
+    await mkdir(join(homeDir, ".uncommitted"), { recursive: true });
+    const configFile = join(homeDir, ".uncommitted", "config.json");
+    await writeFile(configFile, `${JSON.stringify({})}\n`);
+
+    try {
+      await runPersonaCommand(["set", "까칠한 시니어"], { homeDir });
+      throw new Error("expected runPersonaCommand to throw");
+    } catch (error) {
+      expect(error).toBeInstanceOf(PersonaCommandError);
+      expect((error as PersonaCommandError).code).toBe("missing-config");
+    }
+
+    // The malformed config must be left untouched (no persona written).
+    const onDisk = JSON.parse(await readFile(configFile, "utf8"));
+    expect(onDisk).toEqual({});
+  });
+
+  it("rejects a config declaring an unsupported schemaVersion", async () => {
+    const homeDir = await mkTestHome("malformed-schema");
+    await writeConfig(homeDir, { schemaVersion: 2 });
+    const configFile = join(homeDir, ".uncommitted", "config.json");
+
+    await expect(
+      runPersonaCommand(["set", "까칠한 시니어"], { homeDir })
+    ).rejects.toBeInstanceOf(PersonaCommandError);
+
+    // The config must not be rewritten with a structured persona.
+    const onDisk = JSON.parse(await readFile(configFile, "utf8"));
+    expect(onDisk.persona).toBe("legacy free text persona");
+    expect(onDisk.schemaVersion).toBe(2);
+  });
+
   it("throws a usage error when the preset name is omitted", async () => {
     const homeDir = await mkTestHome("missing-preset-arg");
     await writeConfig(homeDir);

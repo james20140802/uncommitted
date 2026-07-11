@@ -113,6 +113,18 @@ async function readExistingConfig(configFile: string): Promise<Record<string, un
     );
   }
 
+  // Reject a record that is not an initialized schema-1 config (e.g. `{}` or a
+  // future/unsupported schemaVersion). Spread-merging persona into these would
+  // report success while leaving required fields like draftRoot/aiProvider
+  // missing, so `doctor`/`generate` would still fail. Mirrors the schemaVersion
+  // corruption guard in schedule-github-token.ts.
+  if (outcome.value.schemaVersion !== 1) {
+    throw new PersonaCommandError(
+      `Config error: ${configFile} is not an initialized config. Run \`uncommitted init\` first.`,
+      "missing-config"
+    );
+  }
+
   return outcome.value;
 }
 
