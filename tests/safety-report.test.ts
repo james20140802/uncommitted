@@ -189,6 +189,31 @@ describe("safety report", () => {
   });
 });
 
+describe("safety-report architecture-disclosure (UNC-205)", () => {
+  it("blocks route-guard / admin-allowlist disclosure and redacts it", () => {
+    const result = checkDraftSafety(
+      "Hardened the route guard so only allowlisted admins hit the server-side authorization check."
+    );
+
+    expect(result.report.status).toBe("blocked");
+    expect(result.report.exportAllowed).toBe(false);
+    expect(result.report.risks).toContainEqual({
+      category: "architecture-disclosure",
+      severity: "blocked",
+      message: "Security architecture detail was redacted."
+    });
+    expect(result.redactedText).toContain("[redacted-architecture]");
+  });
+
+  it("leaves benign admin-dashboard styling copy safe", () => {
+    const result = checkDraftSafety("Polished the admin dashboard styling.");
+
+    expect(result.report.status).toBe("safe");
+    expect(result.report.exportAllowed).toBe(true);
+    expect(result.redactedText).toBe("Polished the admin dashboard styling.");
+  });
+});
+
 describe("safety-report private-repo-remote (UNC-152)", () => {
   it("masks SSH-style remote URLs with git+ssh prefix", () => {
     const r = checkDraftSafety(

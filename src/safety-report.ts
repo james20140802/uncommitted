@@ -1,8 +1,10 @@
 import { emailPattern } from "./redaction.js";
+import { redactArchitectureDisclosure } from "./architecture-disclosure.js";
 
 export type SafetyStatus = "safe" | "warning" | "blocked";
 
 export type SafetyRiskCategory =
+  | "architecture-disclosure"
   | "database-credential"
   | "email"
   | "exploit-detail"
@@ -58,6 +60,18 @@ const exploitDetailRisk = {
   severity: "blocked",
   replacement: "[redacted-exploit-detail]",
   message: "Exploit detail was redacted."
+} satisfies Omit<DetectionRule, "pattern">;
+
+// Severity is "blocked" for now; Task 3 (UNC-205) refines warning-vs-blocked
+// once the residual-risk mechanism lands. Detection lives in
+// architecture-disclosure.ts and runs as a supplemental pass (like
+// redactScriptLikeContent) because it collects non-overlapping matches
+// across several local patterns rather than a single regex.
+const architectureDisclosureRisk = {
+  category: "architecture-disclosure",
+  severity: "blocked",
+  replacement: "[redacted-architecture]",
+  message: "Security architecture detail was redacted."
 } satisfies Omit<DetectionRule, "pattern">;
 
 const detectionRules: DetectionRule[] = [
@@ -151,6 +165,13 @@ export function checkDraftSafety(text: string): SafetyCheckResult {
   if (scriptResult.count > 0) {
     redactedText = scriptResult.value;
     recordDetection(risks, redactions, exploitDetailRisk, scriptResult.count);
+  }
+
+  const architectureResult = redactArchitectureDisclosure(redactedText);
+
+  if (architectureResult.count > 0) {
+    redactedText = architectureResult.value;
+    recordDetection(risks, redactions, architectureDisclosureRisk, architectureResult.count);
   }
 
   const riskList = Array.from(risks.values());
@@ -335,6 +356,7 @@ function isSafetyRedaction(value: unknown): value is SafetyRedaction {
 
 function isSafetyRiskCategory(value: unknown): value is SafetyRiskCategory {
   return (
+    value === "architecture-disclosure" ||
     value === "database-credential" ||
     value === "email" ||
     value === "exploit-detail" ||

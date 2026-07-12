@@ -159,6 +159,13 @@ export type {
   SafetyStatus
 } from "./safety-report.js";
 export {
+  ARCHITECTURE_DISCLOSURE_REASON,
+  ARCHITECTURE_DISCLOSURE_REPLACEMENT,
+  detectArchitectureDisclosure,
+  redactArchitectureDisclosure
+} from "./architecture-disclosure.js";
+export type { ArchitectureDisclosureMatch } from "./architecture-disclosure.js";
+export {
   buildLaunchAgentPlist,
   captureProviderEnv,
   getLaunchdLabel,
