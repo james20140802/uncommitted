@@ -304,13 +304,14 @@ export async function runGenerateCommand(
   });
   // UNC-206 / T2: redact admin/route-guard/auth-checkpoint/server-side-
   // authorization architecture-disclosure detail in place before the draft
-  // and caption reach any written artifact (story.json, caption.txt) or the
-  // safety-report text. Redacting here also means the image prompt (derived
-  // from slide.visualMood in carousel-renderer.ts) is redacted at the
-  // source, before visual asset generation runs.
+  // and caption reach any written artifact (story.json, caption.txt).
+  // Redacting here also means the image prompt (derived from
+  // slide.visualMood in carousel-renderer.ts) is redacted at the source,
+  // before visual asset generation runs.
+  const preRedactionCaptionText = deriveCaptionText(captionResult);
   const draft = redactArchitectureDisclosureFromDraft(generatedDraft);
   const caption = redactArchitectureDisclosureFromCaption(
-    deriveCaptionText(captionResult)
+    preRedactionCaptionText
   );
   const baseMetadata: DraftMetadataBase = {
     schemaVersion: 1,
@@ -341,8 +342,20 @@ export async function runGenerateCommand(
     requestedCarouselVisualStyle: config.carouselVisualStyle,
     carouselVisualStyle: config.carouselVisualStyle
   };
+  // UNC-207 / T3: compute the safety report from the PRE-redaction draft
+  // and caption text (not the architecture-redacted `draft`/`caption`
+  // written to story.json/caption.txt above). If the report were computed
+  // on already-redacted text, checkDraftSafety would never see the
+  // architecture-disclosure content (it was already scrubbed to
+  // "[redacted-architecture]"), so the risk/reason would never be recorded
+  // and nothing would ever be blocked (breaking parent AC2/AC4). The
+  // written artifacts stay redacted regardless of what the report finds.
   const safetyReport = createSafetyReport(
-    buildDraftSafetyText({ draft, caption, metadata: baseMetadata })
+    buildDraftSafetyText({
+      draft: generatedDraft,
+      caption: preRedactionCaptionText,
+      metadata: baseMetadata
+    })
   );
   const safetyMetadata = buildDraftMetadata({
     baseMetadata,

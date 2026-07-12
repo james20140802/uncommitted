@@ -367,8 +367,8 @@ describe("generate command", () => {
     });
   });
 
-  it("redacts architecture-disclosure detail from the written caption and story slides (UNC-206)", async () => {
-    const { io, stderr } = createIo();
+  it("blocks the reproduction class (dense route-guard/admin disclosure) while keeping the written caption and story slides redacted (UNC-206 / UNC-207)", async () => {
+    const { io, stdout, stderr } = createIo();
     const fixture = await createRegisteredProjectFixture();
     const provider = new TaskAwareProvider({
       draft: createProviderDraft({
@@ -412,10 +412,31 @@ describe("generate command", () => {
       slides: Array<{ title: string; body: string; visualMood: string }>;
     };
     const caption = await readFile(join(outputDir, "caption.txt"), "utf8");
+    const safetyReport = await readJson(join(outputDir, "safety-report.json"));
 
-    expect(exitCode).toBe(0);
-    expect(stderr).toEqual([]);
+    // The reproduction class (parent AC4): core content IS the
+    // access-control mechanism, so the draft is blocked at the CLI
+    // boundary, same exit code / message shape as the other blocked case.
+    expect(exitCode).toBe(6);
+    expect(stdout).toEqual([]);
+    expect(stderr).toEqual([
+      "Draft blocked by safety checks. Remove blocked sensitive content."
+    ]);
+    expect(safetyReport).toMatchObject({
+      status: "blocked",
+      exportAllowed: false,
+      risks: expect.arrayContaining([
+        {
+          category: "architecture-disclosure",
+          severity: "blocked",
+          message: "Security architecture detail was redacted."
+        }
+      ])
+    });
 
+    // AC1 still holds even when the draft is blocked: the written
+    // story.json/caption.txt are sanitized in place, never the raw
+    // access-control-mechanism detail.
     const disclosureTokens = [
       "route guard",
       "admin allowlist",
@@ -439,6 +460,78 @@ describe("generate command", () => {
     expect(story.slides[0]?.title).toContain("[redacted-architecture]");
     expect(story.slides[0]?.body).toContain("[redacted-architecture]");
     expect(story.slides[0]?.visualMood).toContain("[redacted-architecture]");
+  });
+
+  it("exports a draft with a single incidental architecture-disclosure mention as a warning (UNC-207)", async () => {
+    const { io, stdout, stderr } = createIo();
+    const fixture = await createRegisteredProjectFixture();
+    const provider = new TaskAwareProvider({
+      draft: createProviderDraft({
+        slides: [
+          {
+            index: 1,
+            title: "Signal",
+            body: "Collected activity and manual notes were summarized safely.",
+            visualMood: "compact terminal summary"
+          },
+          {
+            index: 2,
+            title: "Docs",
+            body: "Docs now mention the route guard once, nothing else changed.",
+            visualMood: "plain text files"
+          },
+          {
+            index: 3,
+            title: "Close",
+            body: "No card rendering happened yet, exactly as scoped.",
+            visualMood: "checklist with one unchecked render item"
+          }
+        ]
+      })
+    });
+
+    await writeGitEvent(fixture.project, "2026-05-12");
+
+    const exitCode = await runCli(["generate", "today"], io, {
+      homeDir: fixture.homeDir,
+      now: () => "2026-05-12T23:30:00.000Z",
+      aiProvider: provider
+    });
+    const outputDir = join(fixture.draftRoot, "2026-05-12", "rev-001");
+    const story = (await readJson(join(outputDir, "story.json"))) as {
+      slides: Array<{ title: string; body: string; visualMood: string }>;
+    };
+    const metadata = await readJson(join(outputDir, "metadata.json"));
+    const safetyReport = await readJson(join(outputDir, "safety-report.json"));
+
+    // An incidental, single mention (parent AC1) is sanitized in place but
+    // NOT fundamental to the draft's content, so it exports as a warning
+    // rather than blocking.
+    expect(exitCode).toBe(0);
+    expect(stdout[0]).toContain("Generated text draft");
+    expect(stderr).toEqual([
+      "Safety warning: Review redactions before export."
+    ]);
+    expect(metadata).toMatchObject({
+      exportPolicy: "warning",
+      exportReady: true,
+      publishable: true
+    });
+    expect(safetyReport).toMatchObject({
+      status: "warning",
+      exportAllowed: true,
+      risks: expect.arrayContaining([
+        {
+          category: "architecture-disclosure",
+          severity: "warning",
+          message:
+            "Security architecture detail was redacted; residual mention should be reviewed before export."
+        }
+      ])
+    });
+
+    expect(story.slides[1]?.body).not.toContain("route guard");
+    expect(story.slides[1]?.body).toContain("[redacted-architecture]");
   });
 
   it("blocks unsafe drafts at the CLI boundary while preserving inspectable artifacts", async () => {

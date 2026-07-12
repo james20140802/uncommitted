@@ -214,6 +214,75 @@ describe("safety-report architecture-disclosure (UNC-205)", () => {
   });
 });
 
+describe("safety-report architecture-disclosure core-vs-residual severity (UNC-207 / T3)", () => {
+  it("blocks when the core content IS the access-control mechanism (2026-06-05 reproduction class)", () => {
+    const result = checkDraftSafety(
+      [
+        "Today was all about the admin allowlist and the route guard.",
+        "Rewrote the auth checkpoint so the server-side authorization check runs first.",
+        "Nothing else happened, this was the whole day."
+      ].join(" ")
+    );
+
+    expect(result.report.status).toBe("blocked");
+    expect(result.report.exportAllowed).toBe(false);
+    expect(result.report.risks).toContainEqual({
+      category: "architecture-disclosure",
+      severity: "blocked",
+      message: "Security architecture detail was redacted."
+    });
+    expect(result.report.redactionsApplied).toContainEqual({
+      category: "architecture-disclosure",
+      replacement: "[redacted-architecture]",
+      count: 4
+    });
+    expect(result.redactedText).not.toContain("admin allowlist");
+    expect(result.redactedText).not.toContain("route guard");
+  });
+
+  it("warns (does not block) a single incidental architecture-disclosure mention", () => {
+    const result = checkDraftSafety(
+      "Quiet day overall. In passing, docs now mention the route guard once. Otherwise just cleaned up TODOs."
+    );
+
+    expect(result.report.status).toBe("warning");
+    expect(result.report.exportAllowed).toBe(true);
+    expect(result.report.risks).toContainEqual({
+      category: "architecture-disclosure",
+      severity: "warning",
+      message:
+        "Security architecture detail was redacted; residual mention should be reviewed before export."
+    });
+    expect(result.report.redactionsApplied).toContainEqual({
+      category: "architecture-disclosure",
+      replacement: "[redacted-architecture]",
+      count: 1
+    });
+    expect(result.redactedText).toContain("[redacted-architecture]");
+    expect(result.redactedText).not.toContain("route guard");
+  });
+
+  it("round-trips a blocked architecture-disclosure report through isSafetyReport", () => {
+    const result = checkDraftSafety(
+      "The route guard and the admin allowlist were both rewritten today."
+    );
+
+    expect(result.report.status).toBe("blocked");
+    const roundTripped = JSON.parse(JSON.stringify(result.report)) as unknown;
+    expect(isSafetyReport(roundTripped)).toBe(true);
+  });
+
+  it("round-trips a warning architecture-disclosure report through isSafetyReport", () => {
+    const result = checkDraftSafety(
+      "Mentioned the route guard once while writing changelog notes."
+    );
+
+    expect(result.report.status).toBe("warning");
+    const roundTripped = JSON.parse(JSON.stringify(result.report)) as unknown;
+    expect(isSafetyReport(roundTripped)).toBe(true);
+  });
+});
+
 describe("safety-report private-repo-remote (UNC-152)", () => {
   it("masks SSH-style remote URLs with git+ssh prefix", () => {
     const r = checkDraftSafety(

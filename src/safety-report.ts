@@ -62,17 +62,48 @@ const exploitDetailRisk = {
   message: "Exploit detail was redacted."
 } satisfies Omit<DetectionRule, "pattern">;
 
-// Severity is "blocked" for now; Task 3 (UNC-205) refines warning-vs-blocked
-// once the residual-risk mechanism lands. Detection lives in
-// architecture-disclosure.ts and runs as a supplemental pass (like
-// redactScriptLikeContent) because it collects non-overlapping matches
-// across several local patterns rather than a single regex.
-const architectureDisclosureRisk = {
+// Detection lives in architecture-disclosure.ts and runs as a supplemental
+// pass (like redactScriptLikeContent) because it collects non-overlapping
+// matches across several local patterns rather than a single regex.
+const ARCHITECTURE_DISCLOSURE_REPLACEMENT = "[redacted-architecture]";
+
+// UNC-207 / T3: severity is NOT a fixed "blocked". A single incidental
+// mention of an access-control mechanism (e.g. "docs now mention the route
+// guard once") is sanitized in place but downgraded to "warning" — the
+// draft's core content is not fundamentally about the access-control
+// mechanism, so it still exports (parent AC1). Two or more matches in the
+// same text (either the same disclosure class repeated, or several
+// distinct classes co-occurring, e.g. "admin allowlist" + "route guard" +
+// "server-side authorization check" in one draft) mean the draft's core
+// content IS the access-control mechanism itself — the 2026-06-05
+// route-guard/admin reproduction class (parent AC4) — and stays "blocked".
+// The threshold is a deterministic count on local regex matches (no AI
+// call); it composes with the existing deriveStatus()/exportAllowed
+// derivation below rather than adding a parallel gating path.
+const ARCHITECTURE_DISCLOSURE_CORE_MATCH_THRESHOLD = 2;
+
+const architectureDisclosureBlockedRisk = {
   category: "architecture-disclosure",
   severity: "blocked",
-  replacement: "[redacted-architecture]",
+  replacement: ARCHITECTURE_DISCLOSURE_REPLACEMENT,
   message: "Security architecture detail was redacted."
 } satisfies Omit<DetectionRule, "pattern">;
+
+const architectureDisclosureWarningRisk = {
+  category: "architecture-disclosure",
+  severity: "warning",
+  replacement: ARCHITECTURE_DISCLOSURE_REPLACEMENT,
+  message:
+    "Security architecture detail was redacted; residual mention should be reviewed before export."
+} satisfies Omit<DetectionRule, "pattern">;
+
+function resolveArchitectureDisclosureRisk(
+  matchCount: number
+): Omit<DetectionRule, "pattern"> {
+  return matchCount >= ARCHITECTURE_DISCLOSURE_CORE_MATCH_THRESHOLD
+    ? architectureDisclosureBlockedRisk
+    : architectureDisclosureWarningRisk;
+}
 
 const detectionRules: DetectionRule[] = [
   {
@@ -171,7 +202,12 @@ export function checkDraftSafety(text: string): SafetyCheckResult {
 
   if (architectureResult.count > 0) {
     redactedText = architectureResult.value;
-    recordDetection(risks, redactions, architectureDisclosureRisk, architectureResult.count);
+    recordDetection(
+      risks,
+      redactions,
+      resolveArchitectureDisclosureRisk(architectureResult.count),
+      architectureResult.count
+    );
   }
 
   const riskList = Array.from(risks.values());
