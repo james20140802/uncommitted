@@ -159,7 +159,8 @@ export function redactArchitectureDisclosureFromCaption(
 
 /**
  * In-place architecture-disclosure redaction (UNC-206 / T2) applied to a
- * full diary draft: the title and every slide's title/body/visualMood.
+ * full diary draft: the title, altText, and every slide's
+ * title/body/visualMood.
  * Pure function — returns a new DiaryDraft, does not mutate the input.
  */
 export function redactArchitectureDisclosureFromDraft(
@@ -168,6 +169,7 @@ export function redactArchitectureDisclosureFromDraft(
   return {
     ...draft,
     title: redactArchitectureDisclosure(draft.title).value,
+    altText: redactArchitectureDisclosure(draft.altText).value,
     slides: draft.slides.map((slide) => ({
       ...slide,
       title: redactArchitectureDisclosure(slide.title).value,

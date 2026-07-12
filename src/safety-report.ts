@@ -1,5 +1,8 @@
 import { emailPattern } from "./redaction.js";
-import { redactArchitectureDisclosure } from "./architecture-disclosure.js";
+import {
+  ARCHITECTURE_DISCLOSURE_REPLACEMENT,
+  redactArchitectureDisclosure
+} from "./architecture-disclosure.js";
 
 export type SafetyStatus = "safe" | "warning" | "blocked";
 
@@ -65,7 +68,8 @@ const exploitDetailRisk = {
 // Detection lives in architecture-disclosure.ts and runs as a supplemental
 // pass (like redactScriptLikeContent) because it collects non-overlapping
 // matches across several local patterns rather than a single regex.
-const ARCHITECTURE_DISCLOSURE_REPLACEMENT = "[redacted-architecture]";
+// The replacement string itself is imported from architecture-disclosure.ts
+// (ARCHITECTURE_DISCLOSURE_REPLACEMENT) so the two modules cannot diverge.
 
 // UNC-207 / T3: severity is NOT a fixed "blocked". The core-vs-residual
 // split is on the number of DISTINCT disclosure classes (admin-allowlist,

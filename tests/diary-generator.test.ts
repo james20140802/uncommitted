@@ -380,7 +380,7 @@ describe("architecture disclosure redaction (UNC-206)", () => {
           visualMood: "calm desk"
         }
       ],
-      altText: "diary about access control cleanup",
+      altText: "diary about the route guard cleanup",
       metadata: {
         targetDate: "2026-05-12",
         generatedAt: "2026-05-12T23:30:00.000Z",
@@ -406,7 +406,8 @@ describe("architecture disclosure redaction (UNC-206)", () => {
     expect(redacted.slides[0]?.visualMood).toContain("[redacted-architecture]");
     // Unaffected fields must be left byte-for-byte unchanged.
     expect(redacted.slides[1]).toEqual(draft.slides[1]);
-    expect(redacted.altText).toBe(draft.altText);
+    expect(redacted.altText).not.toContain("route guard");
+    expect(redacted.altText).toContain("[redacted-architecture]");
     expect(redacted.metadata).toEqual(draft.metadata);
   });
 
@@ -438,6 +439,42 @@ describe("architecture disclosure redaction (UNC-206)", () => {
     };
 
     expect(redactArchitectureDisclosureFromDraft(draft)).toEqual(draft);
+  });
+
+  it("redacts a disclosure token found only in altText, with title and slides clean", () => {
+    const draft: DiaryDraft = {
+      schemaVersion: 1,
+      targetDate: "2026-05-12",
+      title: "a perfectly normal day",
+      slides: [
+        {
+          index: 1,
+          title: "signal",
+          body: "Shipped a small feature and fixed a typo.",
+          visualMood: "quiet terminal"
+        }
+      ],
+      altText:
+        "Story card showing a developer relieved after the auth checkpoint stopped flaking.",
+      metadata: {
+        targetDate: "2026-05-12",
+        generatedAt: "2026-05-12T23:30:00.000Z",
+        activityLevel: "medium",
+        formatName: "Implementation Dispatch",
+        storyFormatVoice: "dry coworker",
+        storyFormatTone: "concise and lightly amused",
+        projectIds: ["uncommitted"],
+        entryMode: "daily_global",
+        slideCount: 1
+      }
+    };
+
+    const redacted = redactArchitectureDisclosureFromDraft(draft);
+
+    expect(redacted.altText).not.toContain("auth checkpoint");
+    expect(redacted.altText).toContain("[redacted-architecture]");
+    expect(redacted.title).toBe(draft.title);
+    expect(redacted.slides).toEqual(draft.slides);
   });
 
   it("redacts architecture-disclosure detail from a caption string", () => {
