@@ -462,9 +462,13 @@ describe("generate command", () => {
     expect(story.slides[0]?.visualMood).toContain("[redacted-architecture]");
   });
 
-  it("exports a draft with a single incidental architecture-disclosure mention as a warning (UNC-207)", async () => {
+  it("exports a single incidental architecture-disclosure fact echoed in BOTH a slide body and the caption as a warning (UNC-207)", async () => {
     const { io, stdout, stderr } = createIo();
     const fixture = await createRegisteredProjectFixture();
+    // The SAME single fact ("route guard") appears in a slide body AND in the
+    // caption — exactly what happens when both are generated from the same
+    // activity. That is two RAW occurrences but only ONE disclosure class, so
+    // it must stay a warning and export (parent AC1), not block.
     const provider = new TaskAwareProvider({
       draft: createProviderDraft({
         slides: [
@@ -487,6 +491,9 @@ describe("generate command", () => {
             visualMood: "checklist with one unchecked render item"
           }
         ]
+      }),
+      caption: createProviderCaption({
+        caption: "오늘은 route guard 버그를 하나 잡았다. 나머지는 조용했다."
       })
     });
 
@@ -501,12 +508,13 @@ describe("generate command", () => {
     const story = (await readJson(join(outputDir, "story.json"))) as {
       slides: Array<{ title: string; body: string; visualMood: string }>;
     };
+    const caption = await readFile(join(outputDir, "caption.txt"), "utf8");
     const metadata = await readJson(join(outputDir, "metadata.json"));
     const safetyReport = await readJson(join(outputDir, "safety-report.json"));
 
-    // An incidental, single mention (parent AC1) is sanitized in place but
-    // NOT fundamental to the draft's content, so it exports as a warning
-    // rather than blocking.
+    // An incidental, single fact (parent AC1) is sanitized in place but NOT
+    // fundamental to the draft's content, so it exports as a warning even
+    // when echoed across both fields.
     expect(exitCode).toBe(0);
     expect(stdout[0]).toContain("Generated text draft");
     expect(stderr).toEqual([
@@ -530,8 +538,12 @@ describe("generate command", () => {
       ])
     });
 
+    // The token is absent from BOTH written artifacts, and present in
+    // redacted form in each.
     expect(story.slides[1]?.body).not.toContain("route guard");
     expect(story.slides[1]?.body).toContain("[redacted-architecture]");
+    expect(caption).not.toContain("route guard");
+    expect(caption).toContain("[redacted-architecture]");
   });
 
   it("blocks unsafe drafts at the CLI boundary while preserving inspectable artifacts", async () => {

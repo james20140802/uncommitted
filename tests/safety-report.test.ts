@@ -262,6 +262,33 @@ describe("safety-report architecture-disclosure core-vs-residual severity (UNC-2
     expect(result.redactedText).not.toContain("route guard");
   });
 
+  it("warns (does not block) when ONE disclosure class is repeated across fields (draft+caption echo)", () => {
+    // Two RAW occurrences of the same fact ("route guard"), as happens when a
+    // slide body and the caption both describe the same incidental event.
+    // One distinct class -> still a warning, still exportable (parent AC1).
+    const result = checkDraftSafety(
+      [
+        "Fixed the route guard bug in the morning.",
+        "Caption: today I finally fixed that route guard bug."
+      ].join("\n")
+    );
+
+    expect(result.report.status).toBe("warning");
+    expect(result.report.exportAllowed).toBe(true);
+    expect(result.report.risks).toContainEqual({
+      category: "architecture-disclosure",
+      severity: "warning",
+      message:
+        "Security architecture detail was redacted; residual mention should be reviewed before export."
+    });
+    expect(result.report.redactionsApplied).toContainEqual({
+      category: "architecture-disclosure",
+      replacement: "[redacted-architecture]",
+      count: 2
+    });
+    expect(result.redactedText).not.toContain("route guard");
+  });
+
   it("round-trips a blocked architecture-disclosure report through isSafetyReport", () => {
     const result = checkDraftSafety(
       "The route guard and the admin allowlist were both rewritten today."

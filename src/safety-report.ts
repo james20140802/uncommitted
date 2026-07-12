@@ -67,20 +67,28 @@ const exploitDetailRisk = {
 // matches across several local patterns rather than a single regex.
 const ARCHITECTURE_DISCLOSURE_REPLACEMENT = "[redacted-architecture]";
 
-// UNC-207 / T3: severity is NOT a fixed "blocked". A single incidental
-// mention of an access-control mechanism (e.g. "docs now mention the route
-// guard once") is sanitized in place but downgraded to "warning" — the
-// draft's core content is not fundamentally about the access-control
-// mechanism, so it still exports (parent AC1). Two or more matches in the
-// same text (either the same disclosure class repeated, or several
-// distinct classes co-occurring, e.g. "admin allowlist" + "route guard" +
-// "server-side authorization check" in one draft) mean the draft's core
-// content IS the access-control mechanism itself — the 2026-06-05
-// route-guard/admin reproduction class (parent AC4) — and stays "blocked".
-// The threshold is a deterministic count on local regex matches (no AI
-// call); it composes with the existing deriveStatus()/exportAllowed
-// derivation below rather than adding a parallel gating path.
-const ARCHITECTURE_DISCLOSURE_CORE_MATCH_THRESHOLD = 2;
+// UNC-207 / T3: severity is NOT a fixed "blocked". The core-vs-residual
+// split is on the number of DISTINCT disclosure classes (admin-allowlist,
+// route-guard, auth-checkpoint, server-side-authorization), NOT the raw
+// occurrence count. This matters because the safety-report text concatenates
+// the caption AND the diary slides, both generated from the same activity:
+// a single genuinely-incidental fact (e.g. "fixed a route guard bug") is
+// typically echoed in both a slide body and the caption, which would be two
+// RAW matches but is still ONE disclosure class. Counting raw occurrences
+// would wrongly block that (breaking parent AC1). Counting distinct classes
+// keeps it a "warning" that still exports.
+//
+//   distinctClasses >= 2  -> "blocked": several different access-control
+//     mechanisms co-occur, so the draft's core content IS the access-control
+//     surface — the 2026-06-05 reproduction class (admin allowlist + route
+//     guard + auth checkpoint + server-side authorization). Parent AC4.
+//   distinctClasses == 1  -> "warning": a single incidental fact, sanitized
+//     in place, even if echoed across multiple fields. Parent AC1.
+//
+// Deterministic, local (no AI call). It composes with the existing
+// deriveStatus()/exportAllowed derivation below rather than adding a
+// parallel gating path.
+const ARCHITECTURE_DISCLOSURE_CORE_CLASS_THRESHOLD = 2;
 
 const architectureDisclosureBlockedRisk = {
   category: "architecture-disclosure",
@@ -98,9 +106,9 @@ const architectureDisclosureWarningRisk = {
 } satisfies Omit<DetectionRule, "pattern">;
 
 function resolveArchitectureDisclosureRisk(
-  matchCount: number
+  distinctClasses: number
 ): Omit<DetectionRule, "pattern"> {
-  return matchCount >= ARCHITECTURE_DISCLOSURE_CORE_MATCH_THRESHOLD
+  return distinctClasses >= ARCHITECTURE_DISCLOSURE_CORE_CLASS_THRESHOLD
     ? architectureDisclosureBlockedRisk
     : architectureDisclosureWarningRisk;
 }
@@ -205,7 +213,7 @@ export function checkDraftSafety(text: string): SafetyCheckResult {
     recordDetection(
       risks,
       redactions,
-      resolveArchitectureDisclosureRisk(architectureResult.count),
+      resolveArchitectureDisclosureRisk(architectureResult.distinctClasses),
       architectureResult.count
     );
   }
