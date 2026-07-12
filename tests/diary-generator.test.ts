@@ -5,7 +5,10 @@ import {
   buildCaptionInstructions,
   deriveCaptionText,
   generateCaption,
-  generateDiaryDraft
+  generateDiaryDraft,
+  redactArchitectureDisclosureFromCaption,
+  redactArchitectureDisclosureFromDraft,
+  type DiaryDraft
 } from "../src/diary-generator.js";
 import { PERSONA_PRESETS, type Persona } from "../src/persona.js";
 import type { StoryFormatPlan } from "../src/story-format-plan.js";
@@ -354,6 +357,104 @@ describe("diary generator", () => {
       code: "malformed-response",
       message: "AI provider fabricated quiet-day activity."
     });
+  });
+});
+
+describe("architecture disclosure redaction (UNC-206)", () => {
+  it("redacts admin/route-guard/auth-checkpoint/authorization detail from the draft title and every slide field", () => {
+    const draft: DiaryDraft = {
+      schemaVersion: 1,
+      targetDate: "2026-05-12",
+      title: "the admin allowlist finally behaved",
+      slides: [
+        {
+          index: 1,
+          title: "route guard drama",
+          body: "Fixed the auth checkpoint so the server-side authorization check stopped flaking.",
+          visualMood: "route guard glowing on a terminal"
+        },
+        {
+          index: 2,
+          title: "quiet slide",
+          body: "Nothing sensitive here, just a normal beat.",
+          visualMood: "calm desk"
+        }
+      ],
+      altText: "diary about access control cleanup",
+      metadata: {
+        targetDate: "2026-05-12",
+        generatedAt: "2026-05-12T23:30:00.000Z",
+        activityLevel: "medium",
+        formatName: "Bug Court Transcript",
+        storyFormatVoice: "tired QA narrator",
+        storyFormatTone: "deadpan, witty, affectionate",
+        projectIds: ["uncommitted"],
+        entryMode: "daily_global",
+        slideCount: 2
+      }
+    };
+
+    const redacted = redactArchitectureDisclosureFromDraft(draft);
+
+    expect(redacted.title).not.toContain("admin allowlist");
+    expect(redacted.title).toContain("[redacted-architecture]");
+    expect(redacted.slides[0]?.title).not.toContain("route guard");
+    expect(redacted.slides[0]?.title).toContain("[redacted-architecture]");
+    expect(redacted.slides[0]?.body).not.toContain("auth checkpoint");
+    expect(redacted.slides[0]?.body).not.toContain("server-side authorization");
+    expect(redacted.slides[0]?.visualMood).not.toContain("route guard");
+    expect(redacted.slides[0]?.visualMood).toContain("[redacted-architecture]");
+    // Unaffected fields must be left byte-for-byte unchanged.
+    expect(redacted.slides[1]).toEqual(draft.slides[1]);
+    expect(redacted.altText).toBe(draft.altText);
+    expect(redacted.metadata).toEqual(draft.metadata);
+  });
+
+  it("leaves a draft with no disclosure content unchanged", () => {
+    const draft: DiaryDraft = {
+      schemaVersion: 1,
+      targetDate: "2026-05-12",
+      title: "a perfectly normal day",
+      slides: [
+        {
+          index: 1,
+          title: "signal",
+          body: "Shipped a small feature and fixed a typo.",
+          visualMood: "quiet terminal"
+        }
+      ],
+      altText: "diary",
+      metadata: {
+        targetDate: "2026-05-12",
+        generatedAt: "2026-05-12T23:30:00.000Z",
+        activityLevel: "medium",
+        formatName: "Implementation Dispatch",
+        storyFormatVoice: "dry coworker",
+        storyFormatTone: "concise and lightly amused",
+        projectIds: ["uncommitted"],
+        entryMode: "daily_global",
+        slideCount: 1
+      }
+    };
+
+    expect(redactArchitectureDisclosureFromDraft(draft)).toEqual(draft);
+  });
+
+  it("redacts architecture-disclosure detail from a caption string", () => {
+    const caption =
+      "오늘은 route guard 버그를 잡았다. admin allowlist는 여전히 말썽이다.";
+
+    const redacted = redactArchitectureDisclosureFromCaption(caption);
+
+    expect(redacted).not.toContain("route guard");
+    expect(redacted).not.toContain("admin allowlist");
+    expect(redacted).toContain("[redacted-architecture]");
+  });
+
+  it("leaves a caption with no disclosure content unchanged", () => {
+    const caption = "오늘은 조용한 날이었다.";
+
+    expect(redactArchitectureDisclosureFromCaption(caption)).toBe(caption);
   });
 });
 

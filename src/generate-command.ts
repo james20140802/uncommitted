@@ -28,6 +28,8 @@ import {
   deriveCaptionText,
   generateCaption,
   generateDiaryDraft,
+  redactArchitectureDisclosureFromCaption,
+  redactArchitectureDisclosureFromDraft,
   type DiaryDraft
 } from "./diary-generator.js";
 import {
@@ -285,7 +287,7 @@ export async function runGenerateCommand(
     roastLevel: config.roastLevel,
     recentFormats
   });
-  const draft = await generateDiaryDraft({
+  const generatedDraft = await generateDiaryDraft({
     activitySummary,
     storyFormatPlan,
     provider,
@@ -300,7 +302,16 @@ export async function runGenerateCommand(
     roastLevel: config.roastLevel,
     rawNarrativeProjection
   });
-  const caption = deriveCaptionText(captionResult);
+  // UNC-206 / T2: redact admin/route-guard/auth-checkpoint/server-side-
+  // authorization architecture-disclosure detail in place before the draft
+  // and caption reach any written artifact (story.json, caption.txt) or the
+  // safety-report text. Redacting here also means the image prompt (derived
+  // from slide.visualMood in carousel-renderer.ts) is redacted at the
+  // source, before visual asset generation runs.
+  const draft = redactArchitectureDisclosureFromDraft(generatedDraft);
+  const caption = redactArchitectureDisclosureFromCaption(
+    deriveCaptionText(captionResult)
+  );
   const baseMetadata: DraftMetadataBase = {
     schemaVersion: 1,
     version: 1,

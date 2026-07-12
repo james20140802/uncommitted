@@ -367,6 +367,80 @@ describe("generate command", () => {
     });
   });
 
+  it("redacts architecture-disclosure detail from the written caption and story slides (UNC-206)", async () => {
+    const { io, stderr } = createIo();
+    const fixture = await createRegisteredProjectFixture();
+    const provider = new TaskAwareProvider({
+      draft: createProviderDraft({
+        title: "the admin allowlist finally behaved",
+        slides: [
+          {
+            index: 1,
+            title: "route guard drama",
+            body: "Fixed the auth checkpoint so the server-side authorization check stopped flaking.",
+            visualMood: "route guard glowing on a terminal"
+          },
+          {
+            index: 2,
+            title: "quiet slide",
+            body: "Nothing sensitive here, just a normal beat.",
+            visualMood: "calm desk"
+          },
+          {
+            index: 3,
+            title: "Close",
+            body: "No card rendering happened yet, exactly as scoped.",
+            visualMood: "checklist with one unchecked render item"
+          }
+        ]
+      }),
+      caption: createProviderCaption({
+        caption: "오늘은 route guard 버그를 잡았다. admin allowlist는 여전히 말썽이다."
+      })
+    });
+
+    await writeGitEvent(fixture.project, "2026-05-12");
+
+    const exitCode = await runCli(["generate", "today"], io, {
+      homeDir: fixture.homeDir,
+      now: () => "2026-05-12T23:30:00.000Z",
+      aiProvider: provider
+    });
+    const outputDir = join(fixture.draftRoot, "2026-05-12", "rev-001");
+    const story = (await readJson(join(outputDir, "story.json"))) as {
+      title: string;
+      slides: Array<{ title: string; body: string; visualMood: string }>;
+    };
+    const caption = await readFile(join(outputDir, "caption.txt"), "utf8");
+
+    expect(exitCode).toBe(0);
+    expect(stderr).toEqual([]);
+
+    const disclosureTokens = [
+      "route guard",
+      "admin allowlist",
+      "auth checkpoint",
+      "server-side authorization"
+    ];
+
+    for (const token of disclosureTokens) {
+      expect(story.title).not.toContain(token);
+      expect(caption).not.toContain(token);
+
+      for (const slide of story.slides) {
+        expect(slide.title).not.toContain(token);
+        expect(slide.body).not.toContain(token);
+        expect(slide.visualMood).not.toContain(token);
+      }
+    }
+
+    expect(story.title).toContain("[redacted-architecture]");
+    expect(caption).toContain("[redacted-architecture]");
+    expect(story.slides[0]?.title).toContain("[redacted-architecture]");
+    expect(story.slides[0]?.body).toContain("[redacted-architecture]");
+    expect(story.slides[0]?.visualMood).toContain("[redacted-architecture]");
+  });
+
   it("blocks unsafe drafts at the CLI boundary while preserving inspectable artifacts", async () => {
     const { io, stdout, stderr } = createIo();
     const fixture = await createRegisteredProjectFixture();

@@ -10,6 +10,7 @@ import type {
   JsonValue,
   SafeActivitySummary
 } from "./ai-provider.js";
+import { redactArchitectureDisclosure } from "./architecture-disclosure.js";
 import type { Persona } from "./persona.js";
 import { emailPattern } from "./redaction.js";
 import type {
@@ -142,6 +143,38 @@ export function deriveCaptionText(result: CaptionResult): string {
   }
 
   return `${parts.join("\n\n")}\n`;
+}
+
+/**
+ * In-place architecture-disclosure redaction (UNC-206 / T2): admin
+ * allowlist, route-guard, auth-checkpoint, and server-side-authorization
+ * mechanism detail must never reach a written caption. Reuses Task 1's
+ * `redactArchitectureDisclosure` detector; does not reimplement detection.
+ */
+export function redactArchitectureDisclosureFromCaption(
+  caption: string
+): string {
+  return redactArchitectureDisclosure(caption).value;
+}
+
+/**
+ * In-place architecture-disclosure redaction (UNC-206 / T2) applied to a
+ * full diary draft: the title and every slide's title/body/visualMood.
+ * Pure function — returns a new DiaryDraft, does not mutate the input.
+ */
+export function redactArchitectureDisclosureFromDraft(
+  draft: DiaryDraft
+): DiaryDraft {
+  return {
+    ...draft,
+    title: redactArchitectureDisclosure(draft.title).value,
+    slides: draft.slides.map((slide) => ({
+      ...slide,
+      title: redactArchitectureDisclosure(slide.title).value,
+      body: redactArchitectureDisclosure(slide.body).value,
+      visualMood: redactArchitectureDisclosure(slide.visualMood).value
+    }))
+  };
 }
 
 function buildSafeDiaryInput(options: {
