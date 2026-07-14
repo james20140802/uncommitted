@@ -120,15 +120,20 @@ export type {
 } from "./ai-provider.js";
 export {
   generateStoryFormatPlan,
+  isMood,
+  isMoodPlan,
   loadRecentStoryFormatHistory,
+  MOOD_VOCABULARY,
   recordStoryFormatHistory
 } from "./story-format-plan.js";
 export type {
+  Mood,
+  MoodPlan,
   ProjectPersonaHint,
   RecordStoryFormatHistoryOptions,
   RecentStoryFormat,
-  StoryFormatPlan,
   StoryFormatPlanOptions,
+  StoryPacing,
   StoryFormatStructurePart
 } from "./story-format-plan.js";
 export {
