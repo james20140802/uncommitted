@@ -752,11 +752,15 @@ describe("generate command", () => {
       join(fixture.homeDir, ".uncommitted", "history", "formats.json")
     );
 
+    const sharedAngle =
+      "The day circled a concrete, unglamorous signal instead of a story.";
+
     expect(stderr).toEqual([]);
     expect(secondProvider.requests[0]?.input.recentFormats).toEqual([
       {
         date: "2026-05-12",
-        formatName: "firefight",
+        mood: "firefight",
+        angle: sharedAngle,
         voice: "tired QA narrator",
         tone: "deadpan courtroom"
       }
@@ -766,13 +770,15 @@ describe("generate command", () => {
       formats: [
         {
           date: "2026-05-12",
-          formatName: "cleanup",
+          mood: "cleanup",
+          angle: sharedAngle,
           voice: "field researcher",
           tone: "observant and warm"
         },
         {
           date: "2026-05-12",
-          formatName: "firefight",
+          mood: "firefight",
+          angle: sharedAngle,
           voice: "tired QA narrator",
           tone: "deadpan courtroom"
         }

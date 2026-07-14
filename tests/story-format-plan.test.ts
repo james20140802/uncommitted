@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -7,11 +7,12 @@ import type { ActivitySummary } from "../src/activity-summary.js";
 import {
   generateStoryFormatPlan,
   loadRecentStoryFormatHistory,
+  recordStoryFormatHistory,
   isMood,
   isMoodPlan,
   MOOD_VOCABULARY
 } from "../src/story-format-plan.js";
-import type { MoodPlan } from "../src/story-format-plan.js";
+import type { MoodPlan, RecentStoryFormat } from "../src/story-format-plan.js";
 
 describe("story format plan", () => {
   it("derives a MoodPlan from activity signals instead of inventing a genre", async () => {
@@ -260,6 +261,132 @@ describe("story format plan", () => {
       exitCode: 4,
       message: "AI provider returned invalid story format plan."
     });
+  });
+});
+
+describe("format history diversity (UNC-214)", () => {
+  it("round-trips mood/angle/voice/tone through recordStoryFormatHistory and loadRecentStoryFormatHistory", async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), "uncommitted-story-format-"));
+
+    await recordStoryFormatHistory({
+      homeDir,
+      targetDate: "2026-05-12",
+      storyFormatPlan: {
+        schemaVersion: 2,
+        mood: "grind",
+        angle: "The same flaky test kept failing all afternoon.",
+        pacing: {
+          openWith: "scene",
+          shape: "hook-turn-landing",
+          suggestedSlideCount: 4
+        },
+        voice: "tired QA narrator",
+        tone: "deadpan",
+        reason: "The day had enough debugging evidence for a courtroom bit.",
+        structure: [
+          { part: "Opening statement", purpose: "Introduce the work." }
+        ],
+        captionStyle: "short witty caption",
+        doNotMention: [],
+        formatName: "grind"
+      }
+    });
+
+    const recentFormats = await loadRecentStoryFormatHistory({ homeDir });
+
+    expect(recentFormats).toEqual([
+      {
+        date: "2026-05-12",
+        mood: "grind",
+        angle: "The same flaky test kept failing all afternoon.",
+        voice: "tired QA narrator",
+        tone: "deadpan"
+      }
+    ]);
+
+    const raw = JSON.parse(
+      await readFile(
+        join(homeDir, ".uncommitted", "history", "formats.json"),
+        "utf8"
+      )
+    ) as { formats: unknown[] };
+    expect(raw.formats[0]).not.toHaveProperty("formatName");
+  });
+
+  it("migrates a legacy formats.json entry with only formatName, mapping formatName to mood when valid and preserving voice/tone otherwise", async () => {
+    const homeDir = await createHomeWithFormatHistory({
+      formats: [
+        {
+          date: "2026-05-11",
+          formatName: "quiet",
+          voice: "quiet observer",
+          tone: "calm"
+        },
+        {
+          date: "2026-05-10",
+          formatName: "TODO Night Council",
+          voice: "TODO list",
+          tone: "deadpan"
+        }
+      ]
+    });
+
+    const recentFormats = await loadRecentStoryFormatHistory({ homeDir });
+
+    expect(recentFormats).toEqual([
+      {
+        date: "2026-05-11",
+        formatName: "quiet",
+        mood: "quiet",
+        voice: "quiet observer",
+        tone: "calm"
+      },
+      {
+        date: "2026-05-10",
+        formatName: "TODO Night Council",
+        voice: "TODO list",
+        tone: "deadpan"
+      }
+    ]);
+  });
+
+  it("biases story-format instructions away from recently used moods, angles, and voices", async () => {
+    const recentFormats: RecentStoryFormat[] = [
+      {
+        date: "2026-05-11",
+        mood: "firefight",
+        angle: "A flaky test kept failing.",
+        voice: "tired QA narrator",
+        tone: "deadpan"
+      },
+      {
+        date: "2026-05-10",
+        mood: "grind",
+        angle: "Refactor busywork all day.",
+        voice: "weather reporter",
+        tone: "witty"
+      }
+    ];
+    const provider = new MockAiProvider({
+      response: createMoodProviderPlan({ mood: "quiet" })
+    });
+
+    await generateStoryFormatPlan({
+      activitySummary: createActivitySummary(),
+      provider,
+      persona: "wry coworker",
+      roastLevel: 1,
+      recentFormats
+    });
+
+    const instructions = provider.requests[0]?.instructions ?? "";
+    expect(instructions).toContain("firefight");
+    expect(instructions).toContain("grind");
+    expect(instructions).toContain("A flaky test kept failing.");
+    expect(instructions).toContain("Refactor busywork all day.");
+    expect(instructions).toContain("tired QA narrator");
+    expect(instructions).toContain("weather reporter");
+    expect(instructions).toMatch(/different mood/i);
   });
 });
 

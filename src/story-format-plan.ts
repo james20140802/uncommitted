@@ -135,9 +135,15 @@ function isStoryPacing(value: unknown): value is StoryPacing {
 
 export type RecentStoryFormat = {
   date: string;
-  formatName: string;
+  mood?: Mood;
+  angle?: string;
   voice?: string;
   tone?: string;
+  /**
+   * Legacy-tolerant read only: pre-mood-engine records carried a free-text
+   * `formatName` instead of `mood`. Never written for new entries (UNC-214).
+   */
+  formatName?: string;
 };
 
 export type ProjectPersonaHint = {
@@ -169,7 +175,10 @@ export type RecordStoryFormatHistoryOptions = {
 };
 
 type StoryFormatHistoryFile = {
-  schemaVersion?: 1;
+  // Accept both the legacy schemaVersion (1) and any future value; the
+  // top-level container shape ({schemaVersion, formats}) is unchanged, only
+  // the entry shape evolved (UNC-214).
+  schemaVersion?: number;
   formats?: unknown[];
   recent?: unknown[];
 };
@@ -199,7 +208,7 @@ export async function generateStoryFormatPlan(
     instructions: buildStoryFormatInstructions({
       roastLevel: options.roastLevel,
       entryMode: "daily_global",
-      hasRecentFormats: recentFormats.length > 0,
+      recentFormats,
       quiet: options.activitySummary.activityLevel === "none"
     }),
     summary: buildSafeStoryFormatInput({
@@ -242,6 +251,7 @@ export async function loadRecentStoryFormatHistory(
 
     return entries
       .filter(isRecentStoryFormat)
+      .map(migrateLegacyRecentStoryFormat)
       .sort((a, b) => b.date.localeCompare(a.date))
       .slice(0, limit);
   } catch (error) {
@@ -267,7 +277,8 @@ export async function recordStoryFormatHistory(
   });
   const nextFormat: RecentStoryFormat = {
     date: options.targetDate,
-    formatName: options.storyFormatPlan.formatName,
+    mood: options.storyFormatPlan.mood,
+    angle: options.storyFormatPlan.angle,
     voice: options.storyFormatPlan.voice,
     tone: options.storyFormatPlan.tone
   };
@@ -277,7 +288,8 @@ export async function recordStoryFormatHistory(
         allFormats.findIndex(
           (candidate) =>
             candidate.date === format.date &&
-            candidate.formatName === format.formatName &&
+            candidate.mood === format.mood &&
+            candidate.angle === format.angle &&
             candidate.voice === format.voice &&
             candidate.tone === format.tone
         ) === index
@@ -372,7 +384,7 @@ function buildHighlights(summary: ActivitySummary, quiet: boolean): string[] {
 function buildStoryFormatInstructions(options: {
   roastLevel: number;
   entryMode: "daily_global";
-  hasRecentFormats: boolean;
+  recentFormats: RecentStoryFormat[];
   quiet: boolean;
 }): string {
   const directRoastPolicy =
@@ -403,12 +415,92 @@ function buildStoryFormatInstructions(options: {
     "For quiet days, acknowledge low or no recorded work and make the plan about waiting, observation, or honest quiet.",
     ...quietBiasInstruction,
     "Avoid near-duplicates of recentFormats when they are provided.",
+    ...buildRecentFormatsDiversityInstructions(options.recentFormats),
     "Keep the structure readable as an Instagram carousel.",
     "Roast policy: light jokes may target situations, tools, TODOs, bugs, recurring work patterns, or requirement churn.",
     directRoastPolicy,
     "Never attack the user's identity, ability, appearance, mental health, personal value, or real life.",
     `Suggested slide count must be ${minSlideCount}-${maxSlideCount}; prefer 3-5 for quiet/low days and 5-8 for high days.`
   ].join("\n");
+}
+
+/**
+ * Turns recent history into concrete anti-repetition guidance (UNC-214):
+ * bias each day's plan away from the specific moods/angles/voices that were
+ * just used, instead of a generic "avoid duplicates" instruction.
+ */
+function buildRecentFormatsDiversityInstructions(
+  recentFormats: RecentStoryFormat[]
+): string[] {
+  if (recentFormats.length === 0) {
+    return [];
+  }
+
+  const recentMoods = uniqueDefinedStrings(
+    recentFormats.map((format) => format.mood)
+  );
+  const recentAngles = uniqueDefinedStrings(
+    recentFormats.map((format) => format.angle)
+  );
+  const recentVoices = uniqueDefinedStrings(
+    recentFormats.map((format) => format.voice)
+  );
+
+  const instructions: string[] = [];
+
+  if (recentMoods.length > 0) {
+    instructions.push(
+      `Recently used moods: ${recentMoods.join(", ")}. Prefer a different mood today when the real activity signals support it; never force a mismatched mood just for variety.`
+    );
+  }
+
+  if (recentAngles.length > 0) {
+    instructions.push(
+      `Recently used angles: ${recentAngles.join("; ")}. Choose a distinct angle instead of repeating one of these framings.`
+    );
+  }
+
+  if (recentVoices.length > 0) {
+    instructions.push(
+      `Recently used voices/narrator devices: ${recentVoices.join(", ")}. Prefer a different voice today for structural variety.`
+    );
+  }
+
+  return instructions;
+}
+
+function uniqueDefinedStrings(values: (string | undefined)[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+
+  for (const value of values) {
+    if (value !== undefined && !seen.has(value)) {
+      seen.add(value);
+      result.push(value);
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Maps a legacy `{date, formatName, voice, tone}` history entry onto the new
+ * shape: `formatName` is mapped to `mood` only when it matches the fixed
+ * mood vocabulary, otherwise `mood` is left undefined without discarding
+ * `voice`/`tone` (UNC-214).
+ */
+function migrateLegacyRecentStoryFormat(
+  entry: RecentStoryFormat
+): RecentStoryFormat {
+  if (entry.mood !== undefined) {
+    return entry;
+  }
+
+  if (entry.formatName !== undefined && isMood(entry.formatName)) {
+    return { ...entry, mood: entry.formatName };
+  }
+
+  return entry;
 }
 
 function parseStoryFormatPlan(data: MoodPlanProviderData): MoodPlan {
@@ -510,13 +602,34 @@ function isStoryFormatStructurePart(
 }
 
 function isRecentStoryFormat(value: unknown): value is RecentStoryFormat {
-  return (
-    isRecord(value) &&
-    typeof value.date === "string" &&
-    typeof value.formatName === "string" &&
-    (value.voice === undefined || typeof value.voice === "string") &&
-    (value.tone === undefined || typeof value.tone === "string")
-  );
+  if (!isRecord(value) || typeof value.date !== "string") {
+    return false;
+  }
+
+  const hasValidMood = value.mood === undefined || isMood(value.mood);
+  const hasValidAngle =
+    value.angle === undefined || typeof value.angle === "string";
+  const hasValidVoice =
+    value.voice === undefined || typeof value.voice === "string";
+  const hasValidTone =
+    value.tone === undefined || typeof value.tone === "string";
+  const hasValidFormatName =
+    value.formatName === undefined || typeof value.formatName === "string";
+
+  if (
+    !hasValidMood ||
+    !hasValidAngle ||
+    !hasValidVoice ||
+    !hasValidTone ||
+    !hasValidFormatName
+  ) {
+    return false;
+  }
+
+  // A usable entry carries a diversity key: the new mood/angle shape or the
+  // legacy formatName (mapped to mood on load when it matches the
+  // vocabulary; see migrateLegacyRecentStoryFormat).
+  return value.mood !== undefined || value.formatName !== undefined;
 }
 
 function throwInvalidStoryFormatPlan(): never {
