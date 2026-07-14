@@ -6,6 +6,7 @@ import {
   AiGenerationError,
   createAiGenerationRequest,
   createAiProvider,
+  createMoodPlanSchema,
   generateStructured,
   loadAiProviderConfig,
   MockAiProvider
@@ -920,6 +921,62 @@ describe("AI provider abstraction", () => {
         }
       })
     ).toThrow(AiGenerationError);
+  });
+});
+
+describe("createMoodPlanSchema", () => {
+  it("requires mood/angle/pacing/voice/tone/reason/structure/captionStyle/doNotMention and forbids extras", () => {
+    const schema = createMoodPlanSchema();
+
+    expect(schema).toMatchObject({
+      type: "object",
+      additionalProperties: false,
+      required: [
+        "mood",
+        "angle",
+        "pacing",
+        "voice",
+        "tone",
+        "reason",
+        "structure",
+        "captionStyle",
+        "doNotMention"
+      ]
+    });
+
+    const properties = (schema as { properties?: Record<string, unknown> })
+      .properties;
+
+    expect(properties?.mood).toEqual({
+      type: "string",
+      enum: [
+        "release",
+        "firefight",
+        "quiet",
+        "grind",
+        "breakthrough",
+        "cleanup"
+      ]
+    });
+    expect(properties?.pacing).toMatchObject({
+      type: "object",
+      additionalProperties: false,
+      required: ["openWith", "shape", "suggestedSlideCount"],
+      properties: {
+        openWith: { type: "string", enum: ["scene", "thought"] },
+        shape: {
+          type: "string",
+          enum: ["hook-turn-landing", "list", "single-beat", "spiral"]
+        },
+        suggestedSlideCount: { type: "integer" }
+      }
+    });
+
+    // formatName is set internally (== mood); it must not appear in the AI schema.
+    expect(properties?.formatName).toBeUndefined();
+    expect(
+      (schema as { required?: string[] }).required
+    ).not.toContain("formatName");
   });
 });
 

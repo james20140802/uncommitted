@@ -614,6 +614,77 @@ function createStoryFormatPlanSchema(): JsonObject {
   };
 }
 
+/**
+ * JSON schema for the mood/angle/pacing engine's MoodPlan output (UNC-212).
+ * Additive only: not yet wired into createResponseFormat/createAnthropicToolDefinition.
+ * `formatName` is intentionally absent — it is set internally (== mood), never
+ * requested from the AI provider.
+ */
+export function createMoodPlanSchema(): JsonObject {
+  return {
+    type: "object",
+    additionalProperties: false,
+    required: [
+      "mood",
+      "angle",
+      "pacing",
+      "voice",
+      "tone",
+      "reason",
+      "structure",
+      "captionStyle",
+      "doNotMention"
+    ],
+    properties: {
+      mood: {
+        type: "string",
+        enum: [
+          "release",
+          "firefight",
+          "quiet",
+          "grind",
+          "breakthrough",
+          "cleanup"
+        ]
+      },
+      angle: { type: "string" },
+      pacing: {
+        type: "object",
+        additionalProperties: false,
+        required: ["openWith", "shape", "suggestedSlideCount"],
+        properties: {
+          openWith: { type: "string", enum: ["scene", "thought"] },
+          shape: {
+            type: "string",
+            enum: ["hook-turn-landing", "list", "single-beat", "spiral"]
+          },
+          suggestedSlideCount: { type: "integer" }
+        }
+      },
+      voice: { type: "string" },
+      tone: { type: "string" },
+      reason: { type: "string" },
+      structure: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["part", "purpose"],
+          properties: {
+            part: { type: "string" },
+            purpose: { type: "string" }
+          }
+        }
+      },
+      captionStyle: { type: "string" },
+      doNotMention: {
+        type: "array",
+        items: { type: "string" }
+      }
+    }
+  };
+}
+
 function createDiaryDraftSchema(): JsonObject {
   return {
     type: "object",
