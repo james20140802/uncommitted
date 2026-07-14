@@ -14,7 +14,7 @@ import type { GitActivityEvent } from "../src/collect-git-command.js";
 import type { CaptionResult, DiaryDraft } from "../src/diary-generator.js";
 import { addProject, type ProjectRecord } from "../src/project-add.js";
 import type { SourceName } from "../src/source-config.js";
-import type { StoryFormatPlan } from "../src/story-format-plan.js";
+import type { MoodPlan } from "../src/story-format-plan.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -473,7 +473,7 @@ class TaskAwareProvider implements AiProvider {
 
   constructor(
     private readonly options: {
-      plan?: StoryFormatPlan;
+      plan?: MoodPlan;
       draft?: DraftFixture;
       caption?: CaptionResult;
       model?: string;
@@ -512,11 +512,17 @@ class TaskAwareProvider implements AiProvider {
 type DraftFixture = ReturnType<typeof createProviderDraft>;
 
 function createStoryFormatPlan(
-  overrides: Partial<StoryFormatPlan> = {}
-): StoryFormatPlan {
+  overrides: Partial<MoodPlan> = {}
+): MoodPlan {
   return {
-    schemaVersion: 1,
-    formatName: "Implementation Dispatch",
+    schemaVersion: 2,
+    mood: "grind",
+    angle: "Collect-all E2E fixture angle: a concrete, unglamorous signal.",
+    pacing: {
+      openWith: "scene",
+      shape: "hook-turn-landing",
+      suggestedSlideCount: 3
+    },
     voice: "dry coworker",
     tone: "concise and lightly amused",
     reason: "Collect-all E2E fixture: enough real signals for a compact update.",
@@ -525,9 +531,9 @@ function createStoryFormatPlan(
       { part: "Draft", purpose: "Turn it into a diary beat." },
       { part: "Close", purpose: "End without inventing extra work." }
     ],
-    suggestedSlideCount: 3,
     captionStyle: "short witty caption",
     doNotMention: ["raw diffs", "private paths"],
+    formatName: "grind",
     ...overrides
   };
 }

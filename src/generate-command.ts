@@ -56,7 +56,7 @@ import {
   generateStoryFormatPlan,
   loadRecentStoryFormatHistory,
   recordStoryFormatHistory,
-  type StoryFormatPlan
+  type MoodPlan
 } from "./story-format-plan.js";
 import {
   createImageAssetProvider,
@@ -99,7 +99,7 @@ export type GenerateCommandResult = {
   revision: string;
   latestPointerPath: string;
   activitySummary: ActivitySummary;
-  storyFormatPlan: StoryFormatPlan;
+  storyFormatPlan: MoodPlan;
   draft: DiaryDraft;
   caption: string;
   safetyReport: SafetyReport;

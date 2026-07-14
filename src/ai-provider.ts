@@ -557,7 +557,7 @@ function createResponseFormat(task: AiGenerationTask): JsonObject {
         ? {
             name: "uncommitted_story_format_plan",
             strict: true,
-            schema: createStoryFormatPlanSchema()
+            schema: createMoodPlanSchema()
           }
         : task === "caption"
           ? {
@@ -573,7 +573,12 @@ function createResponseFormat(task: AiGenerationTask): JsonObject {
   };
 }
 
-function createStoryFormatPlanSchema(): JsonObject {
+// Legacy schema for the pre-mood-engine StoryFormatPlan contract (UNC-212).
+// No longer wired into createResponseFormat/createAnthropicToolDefinition —
+// both story-plan branches now use createMoodPlanSchema — but kept exported
+// (not deleted) since src/story-format-plan.ts still exports the matching
+// legacy `StoryFormatPlan` type/guard for backward-compat reading.
+export function createStoryFormatPlanSchema(): JsonObject {
   return {
     type: "object",
     additionalProperties: false,
@@ -616,9 +621,9 @@ function createStoryFormatPlanSchema(): JsonObject {
 
 /**
  * JSON schema for the mood/angle/pacing engine's MoodPlan output (UNC-212).
- * Additive only: not yet wired into createResponseFormat/createAnthropicToolDefinition.
- * `formatName` is intentionally absent — it is set internally (== mood), never
- * requested from the AI provider.
+ * Wired into both createResponseFormat and createAnthropicToolDefinition for
+ * the story-plan task (UNC-213). `formatName` is intentionally absent — it is
+ * set internally (== mood), never requested from the AI provider.
  */
 export function createMoodPlanSchema(): JsonObject {
   return {
@@ -788,7 +793,7 @@ function createAnthropicToolDefinition(task: AiGenerationTask): {
   schema: JsonObject;
 } {
   if (task === "story-plan") {
-    return { toolName: "uncommitted_story_format_plan", schema: createStoryFormatPlanSchema() };
+    return { toolName: "uncommitted_story_format_plan", schema: createMoodPlanSchema() };
   }
 
   if (task === "caption") {

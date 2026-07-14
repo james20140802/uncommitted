@@ -14,7 +14,7 @@ import type { GitActivityEvent } from "../src/collect-git-command.js";
 import type { CaptionResult, DiaryDraft } from "../src/diary-generator.js";
 import { PERSONA_PRESETS, type Persona } from "../src/persona.js";
 import { addProject, type ProjectRecord } from "../src/project-add.js";
-import type { StoryFormatPlan } from "../src/story-format-plan.js";
+import type { Mood, MoodPlan, StoryFormatPlan } from "../src/story-format-plan.js";
 import type { ImageAssetProvider, ImageAssetRequest } from "../src/visual-assets.js";
 
 const execFileAsync = promisify(execFile);
@@ -101,7 +101,10 @@ describe("generate command", () => {
         }
       ],
       activityLevel: "medium",
-      formatName: "Implementation Dispatch",
+      // Transitional: formatName always mirrors the derived mood (UNC-213),
+      // not the fixture's display-name override — createStoryFormatPlan()'s
+      // default mood is "grind".
+      formatName: "grind",
       status: "draft",
       exportPolicy: "safe",
       exportReady: true,
@@ -719,14 +722,14 @@ describe("generate command", () => {
     const fixture = await createRegisteredProjectFixture();
     const firstProvider = new TaskAwareProvider({
       plan: createStoryFormatPlan({
-        formatName: "Bug Court Transcript",
+        mood: "firefight",
         voice: "tired QA narrator",
         tone: "deadpan courtroom"
       })
     });
     const secondProvider = new TaskAwareProvider({
       plan: createStoryFormatPlan({
-        formatName: "Refactor Field Notes",
+        mood: "cleanup",
         voice: "field researcher",
         tone: "observant and warm"
       })
@@ -753,7 +756,7 @@ describe("generate command", () => {
     expect(secondProvider.requests[0]?.input.recentFormats).toEqual([
       {
         date: "2026-05-12",
-        formatName: "Bug Court Transcript",
+        formatName: "firefight",
         voice: "tired QA narrator",
         tone: "deadpan courtroom"
       }
@@ -763,13 +766,13 @@ describe("generate command", () => {
       formats: [
         {
           date: "2026-05-12",
-          formatName: "Refactor Field Notes",
+          formatName: "cleanup",
           voice: "field researcher",
           tone: "observant and warm"
         },
         {
           date: "2026-05-12",
-          formatName: "Bug Court Transcript",
+          formatName: "firefight",
           voice: "tired QA narrator",
           tone: "deadpan courtroom"
         }
@@ -952,7 +955,7 @@ class TaskAwareProvider implements AiProvider {
 
   constructor(
     private readonly options: {
-      plan?: StoryFormatPlan;
+      plan?: MoodPlan;
       draft?: ReturnType<typeof createProviderDraft>;
       caption?: CaptionResult;
       failDraft?: boolean;
@@ -1314,11 +1317,20 @@ async function writeGitHubSignals(
   );
 }
 
+// Fixture overrides keep the flat legacy shape (formatName/suggestedSlideCount)
+// so existing call sites stay unchanged; internally mapped onto the MoodPlan
+// the story-plan AI task now returns (mood/angle/pacing.suggestedSlideCount).
+// `mood` is a separate optional override: formatName transitionally always
+// mirrors mood (parseStoryFormatPlan coerces it), so callers that need a
+// distinct formatName per fixture (e.g. format-history variety tests) must
+// vary `mood`, not `formatName`.
 function createStoryFormatPlan(
-  overrides: Partial<StoryFormatPlan> = {}
-): StoryFormatPlan {
-  return {
-    schemaVersion: 1,
+  overrides: Partial<Omit<StoryFormatPlan, "schemaVersion">> & {
+    mood?: Mood;
+  } = {}
+): MoodPlan {
+  const { mood, ...legacyOverrides } = overrides;
+  const plan = {
     formatName: "Implementation Dispatch",
     voice: "dry coworker",
     tone: "concise and lightly amused",
@@ -1340,7 +1352,25 @@ function createStoryFormatPlan(
     suggestedSlideCount: 3,
     captionStyle: "short witty caption",
     doNotMention: ["raw diffs", "private paths"],
-    ...overrides
+    ...legacyOverrides
+  };
+
+  return {
+    schemaVersion: 2,
+    mood: mood ?? "grind",
+    angle: "The day circled a concrete, unglamorous signal instead of a story.",
+    pacing: {
+      openWith: "scene",
+      shape: "hook-turn-landing",
+      suggestedSlideCount: plan.suggestedSlideCount
+    },
+    voice: plan.voice,
+    tone: plan.tone,
+    reason: plan.reason,
+    structure: plan.structure,
+    captionStyle: plan.captionStyle,
+    doNotMention: plan.doNotMention,
+    formatName: mood ?? "grind"
   };
 }
 

@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { MockAiProvider } from "../src/ai-provider.js";
 import type { ActivitySummary } from "../src/activity-summary.js";
 import { generateDiaryDraft } from "../src/diary-generator.js";
-import type { StoryFormatPlan } from "../src/story-format-plan.js";
+import type { MoodPlan } from "../src/story-format-plan.js";
 import {
   DEFAULT_CAPTION_PROJECTION_TOKEN_BUDGET,
   assembleRawNarrativeProjection,
@@ -234,10 +234,16 @@ function createProviderDraft() {
   };
 }
 
-function createStoryFormatPlan(): StoryFormatPlan {
+function createStoryFormatPlan(): MoodPlan {
   return {
-    schemaVersion: 1,
-    formatName: "Bug Court Transcript",
+    schemaVersion: 2,
+    mood: "grind",
+    angle: "The day circled the same flaky provider validation bug.",
+    pacing: {
+      openWith: "scene",
+      shape: "hook-turn-landing",
+      suggestedSlideCount: 3
+    },
     voice: "tired QA narrator",
     tone: "deadpan, witty, affectionate",
     reason: "Medium coding day with clear evidence suits a wry recap.",
@@ -246,9 +252,9 @@ function createStoryFormatPlan(): StoryFormatPlan {
       { part: "Evidence", purpose: "Show the work" },
       { part: "Verdict", purpose: "Land the joke" }
     ],
-    suggestedSlideCount: 3,
     captionStyle: "wry",
-    doNotMention: []
+    doNotMention: [],
+    formatName: "grind"
   };
 }
 

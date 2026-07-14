@@ -14,11 +14,15 @@ import {
 import type { MoodPlan } from "../src/story-format-plan.js";
 
 describe("story format plan", () => {
-  it("returns a validated format plan for a normal activity summary", async () => {
+  it("derives a MoodPlan from activity signals instead of inventing a genre", async () => {
     const provider = new MockAiProvider({
-      response: createProviderPlan({
-        formatName: "Bug Court Transcript",
-        suggestedSlideCount: 5
+      response: createMoodProviderPlan({
+        mood: "firefight",
+        pacing: {
+          openWith: "scene",
+          shape: "hook-turn-landing",
+          suggestedSlideCount: 5
+        }
       })
     });
     const summary = createActivitySummary({
@@ -28,36 +32,22 @@ describe("story format plan", () => {
       blockersOrConfusion: ["Blocked by unclear retry handling."]
     });
 
-    await expect(
-      generateStoryFormatPlan({
-        activitySummary: summary,
-        provider,
-        persona: "wry coworker",
-        roastLevel: 2
-      })
-    ).resolves.toEqual({
-      schemaVersion: 1,
-      formatName: "Bug Court Transcript",
-      voice: "tired QA narrator",
-      tone: "deadpan, witty, affectionate",
-      reason: "The day had enough debugging evidence for a courtroom bit.",
-      structure: [
-        {
-          part: "Opening statement",
-          purpose: "Introduce the actual debugging work."
-        },
-        {
-          part: "Evidence",
-          purpose: "Mention real commits and blockers only."
-        },
-        {
-          part: "Verdict",
-          purpose: "Close with a light situation joke."
-        }
-      ],
-      suggestedSlideCount: 5,
-      captionStyle: "short witty caption",
-      doNotMention: ["raw diffs", "private paths"]
+    const plan = await generateStoryFormatPlan({
+      activitySummary: summary,
+      provider,
+      persona: "wry coworker",
+      roastLevel: 2
+    });
+
+    expect(MOOD_VOCABULARY).toContain(plan.mood);
+    expect(plan.mood).toBe("firefight");
+    // Transitional: formatName always mirrors mood, never an invented genre.
+    expect(plan.formatName).toBe(plan.mood);
+    expect(plan.angle.length).toBeGreaterThan(0);
+    expect(plan.pacing).toEqual({
+      openWith: "scene",
+      shape: "hook-turn-landing",
+      suggestedSlideCount: 5
     });
 
     expect(provider.requests).toHaveLength(1);
@@ -78,6 +68,10 @@ describe("story format plan", () => {
         roastPolicy: {
           roastLevel: 2,
           allowDirectUserRoast: false
+        },
+        activitySignals: {
+          smallWins: ["Fixed flaky provider validation."],
+          blockersOrConfusion: ["Blocked by unclear retry handling."]
         }
       }
     });
@@ -90,8 +84,14 @@ describe("story format plan", () => {
     expect(provider.requests[0]?.instructions).toContain(
       "Do not make the plan a report"
     );
-    expect(provider.requests[0]?.instructions).toContain(
+    expect(provider.requests[0]?.instructions).not.toContain(
       "Pick or invent a clear genre"
+    );
+    expect(provider.requests[0]?.instructions).toContain(
+      "Classify today into exactly ONE mood"
+    );
+    expect(provider.requests[0]?.instructions).toContain(
+      "Choose an angle"
     );
     expect(provider.requests[0]?.instructions).toContain(
       "not the user's diary"
@@ -101,12 +101,17 @@ describe("story format plan", () => {
     );
   });
 
-  it("builds a quiet-day request without fabricating activity", async () => {
+  it("derives an honest low-key plan for quiet days without fabricating activity", async () => {
     const provider = new MockAiProvider({
-      response: createProviderPlan({
-        formatName: "Quiet Terminal Watch",
-        reason: "No recorded work was available, so the plan admits a quiet day.",
-        suggestedSlideCount: 3
+      response: createMoodProviderPlan({
+        mood: "quiet",
+        angle: "Nothing much happened; the day was mostly waiting.",
+        pacing: {
+          openWith: "thought",
+          shape: "single-beat",
+          suggestedSlideCount: 3
+        },
+        reason: "No recorded work was available, so the plan admits a quiet day."
       })
     });
 
@@ -123,6 +128,9 @@ describe("story format plan", () => {
           subjects: [],
           themes: []
         },
+        smallWins: [],
+        blockersOrConfusion: [],
+        unfinishedThreads: [],
         possibleJokes: [
           "Quiet day, but the draft still has to admit nothing exploded."
         ],
@@ -135,14 +143,15 @@ describe("story format plan", () => {
       roastLevel: 4
     });
 
-    expect(plan.formatName).toBe("Quiet Terminal Watch");
-    expect(plan.suggestedSlideCount).toBe(3);
+    expect(plan.mood).toBe("quiet");
+    expect(plan.formatName).toBe("quiet");
+    expect(plan.pacing.suggestedSlideCount).toBe(3);
     expect(provider.requests[0]?.input.quiet).toBe(true);
     expect(provider.requests[0]?.input.highlights).toContain(
       "No recorded Git activity or manual notes; keep the draft honest."
     );
     expect(provider.requests[0]?.instructions).toContain(
-      "For quiet days, acknowledge low or no recorded work"
+      "This is a quiet day: bias mood toward quiet"
     );
   });
 
@@ -165,9 +174,7 @@ describe("story format plan", () => {
     });
     const recentFormats = await loadRecentStoryFormatHistory({ homeDir });
     const provider = new MockAiProvider({
-      response: createProviderPlan({
-        formatName: "Refactor Field Notes"
-      })
+      response: createMoodProviderPlan({ mood: "grind" })
     });
 
     await generateStoryFormatPlan({
@@ -201,7 +208,7 @@ describe("story format plan", () => {
   it("fails with a short actionable generation error for malformed provider output", async () => {
     const provider = new MockAiProvider({
       response: {
-        formatName: "Missing required plan fields"
+        mood: "firefight"
       }
     });
 
@@ -222,12 +229,37 @@ describe("story format plan", () => {
       generateStoryFormatPlan({
         activitySummary: createActivitySummary(),
         provider: new MockAiProvider({
-          response: createProviderPlan({ suggestedSlideCount: 10 })
+          response: createMoodProviderPlan({
+            pacing: {
+              openWith: "scene",
+              shape: "hook-turn-landing",
+              suggestedSlideCount: 10
+            }
+          })
         }),
         persona: "wry coworker",
         roastLevel: 2
       })
     ).rejects.toBeInstanceOf(AiGenerationError);
+  });
+
+  it("rejects a mood outside the fixed vocabulary instead of accepting an invented genre", async () => {
+    const provider = new MockAiProvider({
+      response: createMoodProviderPlan({ mood: "thriller" })
+    });
+
+    await expect(
+      generateStoryFormatPlan({
+        activitySummary: createActivitySummary(),
+        provider,
+        persona: "wry coworker",
+        roastLevel: 2
+      })
+    ).rejects.toMatchObject({
+      code: "malformed-response",
+      exitCode: 4,
+      message: "AI provider returned invalid story format plan."
+    });
   });
 });
 
@@ -306,18 +338,24 @@ describe("mood vocabulary and MoodPlan contract", () => {
   });
 });
 
-function createProviderPlan(
-  overrides: Partial<ReturnType<typeof baseProviderPlan>> = {}
-): ReturnType<typeof baseProviderPlan> {
+function createMoodProviderPlan(
+  overrides: Partial<ReturnType<typeof baseMoodProviderPlan>> = {}
+): ReturnType<typeof baseMoodProviderPlan> {
   return {
-    ...baseProviderPlan(),
+    ...baseMoodProviderPlan(),
     ...overrides
   };
 }
 
-function baseProviderPlan() {
+function baseMoodProviderPlan() {
   return {
-    formatName: "Bug Court Transcript",
+    mood: "firefight",
+    angle: "The build kept breaking on the same flaky test.",
+    pacing: {
+      openWith: "scene",
+      shape: "hook-turn-landing",
+      suggestedSlideCount: 4
+    },
     voice: "tired QA narrator",
     tone: "deadpan, witty, affectionate",
     reason: "The day had enough debugging evidence for a courtroom bit.",
@@ -335,7 +373,6 @@ function baseProviderPlan() {
         purpose: "Close with a light situation joke."
       }
     ],
-    suggestedSlideCount: 4,
     captionStyle: "short witty caption",
     doNotMention: ["raw diffs", "private paths"]
   };

@@ -164,7 +164,7 @@ export type LoadRecentStoryFormatHistoryOptions = {
 export type RecordStoryFormatHistoryOptions = {
   homeDir?: string;
   targetDate: string;
-  storyFormatPlan: StoryFormatPlan;
+  storyFormatPlan: MoodPlan;
   limit?: number;
 };
 
@@ -174,13 +174,14 @@ type StoryFormatHistoryFile = {
   recent?: unknown[];
 };
 
-type StoryFormatPlanProviderData = JsonObject & {
-  formatName?: JsonValue;
+type MoodPlanProviderData = JsonObject & {
+  mood?: JsonValue;
+  angle?: JsonValue;
+  pacing?: JsonValue;
   voice?: JsonValue;
   tone?: JsonValue;
   reason?: JsonValue;
   structure?: JsonValue;
-  suggestedSlideCount?: JsonValue;
   captionStyle?: JsonValue;
   doNotMention?: JsonValue;
 };
@@ -191,7 +192,7 @@ const maxSlideCount = 8;
 
 export async function generateStoryFormatPlan(
   options: StoryFormatPlanOptions
-): Promise<StoryFormatPlan> {
+): Promise<MoodPlan> {
   const recentFormats = options.recentFormats ?? [];
   const request = createAiGenerationRequest({
     task: "story-plan",
@@ -209,7 +210,7 @@ export async function generateStoryFormatPlan(
       recentFormats
     })
   });
-  const response = await generateStructured<StoryFormatPlanProviderData>(
+  const response = await generateStructured<MoodPlanProviderData>(
     options.provider,
     request
   );
@@ -336,6 +337,12 @@ function buildSafeStoryFormatInput(options: {
       activityLevel: summary.activityLevel,
       dominantTheme: summary.dominantTheme,
       commitSubjects: summary.commitSignals.subjects,
+      // Mood/angle derivation signals (UNC-213): already-safe, already
+      // surfaced in `highlights` above, exposed here as structured fields too
+      // so the AI can ground mood/angle choices in specific signals rather
+      // than a flattened highlights list.
+      smallWins: summary.smallWins,
+      blockersOrConfusion: summary.blockersOrConfusion,
       unfinishedThreads: summary.unfinishedThreads,
       possibleJokes: summary.possibleJokes,
       publicSafetyNotes: summary.publicSafetyNotes,
@@ -373,19 +380,28 @@ function buildStoryFormatInstructions(options: {
       ? "Light direct roast of work habits is allowed, but never personal attacks."
       : "Keep jokes focused on situations, tools, TODOs, bugs, and requirements.";
 
+  const quietBiasInstruction = options.quiet
+    ? [
+        "This is a quiet day: bias mood toward quiet, keep suggestedSlideCount small (around 3), and make angle an honest waiting/observation angle. Never invent work to fill the plan."
+      ]
+    : [];
+
   return [
-    "Design a Story Format Plan for an Uncommitted diary draft.",
+    "Design a Mood Plan for an Uncommitted diary draft.",
     `Entry mode is ${options.entryMode}; create one global diary plan across all projects.`,
-    "Return structured JSON with formatName, voice, tone, reason, structure, suggestedSlideCount, captionStyle, and doNotMention.",
-    "Pick or invent a clear genre for today's format; make the genre obvious through formatName, voice, and structure.",
+    "Return structured JSON with mood, angle, pacing, voice, tone, reason, structure, captionStyle, and doNotMention.",
+    "Classify today into exactly ONE mood from the fixed vocabulary: release, firefight, quiet, grind, breakthrough, cleanup. Do not invent a new mood label or a fictional genre.",
+    "Choose an angle: the one thing the coworker actually noticed today, such as an irritating bug, work the user avoided, an unnoticed small win, or a tool that betrayed everyone. Ground the angle in the real activity signals only, never invented ones.",
+    "Vary pacing (openWith, shape, suggestedSlideCount) structurally so entries feel different day to day, without announcing a genre or costume.",
     "This is not the user's diary. It is the AI coworker's own off-the-record account of what it noticed while working alongside the user.",
     "Choose a format that supports a felt diary, not a project status recap.",
     "Do not make the plan a report, changelog, sprint update, or metrics summary.",
-    "Do not default to generic coworker essay mode; use a distinct narrative device such as a case file, field note, broadcast, trial, forecast, object monologue, letter, patrol log, or a newly invented equivalent.",
+    "Do not default to generic coworker essay mode; use a distinct narrative device such as a case file, field note, broadcast, trial, forecast, object monologue, letter, patrol log, or a newly invented equivalent structure, while staying inside the chosen mood rather than a separate genre.",
     "Use concrete work signals only as emotional context: tension, relief, confusion, momentum, fatigue, or tiny satisfaction.",
     "Do not claim to know the user's private feelings; describe the narrator's observations, suspicions, reactions, and workplace atmosphere.",
     "Do not invent work, commits, bugs, features, or user activity.",
-    "For quiet days, acknowledge low or no recorded work and make the format about waiting, observation, or honest quiet.",
+    "For quiet days, acknowledge low or no recorded work and make the plan about waiting, observation, or honest quiet.",
+    ...quietBiasInstruction,
     "Avoid near-duplicates of recentFormats when they are provided.",
     "Keep the structure readable as an Instagram carousel.",
     "Roast policy: light jokes may target situations, tools, TODOs, bugs, recurring work patterns, or requirement churn.",
@@ -395,31 +411,43 @@ function buildStoryFormatInstructions(options: {
   ].join("\n");
 }
 
-function parseStoryFormatPlan(data: StoryFormatPlanProviderData): StoryFormatPlan {
-  if (!isStoryFormatPlanProviderData(data)) {
+function parseStoryFormatPlan(data: MoodPlanProviderData): MoodPlan {
+  if (!isMoodPlanProviderData(data)) {
     throwInvalidStoryFormatPlan();
   }
 
-  const plan: StoryFormatPlan = {
-    schemaVersion: 1,
-    formatName: data.formatName,
+  const plan: MoodPlan = {
+    schemaVersion: 2,
+    mood: data.mood,
+    angle: data.angle,
+    pacing: data.pacing,
     voice: data.voice,
     tone: data.tone,
     reason: data.reason,
     structure: data.structure,
-    suggestedSlideCount: data.suggestedSlideCount,
     captionStyle: data.captionStyle,
-    doNotMention: data.doNotMention
+    doNotMention: data.doNotMention,
+    // Transitional coercion (T4 removes this field): formatName always
+    // mirrors the derived mood, never an invented genre. Required so
+    // consumers that still read `.formatName` (story.json output, format
+    // history, feedback) keep compiling/working during T2/T3.
+    formatName: data.mood
   };
 
-  if (!isStoryFormatPlan(plan)) {
+  if (!isMoodPlan(plan)) {
     throwInvalidStoryFormatPlan();
   }
 
   return plan;
 }
 
-function isStoryFormatPlan(value: unknown): value is StoryFormatPlan {
+/**
+ * Legacy validator for the pre-mood-engine `StoryFormatPlan` contract
+ * (UNC-212). No longer called from `parseStoryFormatPlan` — the story-plan
+ * path now produces `MoodPlan` via `isMoodPlan` — but kept exported (not
+ * deleted) for backward-compat reading of the legacy shape.
+ */
+export function isStoryFormatPlan(value: unknown): value is StoryFormatPlan {
   if (!isRecord(value)) {
     return false;
   }
@@ -450,17 +478,19 @@ function isStoryFormatPlan(value: unknown): value is StoryFormatPlan {
   );
 }
 
-function isStoryFormatPlanProviderData(
-  value: StoryFormatPlanProviderData
-): value is StoryFormatPlanProviderData & Omit<StoryFormatPlan, "schemaVersion"> {
+function isMoodPlanProviderData(
+  value: MoodPlanProviderData
+): value is MoodPlanProviderData &
+  Omit<MoodPlan, "schemaVersion" | "formatName"> {
   return (
-    typeof value.formatName === "string" &&
+    isMood(value.mood) &&
+    typeof value.angle === "string" &&
+    isStoryPacing(value.pacing) &&
     typeof value.voice === "string" &&
     typeof value.tone === "string" &&
     typeof value.reason === "string" &&
     Array.isArray(value.structure) &&
     value.structure.every(isStoryFormatStructurePart) &&
-    Number.isInteger(value.suggestedSlideCount) &&
     typeof value.captionStyle === "string" &&
     Array.isArray(value.doNotMention) &&
     value.doNotMention.every((item) => typeof item === "string")

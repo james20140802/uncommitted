@@ -15,7 +15,7 @@ import type { Persona } from "./persona.js";
 import { emailPattern } from "./redaction.js";
 import type {
   ProjectPersonaHint,
-  StoryFormatPlan
+  MoodPlan
 } from "./story-format-plan.js";
 import type { RawNarrativeProjection } from "./raw-narrative-projection.js";
 
@@ -49,7 +49,7 @@ export type DiaryDraft = {
 
 export type DiaryGeneratorOptions = {
   activitySummary: ActivitySummary;
-  storyFormatPlan: StoryFormatPlan;
+  storyFormatPlan: MoodPlan;
   provider: AiProvider;
   persona: string;
   roastLevel: number;
@@ -181,7 +181,7 @@ export function redactArchitectureDisclosureFromDraft(
 
 function buildSafeDiaryInput(options: {
   activitySummary: ActivitySummary;
-  storyFormatPlan: StoryFormatPlan;
+  storyFormatPlan: MoodPlan;
   persona: string;
   roastLevel: number;
   projectPersonaHints: ProjectPersonaHint[];
@@ -219,7 +219,7 @@ function buildSafeDiaryInput(options: {
         part: part.part,
         purpose: part.purpose
       })),
-      suggestedSlideCount: options.storyFormatPlan.suggestedSlideCount,
+      suggestedSlideCount: options.storyFormatPlan.pacing.suggestedSlideCount,
       captionStyle: options.storyFormatPlan.captionStyle,
       doNotMention: options.storyFormatPlan.doNotMention
     },
@@ -287,7 +287,7 @@ function buildHighlights(summary: ActivitySummary, quiet: boolean): string[] {
 function buildDiaryInstructions(options: {
   quiet: boolean;
   roastLevel: number;
-  storyFormatPlan: StoryFormatPlan;
+  storyFormatPlan: MoodPlan;
 }): string {
   const directRoastPolicy =
     options.roastLevel >= 3
@@ -301,7 +301,7 @@ function buildDiaryInstructions(options: {
     "Return structured JSON for story.json with title, slides, and altText.",
     "Follow the Story Format Plan for story title, slide titles, slide bodies, and visualMood only.",
     "Use the Story Format Plan's voice and tone for the story slides only.",
-    `Create ${options.storyFormatPlan.suggestedSlideCount} slides when possible, while staying within 3-8 slides.`,
+    `Create ${options.storyFormatPlan.pacing.suggestedSlideCount} slides when possible, while staying within 3-8 slides.`,
     "Write from the configured AI coworker's point of view; this is the narrator's own off-the-record diary, not the user's diary.",
     "Do not explain the persona to the reader.",
     "Use the Story Format Plan for slide structure and story flow.",
@@ -589,7 +589,7 @@ function parseCaptionResult(data: CaptionProviderData): CaptionResult {
 function parseDiaryDraft(options: {
   data: DiaryDraftProviderData;
   activitySummary: ActivitySummary;
-  storyFormatPlan: StoryFormatPlan;
+  storyFormatPlan: MoodPlan;
 }): DiaryDraft {
   assertSafeProviderData(options.data);
 

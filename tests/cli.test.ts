@@ -2556,7 +2556,13 @@ function createDraftMetadata(): Record<string, unknown> {
 
 function createScheduleStoryFormatPlan(): Record<string, unknown> {
   return {
-    formatName: "Scheduled Dispatch",
+    mood: "grind",
+    angle: "The scheduled workflow kept circling the same local activity.",
+    pacing: {
+      openWith: "scene",
+      shape: "hook-turn-landing",
+      suggestedSlideCount: 3
+    },
     voice: "dry local coworker",
     tone: "concise and lightly amused",
     reason: "The scheduled workflow has real local activity to summarize.",
@@ -2574,7 +2580,6 @@ function createScheduleStoryFormatPlan(): Record<string, unknown> {
         purpose: "Close with local carousel output."
       }
     ],
-    suggestedSlideCount: 3,
     captionStyle: "short practical caption",
     doNotMention: ["raw diffs", "private paths"]
   };

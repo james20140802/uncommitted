@@ -11,7 +11,7 @@ import {
   type DiaryDraft
 } from "../src/diary-generator.js";
 import { PERSONA_PRESETS, type Persona } from "../src/persona.js";
-import type { StoryFormatPlan } from "../src/story-format-plan.js";
+import type { MoodPlan, StoryFormatPlan } from "../src/story-format-plan.js";
 
 const captionTestPersona: Persona = PERSONA_PRESETS["시니컬한 관찰자"].persona;
 
@@ -917,11 +917,13 @@ function createSlides(count: number): ReturnType<typeof baseProviderDraft>["slid
   }));
 }
 
+// Fixture overrides keep the flat legacy shape (formatName/suggestedSlideCount)
+// so existing call sites stay unchanged; internally mapped onto the MoodPlan
+// diary-generator now requires (mood/angle/pacing.suggestedSlideCount).
 function createStoryFormatPlan(
-  overrides: Partial<StoryFormatPlan> = {}
-): StoryFormatPlan {
-  return {
-    schemaVersion: 1,
+  overrides: Partial<Omit<StoryFormatPlan, "schemaVersion">> = {}
+): MoodPlan {
+  const plan = {
     formatName: "Bug Court Transcript",
     voice: "tired QA narrator",
     tone: "deadpan, witty, affectionate",
@@ -944,6 +946,24 @@ function createStoryFormatPlan(
     captionStyle: "short witty caption",
     doNotMention: ["raw diffs", "private paths"],
     ...overrides
+  };
+
+  return {
+    schemaVersion: 2,
+    mood: "grind",
+    angle: "The day circled the same flaky provider validation bug.",
+    pacing: {
+      openWith: "scene",
+      shape: "hook-turn-landing",
+      suggestedSlideCount: plan.suggestedSlideCount
+    },
+    voice: plan.voice,
+    tone: plan.tone,
+    reason: plan.reason,
+    structure: plan.structure,
+    captionStyle: plan.captionStyle,
+    doNotMention: plan.doNotMention,
+    formatName: plan.formatName
   };
 }
 

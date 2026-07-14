@@ -13,7 +13,7 @@ import { runCli } from "../src/cli.js";
 import type { GitActivityEvent } from "../src/collect-git-command.js";
 import type { CaptionResult } from "../src/diary-generator.js";
 import { addProject, type ProjectRecord } from "../src/project-add.js";
-import type { StoryFormatPlan } from "../src/story-format-plan.js";
+import type { MoodPlan } from "../src/story-format-plan.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -541,9 +541,15 @@ class TaskAwareProvider implements AiProvider {
     this.requests.push(request);
 
     if (request.task === "story-plan") {
-      const plan: StoryFormatPlan = {
-        schemaVersion: 1,
-        formatName: "Implementation Dispatch",
+      const plan: MoodPlan = {
+        schemaVersion: 2,
+        mood: "grind",
+        angle: "Source-gating test fixture angle.",
+        pacing: {
+          openWith: "scene",
+          shape: "hook-turn-landing",
+          suggestedSlideCount: 3
+        },
         voice: "dry coworker",
         tone: "concise and lightly amused",
         reason: "Source-gating test fixture.",
@@ -552,9 +558,9 @@ class TaskAwareProvider implements AiProvider {
           { part: "Draft", purpose: "Beat the diary." },
           { part: "Close", purpose: "End cleanly." }
         ],
-        suggestedSlideCount: 3,
         captionStyle: "short witty caption",
-        doNotMention: ["raw diffs", "private paths"]
+        doNotMention: ["raw diffs", "private paths"],
+        formatName: "grind"
       };
       return { responseJson: JSON.stringify(plan) };
     }
