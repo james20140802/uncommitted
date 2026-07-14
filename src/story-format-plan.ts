@@ -30,6 +30,109 @@ export type StoryFormatPlan = {
   doNotMention: string[];
 };
 
+/**
+ * Fixed mood vocabulary for the mood/angle/pacing engine (UNC-200/UNC-212).
+ * Deliberately small and closed: these are moods, not invented genres.
+ * Vocabulary tuning is explicit out-of-scope follow-up work.
+ */
+export const MOOD_VOCABULARY = [
+  "release",
+  "firefight",
+  "quiet",
+  "grind",
+  "breakthrough",
+  "cleanup"
+] as const;
+
+export type Mood = (typeof MOOD_VOCABULARY)[number];
+
+export function isMood(value: unknown): value is Mood {
+  return (
+    typeof value === "string" &&
+    (MOOD_VOCABULARY as readonly string[]).includes(value)
+  );
+}
+
+export type StoryPacing = {
+  // structural variation that does NOT announce a genre
+  openWith: "scene" | "thought";
+  shape: "hook-turn-landing" | "list" | "single-beat" | "spiral";
+  suggestedSlideCount: number; // 3-8
+};
+
+export type MoodPlan = {
+  schemaVersion: 2;
+  mood: Mood;
+  angle: string; // what the coworker fixated on today (free text, safe)
+  pacing: StoryPacing;
+  voice: string;
+  tone: string;
+  reason: string;
+  structure: StoryFormatStructurePart[];
+  captionStyle: string;
+  doNotMention: string[];
+  /**
+   * Transitional mirror of `mood`, retained ONLY so existing consumers keep
+   * compiling during T2/T3. It is NOT an invented genre — it always equals the
+   * mood label. Removed from the output surface and from this type in T4 (UNC-215).
+   */
+  formatName: string;
+};
+
+const moodPlanMinSlideCount = 3;
+const moodPlanMaxSlideCount = 8;
+
+export function isMoodPlan(value: unknown): value is MoodPlan {
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  const pacing = value.pacing;
+
+  return (
+    value.schemaVersion === 2 &&
+    isMood(value.mood) &&
+    typeof value.angle === "string" &&
+    value.angle.trim().length > 0 &&
+    isStoryPacing(pacing) &&
+    typeof value.voice === "string" &&
+    value.voice.trim().length > 0 &&
+    typeof value.tone === "string" &&
+    value.tone.trim().length > 0 &&
+    typeof value.reason === "string" &&
+    value.reason.trim().length > 0 &&
+    Array.isArray(value.structure) &&
+    value.structure.length > 0 &&
+    value.structure.every(isStoryFormatStructurePart) &&
+    typeof value.captionStyle === "string" &&
+    value.captionStyle.trim().length > 0 &&
+    Array.isArray(value.doNotMention) &&
+    value.doNotMention.every((item) => typeof item === "string") &&
+    typeof value.formatName === "string" &&
+    value.formatName.trim().length > 0
+  );
+}
+
+function isStoryPacing(value: unknown): value is StoryPacing {
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  const suggestedSlideCount = value.suggestedSlideCount;
+
+  return (
+    (value.openWith === "scene" || value.openWith === "thought") &&
+    (value.shape === "hook-turn-landing" ||
+      value.shape === "list" ||
+      value.shape === "single-beat" ||
+      value.shape === "spiral") &&
+    typeof suggestedSlideCount === "number" &&
+    Number.isInteger(suggestedSlideCount) &&
+    suggestedSlideCount >= moodPlanMinSlideCount &&
+    suggestedSlideCount <= moodPlanMaxSlideCount
+  );
+}
+
 export type RecentStoryFormat = {
   date: string;
   formatName: string;

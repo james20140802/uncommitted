@@ -6,8 +6,12 @@ import { AiGenerationError, MockAiProvider } from "../src/ai-provider.js";
 import type { ActivitySummary } from "../src/activity-summary.js";
 import {
   generateStoryFormatPlan,
-  loadRecentStoryFormatHistory
+  loadRecentStoryFormatHistory,
+  isMood,
+  isMoodPlan,
+  MOOD_VOCABULARY
 } from "../src/story-format-plan.js";
+import type { MoodPlan } from "../src/story-format-plan.js";
 
 describe("story format plan", () => {
   it("returns a validated format plan for a normal activity summary", async () => {
@@ -224,6 +228,81 @@ describe("story format plan", () => {
         roastLevel: 2
       })
     ).rejects.toBeInstanceOf(AiGenerationError);
+  });
+});
+
+describe("mood vocabulary and MoodPlan contract", () => {
+  it("defines exactly the 6 fixed moods", () => {
+    expect(MOOD_VOCABULARY).toEqual([
+      "release",
+      "firefight",
+      "quiet",
+      "grind",
+      "breakthrough",
+      "cleanup"
+    ]);
+  });
+
+  it("isMood guards known moods and rejects invented genres", () => {
+    expect(isMood("firefight")).toBe(true);
+    expect(isMood("thriller")).toBe(false);
+  });
+
+  it("isMoodPlan accepts a well-formed MoodPlan", () => {
+    const plan: MoodPlan = {
+      schemaVersion: 2,
+      mood: "firefight",
+      angle: "The build kept breaking on the same flaky test.",
+      pacing: {
+        openWith: "scene",
+        shape: "hook-turn-landing",
+        suggestedSlideCount: 5
+      },
+      voice: "tired QA narrator",
+      tone: "deadpan, witty, affectionate",
+      reason: "The day had enough debugging evidence for a courtroom bit.",
+      structure: [
+        {
+          part: "Opening statement",
+          purpose: "Introduce the actual debugging work."
+        }
+      ],
+      captionStyle: "short witty caption",
+      doNotMention: ["raw diffs", "private paths"],
+      formatName: "firefight"
+    };
+
+    expect(isMoodPlan(plan)).toBe(true);
+  });
+
+  it("isMoodPlan rejects an invalid mood or out-of-range slide count", () => {
+    const basePlan: MoodPlan = {
+      schemaVersion: 2,
+      mood: "quiet",
+      angle: "Nothing much happened today.",
+      pacing: {
+        openWith: "thought",
+        shape: "single-beat",
+        suggestedSlideCount: 3
+      },
+      voice: "quiet observer",
+      tone: "calm",
+      reason: "Low activity day.",
+      structure: [{ part: "Beat", purpose: "Sit with the quiet." }],
+      captionStyle: "short",
+      doNotMention: [],
+      formatName: "quiet"
+    };
+
+    expect(
+      isMoodPlan({ ...basePlan, mood: "thriller" })
+    ).toBe(false);
+    expect(
+      isMoodPlan({
+        ...basePlan,
+        pacing: { ...basePlan.pacing, suggestedSlideCount: 10 }
+      })
+    ).toBe(false);
   });
 });
 
