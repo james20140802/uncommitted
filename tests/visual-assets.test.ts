@@ -359,6 +359,49 @@ describe("visual asset generation", () => {
     });
   });
 
+  it("redacts architecture-disclosure detail from the image prompt and prompt summary (UNC-206)", async () => {
+    const revision = await createTestRevision();
+    const cards = createCarouselHtmlCards(
+      createStoryDraft({
+        slides: [
+          {
+            index: 1,
+            title: "Sensitive",
+            body: "Do not leak visual input.",
+            visualMood:
+              "route guard admin allowlist server-side authorization glowing on a terminal"
+          }
+        ]
+      }),
+      { visualStyle: "photo-first" }
+    );
+    const provider = new RecordingImageProvider();
+
+    const result = await generateCarouselVisualAssets({
+      revision,
+      cards,
+      provider,
+      fallbackProviderName: "mock"
+    });
+
+    expect(provider.requests).toHaveLength(1);
+    expect(provider.requests[0]?.prompt).not.toContain("route guard");
+    expect(provider.requests[0]?.prompt).not.toContain("admin allowlist");
+    expect(provider.requests[0]?.prompt).not.toContain(
+      "server-side authorization"
+    );
+    expect(provider.requests[0]?.prompt).toContain("[redacted-architecture]");
+    expect(provider.requests[0]?.promptSummary).not.toContain("route guard");
+    expect(provider.requests[0]?.promptSummary).not.toContain(
+      "admin allowlist"
+    );
+    expect(provider.requests[0]?.promptSummary).not.toContain(
+      "server-side authorization"
+    );
+    expect(result.assets[0]?.promptSummary).not.toContain("route guard");
+    expect(result.assets[0]?.promptSummary).not.toContain("admin allowlist");
+  });
+
   it("does not call hosted image providers for story-card mode", async () => {
     const revision = await createTestRevision();
     const cards = createCarouselHtmlCards(createStoryDraft(), {

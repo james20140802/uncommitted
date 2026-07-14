@@ -1,8 +1,13 @@
 import { emailPattern } from "./redaction.js";
+import {
+  ARCHITECTURE_DISCLOSURE_REPLACEMENT,
+  redactArchitectureDisclosure
+} from "./architecture-disclosure.js";
 
 export type SafetyStatus = "safe" | "warning" | "blocked";
 
 export type SafetyRiskCategory =
+  | "architecture-disclosure"
   | "database-credential"
   | "email"
   | "exploit-detail"
@@ -59,6 +64,58 @@ const exploitDetailRisk = {
   replacement: "[redacted-exploit-detail]",
   message: "Exploit detail was redacted."
 } satisfies Omit<DetectionRule, "pattern">;
+
+// Detection lives in architecture-disclosure.ts and runs as a supplemental
+// pass (like redactScriptLikeContent) because it collects non-overlapping
+// matches across several local patterns rather than a single regex.
+// The replacement string itself is imported from architecture-disclosure.ts
+// (ARCHITECTURE_DISCLOSURE_REPLACEMENT) so the two modules cannot diverge.
+
+// UNC-207 / T3: severity is NOT a fixed "blocked". The core-vs-residual
+// split is on the number of DISTINCT disclosure classes (admin-allowlist,
+// route-guard, auth-checkpoint, server-side-authorization), NOT the raw
+// occurrence count. This matters because the safety-report text concatenates
+// the caption AND the diary slides, both generated from the same activity:
+// a single genuinely-incidental fact (e.g. "fixed a route guard bug") is
+// typically echoed in both a slide body and the caption, which would be two
+// RAW matches but is still ONE disclosure class. Counting raw occurrences
+// would wrongly block that (breaking parent AC1). Counting distinct classes
+// keeps it a "warning" that still exports.
+//
+//   distinctClasses >= 2  -> "blocked": several different access-control
+//     mechanisms co-occur, so the draft's core content IS the access-control
+//     surface — the 2026-06-05 reproduction class (admin allowlist + route
+//     guard + auth checkpoint + server-side authorization). Parent AC4.
+//   distinctClasses == 1  -> "warning": a single incidental fact, sanitized
+//     in place, even if echoed across multiple fields. Parent AC1.
+//
+// Deterministic, local (no AI call). It composes with the existing
+// deriveStatus()/exportAllowed derivation below rather than adding a
+// parallel gating path.
+const ARCHITECTURE_DISCLOSURE_CORE_CLASS_THRESHOLD = 2;
+
+const architectureDisclosureBlockedRisk = {
+  category: "architecture-disclosure",
+  severity: "blocked",
+  replacement: ARCHITECTURE_DISCLOSURE_REPLACEMENT,
+  message: "Security architecture detail was redacted."
+} satisfies Omit<DetectionRule, "pattern">;
+
+const architectureDisclosureWarningRisk = {
+  category: "architecture-disclosure",
+  severity: "warning",
+  replacement: ARCHITECTURE_DISCLOSURE_REPLACEMENT,
+  message:
+    "Security architecture detail was redacted; residual mention should be reviewed before export."
+} satisfies Omit<DetectionRule, "pattern">;
+
+function resolveArchitectureDisclosureRisk(
+  distinctClasses: number
+): Omit<DetectionRule, "pattern"> {
+  return distinctClasses >= ARCHITECTURE_DISCLOSURE_CORE_CLASS_THRESHOLD
+    ? architectureDisclosureBlockedRisk
+    : architectureDisclosureWarningRisk;
+}
 
 const detectionRules: DetectionRule[] = [
   {
@@ -151,6 +208,18 @@ export function checkDraftSafety(text: string): SafetyCheckResult {
   if (scriptResult.count > 0) {
     redactedText = scriptResult.value;
     recordDetection(risks, redactions, exploitDetailRisk, scriptResult.count);
+  }
+
+  const architectureResult = redactArchitectureDisclosure(redactedText);
+
+  if (architectureResult.count > 0) {
+    redactedText = architectureResult.value;
+    recordDetection(
+      risks,
+      redactions,
+      resolveArchitectureDisclosureRisk(architectureResult.distinctClasses),
+      architectureResult.count
+    );
   }
 
   const riskList = Array.from(risks.values());
@@ -335,6 +404,7 @@ function isSafetyRedaction(value: unknown): value is SafetyRedaction {
 
 function isSafetyRiskCategory(value: unknown): value is SafetyRiskCategory {
   return (
+    value === "architecture-disclosure" ||
     value === "database-credential" ||
     value === "email" ||
     value === "exploit-detail" ||
