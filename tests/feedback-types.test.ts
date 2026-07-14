@@ -5,6 +5,7 @@ import {
   isFeedbackReason,
   isFeedbackRecord,
   isValidScore,
+  migrateLegacyFeedbackFields,
   validateScore
 } from "../src/feedback-types.js";
 import type { FeedbackReason, FeedbackRecord } from "../src/feedback-types.js";
@@ -145,7 +146,7 @@ describe("isFeedbackRecord", () => {
   const validRecord: FeedbackRecord = {
     date: "2026-05-19",
     revision: "rev-001",
-    formatName: "AI의 퇴근일지",
+    mood: "grind",
     fun: 4,
     share: 3,
     accuracy: 5,
@@ -193,5 +194,61 @@ describe("isFeedbackRecord", () => {
     expect(isFeedbackRecord(undefined)).toBe(false);
     expect(isFeedbackRecord("string")).toBe(false);
     expect(isFeedbackRecord(42)).toBe(false);
+  });
+
+  it("returns false for a legacy formatName-only record before migration (UNC-215)", () => {
+    const { mood: _mood, ...legacyRecord } = validRecord;
+    void _mood;
+    expect(
+      isFeedbackRecord({ ...legacyRecord, formatName: "AI의 퇴근일지" })
+    ).toBe(false);
+  });
+});
+
+describe("migrateLegacyFeedbackFields (UNC-215)", () => {
+  const validRecordWithoutMood: Omit<FeedbackRecord, "mood"> = {
+    date: "2026-05-19",
+    revision: "rev-001",
+    fun: 4,
+    share: 3,
+    accuracy: 5,
+    safetyConcern: false,
+    wouldPost: false,
+    reasons: ["weak-caption"],
+    note: "캡션이 너무 담백함",
+    createdAt: "2026-05-19T23:30:00.000Z"
+  };
+
+  it("leaves a record with mood already present unchanged", () => {
+    const record = { mood: "grind", other: "field" };
+    expect(migrateLegacyFeedbackFields(record)).toEqual(record);
+  });
+
+  it("maps legacy formatName onto mood without throwing", () => {
+    const legacy = { formatName: "AI의 퇴근일지", fun: 4 };
+    expect(migrateLegacyFeedbackFields(legacy)).toEqual({
+      formatName: "AI의 퇴근일지",
+      fun: 4,
+      mood: "AI의 퇴근일지"
+    });
+  });
+
+  it("falls back to (unnamed) when neither mood nor formatName is present", () => {
+    const bare = { fun: 4 };
+    expect(migrateLegacyFeedbackFields(bare)).toEqual({
+      fun: 4,
+      mood: "(unnamed)"
+    });
+  });
+
+  it("a fully migrated legacy record passes isFeedbackRecord", () => {
+    const legacy = { ...validRecordWithoutMood, formatName: "AI의 퇴근일지" };
+    const migrated = migrateLegacyFeedbackFields(legacy);
+    expect(isFeedbackRecord(migrated)).toBe(true);
+  });
+
+  it("passes through non-object values unchanged", () => {
+    expect(migrateLegacyFeedbackFields(null)).toBeNull();
+    expect(migrateLegacyFeedbackFields("string")).toBe("string");
   });
 });

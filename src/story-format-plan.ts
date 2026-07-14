@@ -71,16 +71,7 @@ export type MoodPlan = {
   structure: StoryFormatStructurePart[];
   captionStyle: string;
   doNotMention: string[];
-  /**
-   * Transitional mirror of `mood`, retained ONLY so existing consumers keep
-   * compiling during T2/T3. It is NOT an invented genre — it always equals the
-   * mood label. Removed from the output surface and from this type in T4 (UNC-215).
-   */
-  formatName: string;
 };
-
-const moodPlanMinSlideCount = 3;
-const moodPlanMaxSlideCount = 8;
 
 export function isMoodPlan(value: unknown): value is MoodPlan {
   if (!isRecord(value)) {
@@ -107,9 +98,7 @@ export function isMoodPlan(value: unknown): value is MoodPlan {
     typeof value.captionStyle === "string" &&
     value.captionStyle.trim().length > 0 &&
     Array.isArray(value.doNotMention) &&
-    value.doNotMention.every((item) => typeof item === "string") &&
-    typeof value.formatName === "string" &&
-    value.formatName.trim().length > 0
+    value.doNotMention.every((item) => typeof item === "string")
   );
 }
 
@@ -128,8 +117,8 @@ function isStoryPacing(value: unknown): value is StoryPacing {
       value.shape === "spiral") &&
     typeof suggestedSlideCount === "number" &&
     Number.isInteger(suggestedSlideCount) &&
-    suggestedSlideCount >= moodPlanMinSlideCount &&
-    suggestedSlideCount <= moodPlanMaxSlideCount
+    suggestedSlideCount >= minSlideCount &&
+    suggestedSlideCount <= maxSlideCount
   );
 }
 
@@ -518,12 +507,7 @@ function parseStoryFormatPlan(data: MoodPlanProviderData): MoodPlan {
     reason: data.reason,
     structure: data.structure,
     captionStyle: data.captionStyle,
-    doNotMention: data.doNotMention,
-    // Transitional coercion (T4 removes this field): formatName always
-    // mirrors the derived mood, never an invented genre. Required so
-    // consumers that still read `.formatName` (story.json output, format
-    // history, feedback) keep compiling/working during T2/T3.
-    formatName: data.mood
+    doNotMention: data.doNotMention
   };
 
   if (!isMoodPlan(plan)) {
@@ -533,47 +517,9 @@ function parseStoryFormatPlan(data: MoodPlanProviderData): MoodPlan {
   return plan;
 }
 
-/**
- * Legacy validator for the pre-mood-engine `StoryFormatPlan` contract
- * (UNC-212). No longer called from `parseStoryFormatPlan` — the story-plan
- * path now produces `MoodPlan` via `isMoodPlan` — but kept exported (not
- * deleted) for backward-compat reading of the legacy shape.
- */
-export function isStoryFormatPlan(value: unknown): value is StoryFormatPlan {
-  if (!isRecord(value)) {
-    return false;
-  }
-
-  const suggestedSlideCount = value.suggestedSlideCount;
-
-  return (
-    value.schemaVersion === 1 &&
-    typeof value.formatName === "string" &&
-    value.formatName.trim().length > 0 &&
-    typeof value.voice === "string" &&
-    value.voice.trim().length > 0 &&
-    typeof value.tone === "string" &&
-    value.tone.trim().length > 0 &&
-    typeof value.reason === "string" &&
-    value.reason.trim().length > 0 &&
-    Array.isArray(value.structure) &&
-    value.structure.length > 0 &&
-    value.structure.every(isStoryFormatStructurePart) &&
-    Number.isInteger(suggestedSlideCount) &&
-    typeof suggestedSlideCount === "number" &&
-    suggestedSlideCount >= minSlideCount &&
-    suggestedSlideCount <= maxSlideCount &&
-    typeof value.captionStyle === "string" &&
-    value.captionStyle.trim().length > 0 &&
-    Array.isArray(value.doNotMention) &&
-    value.doNotMention.every((item) => typeof item === "string")
-  );
-}
-
 function isMoodPlanProviderData(
   value: MoodPlanProviderData
-): value is MoodPlanProviderData &
-  Omit<MoodPlan, "schemaVersion" | "formatName"> {
+): value is MoodPlanProviderData & Omit<MoodPlan, "schemaVersion"> {
   return (
     isMood(value.mood) &&
     typeof value.angle === "string" &&

@@ -13,9 +13,11 @@ import type {
 import { redactArchitectureDisclosure } from "./architecture-disclosure.js";
 import type { Persona } from "./persona.js";
 import { emailPattern } from "./redaction.js";
+import { isMood } from "./story-format-plan.js";
 import type {
   ProjectPersonaHint,
-  MoodPlan
+  MoodPlan,
+  Mood
 } from "./story-format-plan.js";
 import type { RawNarrativeProjection } from "./raw-narrative-projection.js";
 
@@ -30,7 +32,8 @@ export type DiaryDraftMetadata = {
   targetDate: string;
   generatedAt: string;
   activityLevel: ActivityLevel;
-  formatName: string;
+  mood: Mood;
+  angle: string;
   storyFormatVoice: string;
   storyFormatTone: string;
   projectIds: string[];
@@ -211,7 +214,8 @@ function buildSafeDiaryInput(options: {
     entryMode: "daily_global",
     persona: options.persona,
     storyFormatPlan: {
-      formatName: options.storyFormatPlan.formatName,
+      mood: options.storyFormatPlan.mood,
+      angle: options.storyFormatPlan.angle,
       voice: options.storyFormatPlan.voice,
       tone: options.storyFormatPlan.tone,
       reason: options.storyFormatPlan.reason,
@@ -612,7 +616,8 @@ function parseDiaryDraft(options: {
       targetDate: options.activitySummary.targetDate,
       generatedAt: options.activitySummary.generatedAt,
       activityLevel: options.activitySummary.activityLevel,
-      formatName: options.storyFormatPlan.formatName,
+      mood: options.storyFormatPlan.mood,
+      angle: options.storyFormatPlan.angle,
       storyFormatVoice: options.storyFormatPlan.voice,
       storyFormatTone: options.storyFormatPlan.tone,
       projectIds: options.activitySummary.projects.map(
@@ -687,7 +692,8 @@ function isDiaryMetadata(value: unknown): value is DiaryDraftMetadata {
     typeof value.targetDate === "string" &&
     typeof value.generatedAt === "string" &&
     typeof value.activityLevel === "string" &&
-    typeof value.formatName === "string" &&
+    isMood(value.mood) &&
+    typeof value.angle === "string" &&
     typeof value.storyFormatVoice === "string" &&
     typeof value.storyFormatTone === "string" &&
     Array.isArray(value.projectIds) &&

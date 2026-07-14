@@ -559,8 +559,7 @@ class TaskAwareProvider implements AiProvider {
           { part: "Close", purpose: "End cleanly." }
         ],
         captionStyle: "short witty caption",
-        doNotMention: ["raw diffs", "private paths"],
-        formatName: "grind"
+        doNotMention: ["raw diffs", "private paths"]
       };
       return { responseJson: JSON.stringify(plan) };
     }

@@ -42,8 +42,6 @@ describe("story format plan", () => {
 
     expect(MOOD_VOCABULARY).toContain(plan.mood);
     expect(plan.mood).toBe("firefight");
-    // Transitional: formatName always mirrors mood, never an invented genre.
-    expect(plan.formatName).toBe(plan.mood);
     expect(plan.angle.length).toBeGreaterThan(0);
     expect(plan.pacing).toEqual({
       openWith: "scene",
@@ -145,7 +143,6 @@ describe("story format plan", () => {
     });
 
     expect(plan.mood).toBe("quiet");
-    expect(plan.formatName).toBe("quiet");
     expect(plan.pacing.suggestedSlideCount).toBe(3);
     expect(provider.requests[0]?.input.quiet).toBe(true);
     expect(provider.requests[0]?.input.highlights).toContain(
@@ -287,8 +284,7 @@ describe("format history diversity (UNC-214)", () => {
           { part: "Opening statement", purpose: "Introduce the work." }
         ],
         captionStyle: "short witty caption",
-        doNotMention: [],
-        formatName: "grind"
+        doNotMention: []
       }
     });
 
@@ -427,8 +423,7 @@ describe("mood vocabulary and MoodPlan contract", () => {
         }
       ],
       captionStyle: "short witty caption",
-      doNotMention: ["raw diffs", "private paths"],
-      formatName: "firefight"
+      doNotMention: ["raw diffs", "private paths"]
     };
 
     expect(isMoodPlan(plan)).toBe(true);
@@ -449,8 +444,7 @@ describe("mood vocabulary and MoodPlan contract", () => {
       reason: "Low activity day.",
       structure: [{ part: "Beat", purpose: "Sit with the quiet." }],
       captionStyle: "short",
-      doNotMention: [],
-      formatName: "quiet"
+      doNotMention: []
     };
 
     expect(

@@ -55,12 +55,22 @@ const baseMetadata = {
   targetDate: "2026-05-19",
   generatedAt: "2026-05-19T00:00:00.000Z",
   activityLevel: "moderate",
-  formatName: "daily-summary",
+  mood: "grind",
+  angle: "The day circled a concrete signal.",
   storyFormatVoice: "casual",
   storyFormatTone: "warm",
   projectIds: ["proj-1", "proj-2"],
   entryMode: "daily_global",
   slideCount: 3
+};
+
+// Pre-mood-engine drafts only ever carried `formatName` — the loader must
+// still read a value for the preview without throwing (UNC-215).
+const legacyMetadataWithFormatName = {
+  ...baseMetadata,
+  mood: undefined,
+  angle: undefined,
+  formatName: "daily-summary"
 };
 
 const baseStory = {
@@ -100,9 +110,19 @@ describe("formatPreview", () => {
     expect(output).toContain("rev-001");
   });
 
-  it("includes format name from metadata", () => {
+  it("includes mood from metadata", () => {
     const output = formatPreview(makeSuccess({}));
 
+    expect(output).toContain("Mood:");
+    expect(output).toContain("grind");
+  });
+
+  it("falls back to legacy formatName when mood is absent (UNC-215)", () => {
+    const output = formatPreview(
+      makeSuccess({ metadata: legacyMetadataWithFormatName })
+    );
+
+    expect(output).toContain("Mood:");
     expect(output).toContain("daily-summary");
   });
 
@@ -182,9 +202,9 @@ describe("formatPreview", () => {
     expect(output).toContain("metadata.json is missing or contains invalid JSON.");
   });
 
-  it("handles metadata missing formatName gracefully", () => {
+  it("handles metadata missing mood gracefully", () => {
     const metaWithout = { ...baseMetadata };
-    delete (metaWithout as Record<string, unknown>)["formatName"];
+    delete (metaWithout as Record<string, unknown>)["mood"];
 
     const output = formatPreview(makeSuccess({ metadata: metaWithout }));
 

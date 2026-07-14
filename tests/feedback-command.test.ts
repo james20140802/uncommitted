@@ -147,7 +147,7 @@ describe("runFeedbackCommand (feedback latest)", () => {
     expect(saved!.note).toBe("캡션이 너무 담백함");
     expect(saved!.date).toBe("2026-05-19");
     expect(saved!.revision).toBe("rev-001");
-    expect(saved!.formatName).toBe("AI의 퇴근일지");
+    expect(saved!.mood).toBe("AI의 퇴근일지");
   });
 
   it("returns exit code 0 on success and prints confirmation", async () => {
@@ -202,14 +202,41 @@ describe("runFeedbackCommand (feedback latest)", () => {
     expect(saved!.fun).toBe(2);
   });
 
-  it("displays Format and Activity Level when story.json stores them under metadata.*", async () => {
+  it("displays Mood and Activity Level when story.json stores them under metadata.*", async () => {
     const { io, stdout } = createIo();
     const draftRoot = makeTmpDir();
     const evalsDir = makeTmpDir();
     await mkdir(draftRoot, { recursive: true });
 
     const revision = await createDraftRevision({ draftRoot, targetDate: "2026-05-20" });
-    // IMPORTANT: nested-only — formatName/activityLevel exclusively under `metadata.*`
+    // IMPORTANT: nested-only — mood/activityLevel exclusively under `metadata.*`
+    await writeDraftArtifactJson(revision, "story.json", {
+      schemaVersion: 1,
+      metadata: {
+        mood: "grind",
+        activityLevel: "high"
+      }
+    });
+    await writeLatestDraftPointer(revision, new Date().toISOString());
+
+    const exitCode = await runFeedbackCommand(
+      { subcommand: "latest" },
+      io,
+      { draftRoot, evalsDir, prompter: makePrompter() }
+    );
+
+    expect(exitCode).toBe(0);
+    expect(stdout.some((line) => line.includes("Mood: grind"))).toBe(true);
+    expect(stdout.some((line) => line.includes("Activity Level: high"))).toBe(true);
+  });
+
+  it("falls back to legacy metadata.formatName when mood is absent (UNC-215)", async () => {
+    const { io, stdout } = createIo();
+    const draftRoot = makeTmpDir();
+    const evalsDir = makeTmpDir();
+    await mkdir(draftRoot, { recursive: true });
+
+    const revision = await createDraftRevision({ draftRoot, targetDate: "2026-05-20" });
     await writeDraftArtifactJson(revision, "story.json", {
       schemaVersion: 1,
       metadata: {
@@ -226,7 +253,7 @@ describe("runFeedbackCommand (feedback latest)", () => {
     );
 
     expect(exitCode).toBe(0);
-    expect(stdout.some((line) => line.includes("Format: Backstage Cue Book"))).toBe(true);
+    expect(stdout.some((line) => line.includes("Mood: Backstage Cue Book"))).toBe(true);
     expect(stdout.some((line) => line.includes("Activity Level: high"))).toBe(true);
   });
 

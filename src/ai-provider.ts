@@ -573,52 +573,6 @@ function createResponseFormat(task: AiGenerationTask): JsonObject {
   };
 }
 
-// Legacy schema for the pre-mood-engine StoryFormatPlan contract (UNC-212).
-// No longer wired into createResponseFormat/createAnthropicToolDefinition —
-// both story-plan branches now use createMoodPlanSchema — but kept exported
-// (not deleted) since src/story-format-plan.ts still exports the matching
-// legacy `StoryFormatPlan` type/guard for backward-compat reading.
-export function createStoryFormatPlanSchema(): JsonObject {
-  return {
-    type: "object",
-    additionalProperties: false,
-    required: [
-      "formatName",
-      "voice",
-      "tone",
-      "reason",
-      "structure",
-      "suggestedSlideCount",
-      "captionStyle",
-      "doNotMention"
-    ],
-    properties: {
-      formatName: { type: "string" },
-      voice: { type: "string" },
-      tone: { type: "string" },
-      reason: { type: "string" },
-      structure: {
-        type: "array",
-        items: {
-          type: "object",
-          additionalProperties: false,
-          required: ["part", "purpose"],
-          properties: {
-            part: { type: "string" },
-            purpose: { type: "string" }
-          }
-        }
-      },
-      suggestedSlideCount: { type: "integer" },
-      captionStyle: { type: "string" },
-      doNotMention: {
-        type: "array",
-        items: { type: "string" }
-      }
-    }
-  };
-}
-
 /**
  * JSON schema for the mood/angle/pacing engine's MoodPlan output (UNC-212).
  * Wired into both createResponseFormat and createAnthropicToolDefinition for

@@ -253,8 +253,7 @@ function createStoryFormatPlan(): MoodPlan {
       { part: "Verdict", purpose: "Land the joke" }
     ],
     captionStyle: "wry",
-    doNotMention: [],
-    formatName: "grind"
+    doNotMention: []
   };
 }
 

@@ -69,7 +69,8 @@ describe("diary generator", () => {
         targetDate: "2026-05-12",
         generatedAt: "2026-05-12T23:30:00.000Z",
         activityLevel: "medium",
-        formatName: "Bug Court Transcript",
+        mood: "grind",
+        angle: "The day circled the same flaky provider validation bug.",
         storyFormatVoice: "tired QA narrator",
         storyFormatTone: "deadpan, witty, affectionate",
         projectIds: ["uncommitted"],
@@ -95,7 +96,7 @@ describe("diary generator", () => {
         entryMode: "daily_global",
         persona: "wry coworker",
         storyFormatPlan: {
-          formatName: "Bug Court Transcript",
+          mood: "grind",
           suggestedSlideCount: 4
         },
         roastPolicy: {
@@ -197,7 +198,6 @@ describe("diary generator", () => {
         ]
       }),
       storyFormatPlan: createStoryFormatPlan({
-        formatName: "Quiet Terminal Watch",
         reason: "No recorded work was available.",
         suggestedSlideCount: 3
       }),
@@ -323,7 +323,6 @@ describe("diary generator", () => {
           unfinishedThreads: []
         }),
         storyFormatPlan: createStoryFormatPlan({
-          formatName: "Quiet Terminal Watch",
           suggestedSlideCount: 3
         }),
         provider: new MockAiProvider({
@@ -358,6 +357,25 @@ describe("diary generator", () => {
       message: "AI provider fabricated quiet-day activity."
     });
   });
+
+  it("writes mood (not formatName) into story.json metadata (UNC-215)", async () => {
+    const provider = new MockAiProvider({
+      response: createProviderDraft({ title: "Mood Output Day" })
+    });
+    const plan = createStoryFormatPlan({ suggestedSlideCount: 4 });
+
+    const draft = await generateDiaryDraft({
+      activitySummary: createActivitySummary(),
+      storyFormatPlan: plan,
+      provider,
+      persona: "wry coworker",
+      roastLevel: 2
+    });
+
+    expect(draft.metadata.mood).toBe(plan.mood);
+    expect(draft.metadata.angle).toBe(plan.angle);
+    expect(JSON.stringify(draft)).not.toContain("formatName");
+  });
 });
 
 describe("architecture disclosure redaction (UNC-206)", () => {
@@ -385,7 +403,8 @@ describe("architecture disclosure redaction (UNC-206)", () => {
         targetDate: "2026-05-12",
         generatedAt: "2026-05-12T23:30:00.000Z",
         activityLevel: "medium",
-        formatName: "Bug Court Transcript",
+        mood: "grind",
+        angle: "The day circled the same flaky provider validation bug.",
         storyFormatVoice: "tired QA narrator",
         storyFormatTone: "deadpan, witty, affectionate",
         projectIds: ["uncommitted"],
@@ -429,7 +448,8 @@ describe("architecture disclosure redaction (UNC-206)", () => {
         targetDate: "2026-05-12",
         generatedAt: "2026-05-12T23:30:00.000Z",
         activityLevel: "medium",
-        formatName: "Implementation Dispatch",
+        mood: "cleanup",
+        angle: "A small feature shipped and a typo got fixed.",
         storyFormatVoice: "dry coworker",
         storyFormatTone: "concise and lightly amused",
         projectIds: ["uncommitted"],
@@ -460,7 +480,8 @@ describe("architecture disclosure redaction (UNC-206)", () => {
         targetDate: "2026-05-12",
         generatedAt: "2026-05-12T23:30:00.000Z",
         activityLevel: "medium",
-        formatName: "Implementation Dispatch",
+        mood: "cleanup",
+        angle: "A small feature shipped and a typo got fixed.",
         storyFormatVoice: "dry coworker",
         storyFormatTone: "concise and lightly amused",
         projectIds: ["uncommitted"],
@@ -920,6 +941,8 @@ function createSlides(count: number): ReturnType<typeof baseProviderDraft>["slid
 // Fixture overrides keep the flat legacy shape (formatName/suggestedSlideCount)
 // so existing call sites stay unchanged; internally mapped onto the MoodPlan
 // diary-generator now requires (mood/angle/pacing.suggestedSlideCount).
+// `formatName` here is fixture-only shorthand — MoodPlan has no such field
+// since UNC-215.
 function createStoryFormatPlan(
   overrides: Partial<Omit<StoryFormatPlan, "schemaVersion">> = {}
 ): MoodPlan {
@@ -962,8 +985,7 @@ function createStoryFormatPlan(
     reason: plan.reason,
     structure: plan.structure,
     captionStyle: plan.captionStyle,
-    doNotMention: plan.doNotMention,
-    formatName: plan.formatName
+    doNotMention: plan.doNotMention
   };
 }
 

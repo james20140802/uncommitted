@@ -533,7 +533,6 @@ function createStoryFormatPlan(
     ],
     captionStyle: "short witty caption",
     doNotMention: ["raw diffs", "private paths"],
-    formatName: "grind",
     ...overrides
   };
 }

@@ -56,6 +56,7 @@ import {
   generateStoryFormatPlan,
   loadRecentStoryFormatHistory,
   recordStoryFormatHistory,
+  type Mood,
   type MoodPlan
 } from "./story-format-plan.js";
 import {
@@ -143,9 +144,10 @@ type DraftMetadataBase = {
   provider: AiProviderName;
   model?: string;
   activityLevel: ActivitySummary["activityLevel"];
-  formatName: string;
+  mood: Mood;
   storyFormat: {
-    formatName: string;
+    mood: Mood;
+    angle: string;
     voice: string;
     tone: string;
   };
@@ -324,9 +326,10 @@ export async function runGenerateCommand(
     provider: provider.name,
     model: provider.model,
     activityLevel: activitySummary.activityLevel,
-    formatName: storyFormatPlan.formatName,
+    mood: storyFormatPlan.mood,
     storyFormat: {
-      formatName: storyFormatPlan.formatName,
+      mood: storyFormatPlan.mood,
+      angle: storyFormatPlan.angle,
       voice: storyFormatPlan.voice,
       tone: storyFormatPlan.tone
     },

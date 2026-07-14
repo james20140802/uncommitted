@@ -1,6 +1,11 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { FEEDBACK_REASONS, REASON_PROMPT_AREA_MAP, type FeedbackReason } from "./feedback-types.js";
+import {
+  FEEDBACK_REASONS,
+  REASON_PROMPT_AREA_MAP,
+  migrateLegacyFeedbackFields,
+  type FeedbackReason
+} from "./feedback-types.js";
 
 const JSONL_FILENAME = "daily-feedback.jsonl";
 
@@ -13,8 +18,8 @@ export type ReasonCount = {
   count: number;
 };
 
-export type FormatSummary = {
-  formatName: string;
+export type MoodSummary = {
+  mood: string;
   averageFun: number;
   averageShare: number;
 };
@@ -27,7 +32,7 @@ export type FeedbackAggregate = {
   averageAccuracy: number | null;
   wouldPostCount: number;
   topReasons: ReasonCount[];
-  bestFormats: FormatSummary[];
+  bestFormats: MoodSummary[];
   recommendedWork: string[];
 };
 
@@ -38,7 +43,7 @@ export type FeedbackAggregate = {
 type JsonlRow = {
   date: string;
   revision: string;
-  formatName: string;
+  mood: string;
   fun: number;
   share: number;
   accuracy: number;
@@ -112,8 +117,8 @@ export function formatFeedbackReport(agg: FeedbackAggregate): string {
   // Best performing formats
   if (agg.bestFormats.length > 0) {
     lines.push("Best performing formats:");
-    for (const { formatName, averageFun, averageShare } of agg.bestFormats) {
-      lines.push(`- ${formatName}: fun ${fmt(averageFun)}, share ${fmt(averageShare)}`);
+    for (const { mood, averageFun, averageShare } of agg.bestFormats) {
+      lines.push(`- ${mood}: fun ${fmt(averageFun)}, share ${fmt(averageShare)}`);
     }
     lines.push("");
   }
@@ -175,10 +180,13 @@ async function readFilteredRows(
 
     try {
       const parsed = JSON.parse(trimmed) as unknown;
+      // Legacy JSONL rows carry `formatName` instead of `mood` (UNC-215) —
+      // migrate before validating so old rows stay readable and grouped.
+      const migrated = migrateLegacyFeedbackFields(parsed);
 
-      if (isJsonlRow(parsed)) {
-        if (parsed.date >= cutoffDate && parsed.date <= referenceDate) {
-          rows.push(parsed);
+      if (isJsonlRow(migrated)) {
+        if (migrated.date >= cutoffDate && migrated.date <= referenceDate) {
+          rows.push(migrated);
         }
       }
     } catch {
@@ -229,22 +237,22 @@ function computeAggregate(rows: JsonlRow[], days: number): FeedbackAggregate {
     .map(([reason, count]) => ({ reason, count }))
     .sort((a, b) => b.count - a.count || a.reason.localeCompare(b.reason));
 
-  // Best formats — group by formatName, compute avg fun/share
-  const formatMap = new Map<string, { funSum: number; shareSum: number; count: number }>();
+  // Best formats — group by mood, compute avg fun/share
+  const moodMap = new Map<string, { funSum: number; shareSum: number; count: number }>();
 
   for (const row of rows) {
-    const name = row.formatName || "(unnamed)";
-    const existing = formatMap.get(name) ?? { funSum: 0, shareSum: 0, count: 0 };
-    formatMap.set(name, {
+    const name = row.mood || "(unnamed)";
+    const existing = moodMap.get(name) ?? { funSum: 0, shareSum: 0, count: 0 };
+    moodMap.set(name, {
       funSum: existing.funSum + row.fun,
       shareSum: existing.shareSum + row.share,
       count: existing.count + 1
     });
   }
 
-  const bestFormats: FormatSummary[] = Array.from(formatMap.entries())
-    .map(([formatName, { funSum, shareSum, count }]) => ({
-      formatName,
+  const bestFormats: MoodSummary[] = Array.from(moodMap.entries())
+    .map(([mood, { funSum, shareSum, count }]) => ({
+      mood,
       averageFun: round1(funSum / count),
       averageShare: round1(shareSum / count)
     }))
@@ -322,7 +330,7 @@ function isJsonlRow(value: unknown): value is JsonlRow {
   return (
     typeof value.date === "string" &&
     typeof value.revision === "string" &&
-    typeof value.formatName === "string" &&
+    typeof value.mood === "string" &&
     typeof value.fun === "number" &&
     typeof value.share === "number" &&
     typeof value.accuracy === "number" &&

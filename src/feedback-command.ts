@@ -261,15 +261,15 @@ async function runFeedbackLatest(
     }
   }
 
-  // 3. Read story.json for formatName / activityLevel, and caption.txt for the preview
+  // 3. Read story.json for mood / activityLevel, and caption.txt for the preview
   const storyMeta = await readStoryMeta(outputDir);
   const captionPreview = await readCaptionPreview(outputDir);
 
   // 4. Display draft metadata
   io.stdout(`Draft: ${targetDate} / ${revision}`);
 
-  if (storyMeta.formatName) {
-    io.stdout(`Format: ${storyMeta.formatName}`);
+  if (storyMeta.mood) {
+    io.stdout(`Mood: ${storyMeta.mood}`);
   }
 
   if (storyMeta.activityLevel) {
@@ -292,7 +292,7 @@ async function runFeedbackLatest(
     record = {
       date: targetDate,
       revision,
-      formatName: storyMeta.formatName ?? "",
+      mood: storyMeta.mood ?? "",
       fun: clampScore(ni.fun!),
       share: clampScore(ni.share!),
       accuracy: clampScore(ni.accuracy!),
@@ -314,7 +314,7 @@ async function runFeedbackLatest(
     record = {
       date: targetDate,
       revision,
-      formatName: storyMeta.formatName ?? "",
+      mood: storyMeta.mood ?? "",
       fun: clampScore(scores.fun),
       share: clampScore(scores.share),
       accuracy: clampScore(scores.accuracy),
@@ -378,12 +378,14 @@ function validateNonInteractiveInput(ni: NonInteractiveInput): string | null {
 }
 
 type StoryMeta = {
-  formatName?: string;
+  mood?: string;
   activityLevel?: string;
 };
 
 async function readStoryMeta(outputDir: string): Promise<StoryMeta> {
-  // Canonical source: story.json.metadata.{formatName,activityLevel}.
+  // Canonical source: story.json.metadata.{mood,activityLevel} (UNC-215).
+  // Legacy fallback: pre-mood-engine drafts carried `formatName` instead of
+  // `mood`, at each of the same nesting levels below.
   // Defensive fallback 1: story.json top-level (older drafts).
   // Defensive fallback 2: metadata.json top-level (alternate writer).
   try {
@@ -393,13 +395,16 @@ async function readStoryMeta(outputDir: string): Promise<StoryMeta> {
     if (isRecord(parsed)) {
       const nested = isRecord(parsed.metadata) ? parsed.metadata : undefined;
 
-      const formatName =
-        pickString(nested?.formatName) ?? pickString(parsed.formatName);
+      const mood =
+        pickString(nested?.mood) ??
+        pickString(nested?.formatName) ??
+        pickString(parsed.mood) ??
+        pickString(parsed.formatName);
       const activityLevel =
         pickString(nested?.activityLevel) ?? pickString(parsed.activityLevel);
 
-      if (formatName !== undefined || activityLevel !== undefined) {
-        return { formatName, activityLevel };
+      if (mood !== undefined || activityLevel !== undefined) {
+        return { mood, activityLevel };
       }
     }
   } catch {
@@ -412,7 +417,7 @@ async function readStoryMeta(outputDir: string): Promise<StoryMeta> {
 
     if (isRecord(parsed)) {
       return {
-        formatName: pickString(parsed.formatName),
+        mood: pickString(parsed.mood) ?? pickString(parsed.formatName),
         activityLevel: pickString(parsed.activityLevel)
       };
     }

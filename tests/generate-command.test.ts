@@ -101,10 +101,9 @@ describe("generate command", () => {
         }
       ],
       activityLevel: "medium",
-      // Transitional: formatName always mirrors the derived mood (UNC-213),
-      // not the fixture's display-name override — createStoryFormatPlan()'s
-      // default mood is "grind".
-      formatName: "grind",
+      // createStoryFormatPlan()'s default mood is "grind" (UNC-215: metadata
+      // keys on mood, not the fixture's legacy formatName display-name override).
+      mood: "grind",
       status: "draft",
       exportPolicy: "safe",
       exportReady: true,
@@ -171,6 +170,28 @@ describe("generate command", () => {
     expect(JSON.stringify({ activitySummary, story, metadata, safetyReport })).not.toContain(
       fixture.repoDir
     );
+  });
+
+  it("writes mood (not formatName) into metadata.json and story.json (UNC-215)", async () => {
+    const { io } = createIo();
+    const fixture = await createRegisteredProjectFixture();
+    const provider = new TaskAwareProvider();
+
+    await writeGitEvent(fixture.project, "2026-05-12");
+
+    const exitCode = await runCli(["generate", "today"], io, {
+      homeDir: fixture.homeDir,
+      now: () => "2026-05-12T23:30:00.000Z",
+      aiProvider: provider
+    });
+    const outputDir = join(fixture.draftRoot, "2026-05-12", "rev-001");
+    const story = await readJson(join(outputDir, "story.json"));
+    const metadata = await readJson(join(outputDir, "metadata.json"));
+
+    expect(exitCode).toBe(0);
+    expect(metadata).toMatchObject({ mood: "grind" });
+    expect(JSON.stringify(story)).not.toContain("formatName");
+    expect(JSON.stringify(metadata)).not.toContain("formatName");
   });
 
   it("accepts a structured persona config and threads its backstory into generation requests", async () => {
@@ -1326,10 +1347,10 @@ async function writeGitHubSignals(
 // Fixture overrides keep the flat legacy shape (formatName/suggestedSlideCount)
 // so existing call sites stay unchanged; internally mapped onto the MoodPlan
 // the story-plan AI task now returns (mood/angle/pacing.suggestedSlideCount).
-// `mood` is a separate optional override: formatName transitionally always
-// mirrors mood (parseStoryFormatPlan coerces it), so callers that need a
-// distinct formatName per fixture (e.g. format-history variety tests) must
-// vary `mood`, not `formatName`.
+// `formatName` here is fixture-only shorthand (never part of the returned
+// MoodPlan, which has no formatName field since UNC-215) — callers that need
+// a distinct diversity key per fixture (e.g. format-history variety tests)
+// vary `mood`.
 function createStoryFormatPlan(
   overrides: Partial<Omit<StoryFormatPlan, "schemaVersion">> & {
     mood?: Mood;
@@ -1375,8 +1396,7 @@ function createStoryFormatPlan(
     reason: plan.reason,
     structure: plan.structure,
     captionStyle: plan.captionStyle,
-    doNotMention: plan.doNotMention,
-    formatName: mood ?? "grind"
+    doNotMention: plan.doNotMention
   };
 }
 
