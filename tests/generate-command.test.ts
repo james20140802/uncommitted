@@ -486,6 +486,72 @@ describe("generate command", () => {
     expect(story.slides[0]?.visualMood).toContain("[redacted-architecture]");
   });
 
+  it("redacts an architecture-disclosure story-plan angle in the written story.json and metadata.json even when the draft is blocked (UNC-206)", async () => {
+    const { io } = createIo();
+    const fixture = await createRegisteredProjectFixture();
+    const disclosurePlan: MoodPlan = {
+      ...createStoryFormatPlan(),
+      angle:
+        "Framed around the route guard and admin allowlist that finally behaved."
+    };
+    const provider = new TaskAwareProvider({
+      plan: disclosurePlan,
+      draft: createProviderDraft({
+        title: "the admin allowlist finally behaved",
+        slides: [
+          {
+            index: 1,
+            title: "route guard drama",
+            body: "Fixed the auth checkpoint so the server-side authorization check stopped flaking.",
+            visualMood: "route guard glowing on a terminal"
+          },
+          {
+            index: 2,
+            title: "quiet slide",
+            body: "Nothing sensitive here, just a normal beat.",
+            visualMood: "calm desk"
+          },
+          {
+            index: 3,
+            title: "Close",
+            body: "No card rendering happened yet, exactly as scoped.",
+            visualMood: "checklist with one unchecked render item"
+          }
+        ]
+      }),
+      caption: createProviderCaption({
+        caption: "오늘은 route guard 버그를 잡았다. admin allowlist는 여전히 말썽이다."
+      })
+    });
+
+    await writeGitEvent(fixture.project, "2026-05-12");
+
+    const exitCode = await runCli(["generate", "today"], io, {
+      homeDir: fixture.homeDir,
+      now: () => "2026-05-12T23:30:00.000Z",
+      aiProvider: provider
+    });
+
+    expect(exitCode).toBe(6);
+
+    const outputDir = join(fixture.draftRoot, "2026-05-12", "rev-001");
+    const story = (await readJson(join(outputDir, "story.json"))) as {
+      metadata: { angle: string };
+    };
+    const metadata = (await readJson(join(outputDir, "metadata.json"))) as {
+      storyFormat: { angle: string };
+    };
+
+    // The blocked draft is still written to disk, but the free-text angle must
+    // never carry the raw architecture-disclosure detail into either artifact.
+    for (const token of ["route guard", "admin allowlist"]) {
+      expect(story.metadata.angle).not.toContain(token);
+      expect(metadata.storyFormat.angle).not.toContain(token);
+    }
+    expect(story.metadata.angle).toContain("[redacted-architecture]");
+    expect(metadata.storyFormat.angle).toContain("[redacted-architecture]");
+  });
+
   it("exports a single incidental architecture-disclosure fact echoed in BOTH a slide body and the caption as a warning (UNC-207)", async () => {
     const { io, stdout, stderr } = createIo();
     const fixture = await createRegisteredProjectFixture();

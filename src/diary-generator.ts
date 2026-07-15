@@ -162,8 +162,11 @@ export function redactArchitectureDisclosureFromCaption(
 
 /**
  * In-place architecture-disclosure redaction (UNC-206 / T2) applied to a
- * full diary draft: the title, altText, and every slide's
- * title/body/visualMood.
+ * full diary draft: the title, altText, every slide's
+ * title/body/visualMood, and the free-text `metadata.angle`. The angle is a
+ * provider-generated string that reaches story.json, so it is scrubbed here
+ * too; the remaining metadata fields are safe (`mood` is a fixed-vocabulary
+ * enum, voice/tone are persona-derived style labels, the rest are structural).
  * Pure function — returns a new DiaryDraft, does not mutate the input.
  */
 export function redactArchitectureDisclosureFromDraft(
@@ -178,7 +181,11 @@ export function redactArchitectureDisclosureFromDraft(
       title: redactArchitectureDisclosure(slide.title).value,
       body: redactArchitectureDisclosure(slide.body).value,
       visualMood: redactArchitectureDisclosure(slide.visualMood).value
-    }))
+    })),
+    metadata: {
+      ...draft.metadata,
+      angle: redactArchitectureDisclosure(draft.metadata.angle).value
+    }
   };
 }
 
@@ -223,6 +230,8 @@ function buildSafeDiaryInput(options: {
         part: part.part,
         purpose: part.purpose
       })),
+      openWith: options.storyFormatPlan.pacing.openWith,
+      shape: options.storyFormatPlan.pacing.shape,
       suggestedSlideCount: options.storyFormatPlan.pacing.suggestedSlideCount,
       captionStyle: options.storyFormatPlan.captionStyle,
       doNotMention: options.storyFormatPlan.doNotMention
@@ -306,6 +315,10 @@ function buildDiaryInstructions(options: {
     "Follow the Story Format Plan for story title, slide titles, slide bodies, and visualMood only.",
     "Use the Story Format Plan's voice and tone for the story slides only.",
     `Create ${options.storyFormatPlan.pacing.suggestedSlideCount} slides when possible, while staying within 3-8 slides.`,
+    options.storyFormatPlan.pacing.openWith === "scene"
+      ? "Open the story on a concrete scene, then move into reflection."
+      : "Open the story on a reflective thought, then ground it in concrete work.",
+    `Shape the overall story arc as a "${options.storyFormatPlan.pacing.shape}" structure so entries vary day to day.`,
     "Write from the configured AI coworker's point of view; this is the narrator's own off-the-record diary, not the user's diary.",
     "Do not explain the persona to the reader.",
     "Use the Story Format Plan for slide structure and story flow.",

@@ -252,6 +252,41 @@ describe("diary generator", () => {
     );
   });
 
+  it("forwards pacing openWith/shape into the safe diary input and instructions", async () => {
+    const provider = new MockAiProvider({
+      response: createProviderDraft({ title: "Pacing Variation Day" })
+    });
+    const basePlan = createStoryFormatPlan({ suggestedSlideCount: 5 });
+    const plan: MoodPlan = {
+      ...basePlan,
+      pacing: {
+        openWith: "thought",
+        shape: "spiral",
+        suggestedSlideCount: 5
+      }
+    };
+
+    await generateDiaryDraft({
+      activitySummary: createActivitySummary(),
+      storyFormatPlan: plan,
+      provider,
+      persona: "wry coworker",
+      roastLevel: 2
+    });
+
+    const input = provider.requests[0]?.input.storyFormatPlan as Record<
+      string,
+      unknown
+    >;
+    expect(input.openWith).toBe("thought");
+    expect(input.shape).toBe("spiral");
+    expect(input.suggestedSlideCount).toBe(5);
+
+    const instructions = provider.requests[0]?.instructions ?? "";
+    expect(instructions).toContain("spiral");
+    expect(instructions).toContain("thought");
+  });
+
   it("rejects malformed provider output", async () => {
     await expect(
       generateDiaryDraft({
@@ -428,6 +463,43 @@ describe("architecture disclosure redaction (UNC-206)", () => {
     expect(redacted.altText).not.toContain("route guard");
     expect(redacted.altText).toContain("[redacted-architecture]");
     expect(redacted.metadata).toEqual(draft.metadata);
+  });
+
+  it("redacts architecture-disclosure detail from the draft metadata angle", () => {
+    const draft: DiaryDraft = {
+      schemaVersion: 1,
+      targetDate: "2026-05-12",
+      title: "a perfectly normal day",
+      slides: [
+        {
+          index: 1,
+          title: "signal",
+          body: "Shipped a small feature and fixed a typo.",
+          visualMood: "quiet terminal"
+        }
+      ],
+      altText: "diary",
+      metadata: {
+        targetDate: "2026-05-12",
+        generatedAt: "2026-05-12T23:30:00.000Z",
+        activityLevel: "medium",
+        mood: "grind",
+        angle: "Framed as the route guard that finally stopped flaking.",
+        storyFormatVoice: "dry coworker",
+        storyFormatTone: "concise and lightly amused",
+        projectIds: ["uncommitted"],
+        entryMode: "daily_global",
+        slideCount: 1
+      }
+    };
+
+    const redacted = redactArchitectureDisclosureFromDraft(draft);
+
+    expect(redacted.metadata.angle).not.toContain("route guard");
+    expect(redacted.metadata.angle).toContain("[redacted-architecture]");
+    // Non-angle metadata fields stay byte-for-byte unchanged.
+    expect(redacted.metadata.mood).toBe(draft.metadata.mood);
+    expect(redacted.metadata.slideCount).toBe(draft.metadata.slideCount);
   });
 
   it("leaves a draft with no disclosure content unchanged", () => {
