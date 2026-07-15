@@ -15,6 +15,7 @@ import {
   type CarouselVisualStyleMode
 } from "./carousel-renderer.js";
 import type { GitActivityEvent } from "./collect-git-command.js";
+import { redactArchitectureDisclosure } from "./architecture-disclosure.js";
 import { isActivitySignal, type ActivitySignal } from "./event-source.js";
 import { resolveConfigPaths } from "./config-paths.js";
 import {
@@ -56,7 +57,8 @@ import {
   generateStoryFormatPlan,
   loadRecentStoryFormatHistory,
   recordStoryFormatHistory,
-  type StoryFormatPlan
+  type Mood,
+  type MoodPlan
 } from "./story-format-plan.js";
 import {
   createImageAssetProvider,
@@ -99,7 +101,7 @@ export type GenerateCommandResult = {
   revision: string;
   latestPointerPath: string;
   activitySummary: ActivitySummary;
-  storyFormatPlan: StoryFormatPlan;
+  storyFormatPlan: MoodPlan;
   draft: DiaryDraft;
   caption: string;
   safetyReport: SafetyReport;
@@ -143,9 +145,10 @@ type DraftMetadataBase = {
   provider: AiProviderName;
   model?: string;
   activityLevel: ActivitySummary["activityLevel"];
-  formatName: string;
+  mood: Mood;
   storyFormat: {
-    formatName: string;
+    mood: Mood;
+    angle: string;
     voice: string;
     tone: string;
   };
@@ -324,9 +327,10 @@ export async function runGenerateCommand(
     provider: provider.name,
     model: provider.model,
     activityLevel: activitySummary.activityLevel,
-    formatName: storyFormatPlan.formatName,
+    mood: storyFormatPlan.mood,
     storyFormat: {
-      formatName: storyFormatPlan.formatName,
+      mood: storyFormatPlan.mood,
+      angle: storyFormatPlan.angle,
       voice: storyFormatPlan.voice,
       tone: storyFormatPlan.tone
     },
@@ -357,8 +361,20 @@ export async function runGenerateCommand(
       metadata: baseMetadata
     })
   );
+  // UNC-206 follow-up: the safety report is computed from the RAW baseMetadata
+  // above so architecture-disclosure detail in the provider-generated
+  // storyFormat.angle can still be detected and blocked. The metadata copy
+  // that reaches metadata.json must carry the redacted angle instead, so a
+  // blocked draft never persists the raw disclosure to disk.
+  const writeMetadataBase: DraftMetadataBase = {
+    ...baseMetadata,
+    storyFormat: {
+      ...baseMetadata.storyFormat,
+      angle: redactArchitectureDisclosure(baseMetadata.storyFormat.angle).value
+    }
+  };
   const safetyMetadata = buildDraftMetadata({
-    baseMetadata,
+    baseMetadata: writeMetadataBase,
     safetyReport,
     visualAssets: {
       schemaVersion: 1,
@@ -403,7 +419,7 @@ export async function runGenerateCommand(
     outputDir: draftRevision.outputDir
   });
   const metadata = buildDraftMetadata({
-    baseMetadata,
+    baseMetadata: writeMetadataBase,
     safetyReport,
     visualAssets,
     visualStyle

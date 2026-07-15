@@ -6,6 +6,7 @@ import {
   AiGenerationError,
   createAiGenerationRequest,
   createAiProvider,
+  createMoodPlanSchema,
   generateStructured,
   loadAiProviderConfig,
   MockAiProvider
@@ -169,6 +170,51 @@ describe("AI provider abstraction", () => {
       "user"
     ]);
     expect(JSON.stringify(body)).not.toContain("sk-test-secret");
+  });
+
+  it("uses the MoodPlan schema for the OpenAI-compatible story-plan response format, not the legacy formatName schema", async () => {
+    const calls: Array<{ url: string; request: AiProviderHttpRequest }> = [];
+    const provider = createAiProvider(
+      {
+        provider: "openai",
+        persona: "dry reviewer",
+        roastLevel: 3
+      },
+      {
+        env: { OPENAI_API_KEY: "sk-test-secret" },
+        transport: createTransport(calls, {
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({ mood: "grind" })
+              }
+            }
+          ]
+        })
+      }
+    );
+
+    await generateStructured(
+      provider,
+      createAiGenerationRequest({
+        task: "story-plan",
+        instructions: "Return a compact JSON object.",
+        summary: createQuietSummary()
+      })
+    );
+
+    const body = JSON.parse(calls[0]?.request.body ?? "{}") as {
+      response_format?: {
+        json_schema?: {
+          schema?: { required?: string[]; properties?: Record<string, unknown> };
+        };
+      };
+    };
+
+    const schema = body.response_format?.json_schema?.schema;
+    expect(schema?.required).toContain("mood");
+    expect(schema?.required).not.toContain("formatName");
+    expect(schema?.properties?.formatName).toBeUndefined();
   });
 
   it("creates an OpenRouter provider with provider-specific credentials and endpoint", async () => {
@@ -357,6 +403,50 @@ describe("AI provider abstraction", () => {
     expect(typeof body.tools?.[0]?.input_schema).toBe("object");
     expect(body.tool_choice).toEqual({ type: "tool", name: "uncommitted_story_format_plan" });
     expect(JSON.stringify(body)).not.toContain("sk-ant-test-secret");
+  });
+
+  it("uses the MoodPlan schema for the Anthropic story-plan tool, not the legacy formatName schema", async () => {
+    const calls: Array<{ url: string; request: AiProviderHttpRequest }> = [];
+    const provider = createAiProvider(
+      {
+        provider: "anthropic",
+        persona: "dry reviewer",
+        roastLevel: 3
+      },
+      {
+        env: { ANTHROPIC_API_KEY: "sk-ant-test-secret" },
+        transport: createTransport(calls, {
+          content: [
+            {
+              type: "tool_use",
+              name: "uncommitted_story_format_plan",
+              input: { mood: "grind" }
+            }
+          ],
+          stop_reason: "tool_use"
+        })
+      }
+    );
+
+    await generateStructured(
+      provider,
+      createAiGenerationRequest({
+        task: "story-plan",
+        instructions: "Return a compact JSON object.",
+        summary: createQuietSummary()
+      })
+    );
+
+    const body = JSON.parse(calls[0]?.request.body ?? "{}") as {
+      tools?: Array<{
+        input_schema?: { required?: string[]; properties?: Record<string, unknown> };
+      }>;
+    };
+
+    const schema = body.tools?.[0]?.input_schema;
+    expect(schema?.required).toContain("mood");
+    expect(schema?.required).not.toContain("formatName");
+    expect(schema?.properties?.formatName).toBeUndefined();
   });
 
   it("creates an Anthropic provider that uses the diary draft schema for the draft task", async () => {
@@ -920,6 +1010,62 @@ describe("AI provider abstraction", () => {
         }
       })
     ).toThrow(AiGenerationError);
+  });
+});
+
+describe("createMoodPlanSchema", () => {
+  it("requires mood/angle/pacing/voice/tone/reason/structure/captionStyle/doNotMention and forbids extras", () => {
+    const schema = createMoodPlanSchema();
+
+    expect(schema).toMatchObject({
+      type: "object",
+      additionalProperties: false,
+      required: [
+        "mood",
+        "angle",
+        "pacing",
+        "voice",
+        "tone",
+        "reason",
+        "structure",
+        "captionStyle",
+        "doNotMention"
+      ]
+    });
+
+    const properties = (schema as { properties?: Record<string, unknown> })
+      .properties;
+
+    expect(properties?.mood).toEqual({
+      type: "string",
+      enum: [
+        "release",
+        "firefight",
+        "quiet",
+        "grind",
+        "breakthrough",
+        "cleanup"
+      ]
+    });
+    expect(properties?.pacing).toMatchObject({
+      type: "object",
+      additionalProperties: false,
+      required: ["openWith", "shape", "suggestedSlideCount"],
+      properties: {
+        openWith: { type: "string", enum: ["scene", "thought"] },
+        shape: {
+          type: "string",
+          enum: ["hook-turn-landing", "list", "single-beat", "spiral"]
+        },
+        suggestedSlideCount: { type: "integer" }
+      }
+    });
+
+    // formatName is set internally (== mood); it must not appear in the AI schema.
+    expect(properties?.formatName).toBeUndefined();
+    expect(
+      (schema as { required?: string[] }).required
+    ).not.toContain("formatName");
   });
 });
 

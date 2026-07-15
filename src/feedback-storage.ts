@@ -1,6 +1,10 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { isFeedbackRecord, type FeedbackRecord } from "./feedback-types.js";
+import {
+  isFeedbackRecord,
+  migrateLegacyFeedbackFields,
+  type FeedbackRecord
+} from "./feedback-types.js";
 
 const FEEDBACK_FILENAME = "feedback.json";
 const JSONL_FILENAME = "daily-feedback.jsonl";
@@ -56,9 +60,12 @@ export async function readFeedback(
   try {
     const text = await readFile(feedbackPath, "utf8");
     const parsed = JSON.parse(text) as unknown;
+    // Legacy feedback.json files carry `formatName` instead of `mood`
+    // (UNC-215) — migrate before validating so old records stay readable.
+    const migrated = migrateLegacyFeedbackFields(parsed);
 
-    if (isFeedbackRecord(parsed)) {
-      return parsed;
+    if (isFeedbackRecord(migrated)) {
+      return migrated;
     }
 
     return null;
@@ -114,14 +121,14 @@ async function appendToJsonl(
 
 /**
  * Build the compact JSONL representation per spec:
- * {date, revision, formatName, fun, share, accuracy, wouldPost, reasons, note}
+ * {date, revision, mood, fun, share, accuracy, wouldPost, reasons, note}
  * Note: safetyConcern and createdAt are omitted from the JSONL row per spec example.
  */
 function buildJsonlLine(record: FeedbackRecord): string {
   const row = {
     date: record.date,
     revision: record.revision,
-    formatName: record.formatName,
+    mood: record.mood,
     fun: record.fun,
     share: record.share,
     accuracy: record.accuracy,

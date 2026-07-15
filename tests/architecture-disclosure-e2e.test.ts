@@ -462,8 +462,14 @@ class FixtureAwareProvider implements AiProvider {
     if (request.task === "story-plan") {
       return {
         responseJson: JSON.stringify({
-          schemaVersion: 1,
-          formatName: "Access Control Dispatch",
+          schemaVersion: 2,
+          mood: "grind",
+          angle: "The day circled the same access-control detail.",
+          pacing: {
+            openWith: "scene",
+            shape: "hook-turn-landing",
+            suggestedSlideCount: 3
+          },
           voice: "dry coworker",
           tone: "concise and lightly amused",
           reason: "Generation workflow had enough real signals for a compact update.",
@@ -472,7 +478,6 @@ class FixtureAwareProvider implements AiProvider {
             { part: "Draft", purpose: "Turn it into a diary beat." },
             { part: "Close", purpose: "End without inventing extra work." }
           ],
-          suggestedSlideCount: 3,
           captionStyle: "short witty caption",
           doNotMention: ["raw diffs", "private paths"]
         })

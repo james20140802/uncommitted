@@ -22,7 +22,7 @@ const FIXTURE_LINES = [
   JSON.stringify({
     date: "2026-05-17",
     revision: "rev-001",
-    formatName: "AI의 퇴근일지",
+    mood: "grind",
     fun: 4,
     share: 3,
     accuracy: 5,
@@ -33,7 +33,7 @@ const FIXTURE_LINES = [
   JSON.stringify({
     date: "2026-05-18",
     revision: "rev-001",
-    formatName: "TODO들의 야간 회의록",
+    mood: "breakthrough",
     fun: 5,
     share: 4,
     accuracy: 4,
@@ -44,7 +44,7 @@ const FIXTURE_LINES = [
   JSON.stringify({
     date: "2026-05-19",
     revision: "rev-002",
-    formatName: "인간 관찰 보고서",
+    mood: "cleanup",
     fun: 2,
     share: 1,
     accuracy: 5,
@@ -140,9 +140,9 @@ describe("aggregateFeedback", () => {
 
     const result = await aggregateFeedback(evalsDir, 7, "2026-05-19");
 
-    // TODO들의 야간 회의록: fun 5, share 4 — should be top
+    // breakthrough: fun 5, share 4 — should be top
     expect(result.bestFormats.length).toBeGreaterThan(0);
-    expect(result.bestFormats[0].formatName).toBe("TODO들의 야간 회의록");
+    expect(result.bestFormats[0].mood).toBe("breakthrough");
   });
 
   it("recommended work maps top reasons to prompt areas via REASON_PROMPT_AREA_MAP", async () => {
@@ -159,12 +159,12 @@ describe("aggregateFeedback", () => {
     }
   });
 
-  it("handles duplicate formatName entries by averaging", async () => {
+  it("handles duplicate mood entries by averaging", async () => {
     const lines = [
       JSON.stringify({
         date: "2026-05-18",
         revision: "rev-001",
-        formatName: "Same Format",
+        mood: "grind",
         fun: 4,
         share: 4,
         accuracy: 4,
@@ -175,7 +175,7 @@ describe("aggregateFeedback", () => {
       JSON.stringify({
         date: "2026-05-19",
         revision: "rev-001",
-        formatName: "Same Format",
+        mood: "grind",
         fun: 2,
         share: 2,
         accuracy: 2,
@@ -191,7 +191,7 @@ describe("aggregateFeedback", () => {
     const result = await aggregateFeedback(evalsDir, 7, "2026-05-19");
 
     expect(result.bestFormats).toHaveLength(1);
-    expect(result.bestFormats[0].formatName).toBe("Same Format");
+    expect(result.bestFormats[0].mood).toBe("grind");
     expect(result.bestFormats[0].averageFun).toBeCloseTo(3.0, 1);
   });
 
@@ -206,6 +206,31 @@ describe("aggregateFeedback", () => {
     const result = await aggregateFeedback(evalsDir, 7, "2026-05-19");
 
     expect(result.totalDrafts).toBe(2);
+  });
+
+  it("reads legacy JSONL rows carrying formatName instead of mood without throwing (UNC-215)", async () => {
+    const evalsDir = makeTmpDir();
+    const legacyLines = [
+      JSON.stringify({
+        date: "2026-05-19",
+        revision: "rev-001",
+        formatName: "AI의 퇴근일지",
+        fun: 4,
+        share: 3,
+        accuracy: 5,
+        wouldPost: false,
+        reasons: [],
+        note: ""
+      })
+    ];
+    await writeFixtureJsonl(evalsDir, legacyLines);
+
+    const result = await aggregateFeedback(evalsDir, 7, "2026-05-19");
+
+    expect(result.totalDrafts).toBe(1);
+    expect(result.bestFormats).toEqual([
+      { mood: "AI의 퇴근일지", averageFun: 4, averageShare: 3 }
+    ]);
   });
 });
 
@@ -226,8 +251,8 @@ describe("formatFeedbackReport", () => {
       { reason: "repetitive-format", count: 2 }
     ],
     bestFormats: [
-      { formatName: "TODO들의 야간 회의록", averageFun: 5, averageShare: 4 },
-      { formatName: "버그의 진술서", averageFun: 4, averageShare: 3 }
+      { mood: "breakthrough", averageFun: 5, averageShare: 4 },
+      { mood: "grind", averageFun: 4, averageShare: 3 }
     ],
     recommendedWork: [
       "Improve Diary Writer prompt to avoid report-like phrasing.",
@@ -271,8 +296,8 @@ describe("formatFeedbackReport", () => {
   it("shows best formats", () => {
     const text = formatFeedbackReport(sampleAggregate);
 
-    expect(text).toContain("TODO들의 야간 회의록");
-    expect(text).toContain("버그의 진술서");
+    expect(text).toContain("breakthrough");
+    expect(text).toContain("grind");
   });
 
   it("shows recommended work items", () => {

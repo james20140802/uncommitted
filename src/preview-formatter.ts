@@ -41,9 +41,13 @@ function formatSuccess(result: PreviewLoaderSuccess): string {
   lines.push(repeat("─", 50));
 
   // Metadata fields
-  const formatName = readStringField(result.metadata, "formatName");
-  if (formatName !== null) {
-    lines.push(`Format:   ${formatName}`);
+  // Mood is the canonical field (UNC-215); fall back to the legacy
+  // `formatName` field so pre-mood-engine drafts still preview cleanly.
+  const mood =
+    readStringField(result.metadata, "mood") ??
+    readStringField(result.metadata, "formatName");
+  if (mood !== null) {
+    lines.push(`Mood:     ${mood}`);
   }
 
   const projectIds = readStringArrayField(result.metadata, "projectIds");

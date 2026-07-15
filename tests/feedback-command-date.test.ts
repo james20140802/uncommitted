@@ -88,7 +88,7 @@ describe("runFeedbackCommand with targetDate", () => {
     const saved = await readFeedback(outputDir1);
     expect(saved).not.toBeNull();
     expect(saved!.date).toBe("2026-05-17");
-    expect(saved!.formatName).toBe("Older Format");
+    expect(saved!.mood).toBe("Older Format");
   });
 
   it("returns exit code 1 when specified date has no draft", async () => {

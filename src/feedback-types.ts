@@ -66,8 +66,12 @@ export type FeedbackRecord = {
   date: string;
   /** Revision identifier, e.g. "rev-001" */
   revision: string;
-  /** Human-readable format name from story.json */
-  formatName: string;
+  /**
+   * Mood the draft was classified as at generation time (UNC-215).
+   * Legacy records on disk may carry `formatName` instead — read them via
+   * `migrateLegacyFeedbackFields` before validating with `isFeedbackRecord`.
+   */
+  mood: string;
   /** Fun score 1–5 */
   fun: FeedbackScore;
   /** Share score 1–5 */
@@ -119,7 +123,7 @@ export function isFeedbackRecord(value: unknown): value is FeedbackRecord {
   return (
     typeof value.date === "string" &&
     typeof value.revision === "string" &&
-    typeof value.formatName === "string" &&
+    typeof value.mood === "string" &&
     isValidScore(value.fun) &&
     isValidScore(value.share) &&
     isValidScore(value.accuracy) &&
@@ -134,4 +138,30 @@ export function isFeedbackRecord(value: unknown): value is FeedbackRecord {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+// ---------------------------------------------------------------------------
+// Legacy read compatibility (UNC-215)
+// ---------------------------------------------------------------------------
+
+/**
+ * Legacy-tolerant read helper: pre-mood-engine feedback records/rows carried
+ * `formatName` instead of `mood`. Maps `formatName` -> `mood` (falling back to
+ * "(unnamed)" when neither is present) so old `feedback.json` records and
+ * `daily-feedback.jsonl` rows remain readable without throwing. Never used
+ * when writing new feedback — new records always carry `mood` directly.
+ */
+export function migrateLegacyFeedbackFields(value: unknown): unknown {
+  if (!isRecord(value)) {
+    return value;
+  }
+
+  if (typeof value.mood === "string") {
+    return value;
+  }
+
+  const legacyMood =
+    typeof value.formatName === "string" ? value.formatName : "(unnamed)";
+
+  return { ...value, mood: legacyMood };
 }

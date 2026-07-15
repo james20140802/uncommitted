@@ -13,9 +13,11 @@ import type {
 import { redactArchitectureDisclosure } from "./architecture-disclosure.js";
 import type { Persona } from "./persona.js";
 import { emailPattern } from "./redaction.js";
+import { isMood } from "./story-format-plan.js";
 import type {
   ProjectPersonaHint,
-  StoryFormatPlan
+  MoodPlan,
+  Mood
 } from "./story-format-plan.js";
 import type { RawNarrativeProjection } from "./raw-narrative-projection.js";
 
@@ -30,7 +32,8 @@ export type DiaryDraftMetadata = {
   targetDate: string;
   generatedAt: string;
   activityLevel: ActivityLevel;
-  formatName: string;
+  mood: Mood;
+  angle: string;
   storyFormatVoice: string;
   storyFormatTone: string;
   projectIds: string[];
@@ -49,7 +52,7 @@ export type DiaryDraft = {
 
 export type DiaryGeneratorOptions = {
   activitySummary: ActivitySummary;
-  storyFormatPlan: StoryFormatPlan;
+  storyFormatPlan: MoodPlan;
   provider: AiProvider;
   persona: string;
   roastLevel: number;
@@ -159,8 +162,11 @@ export function redactArchitectureDisclosureFromCaption(
 
 /**
  * In-place architecture-disclosure redaction (UNC-206 / T2) applied to a
- * full diary draft: the title, altText, and every slide's
- * title/body/visualMood.
+ * full diary draft: the title, altText, every slide's
+ * title/body/visualMood, and the free-text `metadata.angle`. The angle is a
+ * provider-generated string that reaches story.json, so it is scrubbed here
+ * too; the remaining metadata fields are safe (`mood` is a fixed-vocabulary
+ * enum, voice/tone are persona-derived style labels, the rest are structural).
  * Pure function — returns a new DiaryDraft, does not mutate the input.
  */
 export function redactArchitectureDisclosureFromDraft(
@@ -175,13 +181,17 @@ export function redactArchitectureDisclosureFromDraft(
       title: redactArchitectureDisclosure(slide.title).value,
       body: redactArchitectureDisclosure(slide.body).value,
       visualMood: redactArchitectureDisclosure(slide.visualMood).value
-    }))
+    })),
+    metadata: {
+      ...draft.metadata,
+      angle: redactArchitectureDisclosure(draft.metadata.angle).value
+    }
   };
 }
 
 function buildSafeDiaryInput(options: {
   activitySummary: ActivitySummary;
-  storyFormatPlan: StoryFormatPlan;
+  storyFormatPlan: MoodPlan;
   persona: string;
   roastLevel: number;
   projectPersonaHints: ProjectPersonaHint[];
@@ -211,7 +221,8 @@ function buildSafeDiaryInput(options: {
     entryMode: "daily_global",
     persona: options.persona,
     storyFormatPlan: {
-      formatName: options.storyFormatPlan.formatName,
+      mood: options.storyFormatPlan.mood,
+      angle: options.storyFormatPlan.angle,
       voice: options.storyFormatPlan.voice,
       tone: options.storyFormatPlan.tone,
       reason: options.storyFormatPlan.reason,
@@ -219,7 +230,9 @@ function buildSafeDiaryInput(options: {
         part: part.part,
         purpose: part.purpose
       })),
-      suggestedSlideCount: options.storyFormatPlan.suggestedSlideCount,
+      openWith: options.storyFormatPlan.pacing.openWith,
+      shape: options.storyFormatPlan.pacing.shape,
+      suggestedSlideCount: options.storyFormatPlan.pacing.suggestedSlideCount,
       captionStyle: options.storyFormatPlan.captionStyle,
       doNotMention: options.storyFormatPlan.doNotMention
     },
@@ -287,7 +300,7 @@ function buildHighlights(summary: ActivitySummary, quiet: boolean): string[] {
 function buildDiaryInstructions(options: {
   quiet: boolean;
   roastLevel: number;
-  storyFormatPlan: StoryFormatPlan;
+  storyFormatPlan: MoodPlan;
 }): string {
   const directRoastPolicy =
     options.roastLevel >= 3
@@ -301,7 +314,11 @@ function buildDiaryInstructions(options: {
     "Return structured JSON for story.json with title, slides, and altText.",
     "Follow the Story Format Plan for story title, slide titles, slide bodies, and visualMood only.",
     "Use the Story Format Plan's voice and tone for the story slides only.",
-    `Create ${options.storyFormatPlan.suggestedSlideCount} slides when possible, while staying within 3-8 slides.`,
+    `Create ${options.storyFormatPlan.pacing.suggestedSlideCount} slides when possible, while staying within 3-8 slides.`,
+    options.storyFormatPlan.pacing.openWith === "scene"
+      ? "Open the story on a concrete scene, then move into reflection."
+      : "Open the story on a reflective thought, then ground it in concrete work.",
+    `Shape the overall story arc as a "${options.storyFormatPlan.pacing.shape}" structure so entries vary day to day.`,
     "Write from the configured AI coworker's point of view; this is the narrator's own off-the-record diary, not the user's diary.",
     "Do not explain the persona to the reader.",
     "Use the Story Format Plan for slide structure and story flow.",
@@ -589,7 +606,7 @@ function parseCaptionResult(data: CaptionProviderData): CaptionResult {
 function parseDiaryDraft(options: {
   data: DiaryDraftProviderData;
   activitySummary: ActivitySummary;
-  storyFormatPlan: StoryFormatPlan;
+  storyFormatPlan: MoodPlan;
 }): DiaryDraft {
   assertSafeProviderData(options.data);
 
@@ -612,7 +629,8 @@ function parseDiaryDraft(options: {
       targetDate: options.activitySummary.targetDate,
       generatedAt: options.activitySummary.generatedAt,
       activityLevel: options.activitySummary.activityLevel,
-      formatName: options.storyFormatPlan.formatName,
+      mood: options.storyFormatPlan.mood,
+      angle: options.storyFormatPlan.angle,
       storyFormatVoice: options.storyFormatPlan.voice,
       storyFormatTone: options.storyFormatPlan.tone,
       projectIds: options.activitySummary.projects.map(
@@ -687,7 +705,8 @@ function isDiaryMetadata(value: unknown): value is DiaryDraftMetadata {
     typeof value.targetDate === "string" &&
     typeof value.generatedAt === "string" &&
     typeof value.activityLevel === "string" &&
-    typeof value.formatName === "string" &&
+    isMood(value.mood) &&
+    typeof value.angle === "string" &&
     typeof value.storyFormatVoice === "string" &&
     typeof value.storyFormatTone === "string" &&
     Array.isArray(value.projectIds) &&

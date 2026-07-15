@@ -14,7 +14,7 @@ import type { GitActivityEvent } from "../src/collect-git-command.js";
 import type { CaptionResult, DiaryDraft } from "../src/diary-generator.js";
 import { PERSONA_PRESETS, type Persona } from "../src/persona.js";
 import { addProject, type ProjectRecord } from "../src/project-add.js";
-import type { StoryFormatPlan } from "../src/story-format-plan.js";
+import type { Mood, MoodPlan, StoryFormatPlan } from "../src/story-format-plan.js";
 import type { ImageAssetProvider, ImageAssetRequest } from "../src/visual-assets.js";
 
 const execFileAsync = promisify(execFile);
@@ -101,7 +101,9 @@ describe("generate command", () => {
         }
       ],
       activityLevel: "medium",
-      formatName: "Implementation Dispatch",
+      // createStoryFormatPlan()'s default mood is "grind" (UNC-215: metadata
+      // keys on mood, not the fixture's legacy formatName display-name override).
+      mood: "grind",
       status: "draft",
       exportPolicy: "safe",
       exportReady: true,
@@ -168,6 +170,28 @@ describe("generate command", () => {
     expect(JSON.stringify({ activitySummary, story, metadata, safetyReport })).not.toContain(
       fixture.repoDir
     );
+  });
+
+  it("writes mood (not formatName) into metadata.json and story.json (UNC-215)", async () => {
+    const { io } = createIo();
+    const fixture = await createRegisteredProjectFixture();
+    const provider = new TaskAwareProvider();
+
+    await writeGitEvent(fixture.project, "2026-05-12");
+
+    const exitCode = await runCli(["generate", "today"], io, {
+      homeDir: fixture.homeDir,
+      now: () => "2026-05-12T23:30:00.000Z",
+      aiProvider: provider
+    });
+    const outputDir = join(fixture.draftRoot, "2026-05-12", "rev-001");
+    const story = await readJson(join(outputDir, "story.json"));
+    const metadata = await readJson(join(outputDir, "metadata.json"));
+
+    expect(exitCode).toBe(0);
+    expect(metadata).toMatchObject({ mood: "grind" });
+    expect(JSON.stringify(story)).not.toContain("formatName");
+    expect(JSON.stringify(metadata)).not.toContain("formatName");
   });
 
   it("accepts a structured persona config and threads its backstory into generation requests", async () => {
@@ -462,6 +486,72 @@ describe("generate command", () => {
     expect(story.slides[0]?.visualMood).toContain("[redacted-architecture]");
   });
 
+  it("redacts an architecture-disclosure story-plan angle in the written story.json and metadata.json even when the draft is blocked (UNC-206)", async () => {
+    const { io } = createIo();
+    const fixture = await createRegisteredProjectFixture();
+    const disclosurePlan: MoodPlan = {
+      ...createStoryFormatPlan(),
+      angle:
+        "Framed around the route guard and admin allowlist that finally behaved."
+    };
+    const provider = new TaskAwareProvider({
+      plan: disclosurePlan,
+      draft: createProviderDraft({
+        title: "the admin allowlist finally behaved",
+        slides: [
+          {
+            index: 1,
+            title: "route guard drama",
+            body: "Fixed the auth checkpoint so the server-side authorization check stopped flaking.",
+            visualMood: "route guard glowing on a terminal"
+          },
+          {
+            index: 2,
+            title: "quiet slide",
+            body: "Nothing sensitive here, just a normal beat.",
+            visualMood: "calm desk"
+          },
+          {
+            index: 3,
+            title: "Close",
+            body: "No card rendering happened yet, exactly as scoped.",
+            visualMood: "checklist with one unchecked render item"
+          }
+        ]
+      }),
+      caption: createProviderCaption({
+        caption: "오늘은 route guard 버그를 잡았다. admin allowlist는 여전히 말썽이다."
+      })
+    });
+
+    await writeGitEvent(fixture.project, "2026-05-12");
+
+    const exitCode = await runCli(["generate", "today"], io, {
+      homeDir: fixture.homeDir,
+      now: () => "2026-05-12T23:30:00.000Z",
+      aiProvider: provider
+    });
+
+    expect(exitCode).toBe(6);
+
+    const outputDir = join(fixture.draftRoot, "2026-05-12", "rev-001");
+    const story = (await readJson(join(outputDir, "story.json"))) as {
+      metadata: { angle: string };
+    };
+    const metadata = (await readJson(join(outputDir, "metadata.json"))) as {
+      storyFormat: { angle: string };
+    };
+
+    // The blocked draft is still written to disk, but the free-text angle must
+    // never carry the raw architecture-disclosure detail into either artifact.
+    for (const token of ["route guard", "admin allowlist"]) {
+      expect(story.metadata.angle).not.toContain(token);
+      expect(metadata.storyFormat.angle).not.toContain(token);
+    }
+    expect(story.metadata.angle).toContain("[redacted-architecture]");
+    expect(metadata.storyFormat.angle).toContain("[redacted-architecture]");
+  });
+
   it("exports a single incidental architecture-disclosure fact echoed in BOTH a slide body and the caption as a warning (UNC-207)", async () => {
     const { io, stdout, stderr } = createIo();
     const fixture = await createRegisteredProjectFixture();
@@ -719,14 +809,14 @@ describe("generate command", () => {
     const fixture = await createRegisteredProjectFixture();
     const firstProvider = new TaskAwareProvider({
       plan: createStoryFormatPlan({
-        formatName: "Bug Court Transcript",
+        mood: "firefight",
         voice: "tired QA narrator",
         tone: "deadpan courtroom"
       })
     });
     const secondProvider = new TaskAwareProvider({
       plan: createStoryFormatPlan({
-        formatName: "Refactor Field Notes",
+        mood: "cleanup",
         voice: "field researcher",
         tone: "observant and warm"
       })
@@ -749,11 +839,15 @@ describe("generate command", () => {
       join(fixture.homeDir, ".uncommitted", "history", "formats.json")
     );
 
+    const sharedAngle =
+      "The day circled a concrete, unglamorous signal instead of a story.";
+
     expect(stderr).toEqual([]);
     expect(secondProvider.requests[0]?.input.recentFormats).toEqual([
       {
         date: "2026-05-12",
-        formatName: "Bug Court Transcript",
+        mood: "firefight",
+        angle: sharedAngle,
         voice: "tired QA narrator",
         tone: "deadpan courtroom"
       }
@@ -763,13 +857,15 @@ describe("generate command", () => {
       formats: [
         {
           date: "2026-05-12",
-          formatName: "Refactor Field Notes",
+          mood: "cleanup",
+          angle: sharedAngle,
           voice: "field researcher",
           tone: "observant and warm"
         },
         {
           date: "2026-05-12",
-          formatName: "Bug Court Transcript",
+          mood: "firefight",
+          angle: sharedAngle,
           voice: "tired QA narrator",
           tone: "deadpan courtroom"
         }
@@ -952,7 +1048,7 @@ class TaskAwareProvider implements AiProvider {
 
   constructor(
     private readonly options: {
-      plan?: StoryFormatPlan;
+      plan?: MoodPlan;
       draft?: ReturnType<typeof createProviderDraft>;
       caption?: CaptionResult;
       failDraft?: boolean;
@@ -1314,11 +1410,20 @@ async function writeGitHubSignals(
   );
 }
 
+// Fixture overrides keep the flat legacy shape (formatName/suggestedSlideCount)
+// so existing call sites stay unchanged; internally mapped onto the MoodPlan
+// the story-plan AI task now returns (mood/angle/pacing.suggestedSlideCount).
+// `formatName` here is fixture-only shorthand (never part of the returned
+// MoodPlan, which has no formatName field since UNC-215) — callers that need
+// a distinct diversity key per fixture (e.g. format-history variety tests)
+// vary `mood`.
 function createStoryFormatPlan(
-  overrides: Partial<StoryFormatPlan> = {}
-): StoryFormatPlan {
-  return {
-    schemaVersion: 1,
+  overrides: Partial<Omit<StoryFormatPlan, "schemaVersion">> & {
+    mood?: Mood;
+  } = {}
+): MoodPlan {
+  const { mood, ...legacyOverrides } = overrides;
+  const plan = {
     formatName: "Implementation Dispatch",
     voice: "dry coworker",
     tone: "concise and lightly amused",
@@ -1340,7 +1445,24 @@ function createStoryFormatPlan(
     suggestedSlideCount: 3,
     captionStyle: "short witty caption",
     doNotMention: ["raw diffs", "private paths"],
-    ...overrides
+    ...legacyOverrides
+  };
+
+  return {
+    schemaVersion: 2,
+    mood: mood ?? "grind",
+    angle: "The day circled a concrete, unglamorous signal instead of a story.",
+    pacing: {
+      openWith: "scene",
+      shape: "hook-turn-landing",
+      suggestedSlideCount: plan.suggestedSlideCount
+    },
+    voice: plan.voice,
+    tone: plan.tone,
+    reason: plan.reason,
+    structure: plan.structure,
+    captionStyle: plan.captionStyle,
+    doNotMention: plan.doNotMention
   };
 }
 

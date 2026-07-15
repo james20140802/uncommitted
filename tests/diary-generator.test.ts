@@ -11,7 +11,7 @@ import {
   type DiaryDraft
 } from "../src/diary-generator.js";
 import { PERSONA_PRESETS, type Persona } from "../src/persona.js";
-import type { StoryFormatPlan } from "../src/story-format-plan.js";
+import type { MoodPlan, StoryFormatPlan } from "../src/story-format-plan.js";
 
 const captionTestPersona: Persona = PERSONA_PRESETS["시니컬한 관찰자"].persona;
 
@@ -69,7 +69,8 @@ describe("diary generator", () => {
         targetDate: "2026-05-12",
         generatedAt: "2026-05-12T23:30:00.000Z",
         activityLevel: "medium",
-        formatName: "Bug Court Transcript",
+        mood: "grind",
+        angle: "The day circled the same flaky provider validation bug.",
         storyFormatVoice: "tired QA narrator",
         storyFormatTone: "deadpan, witty, affectionate",
         projectIds: ["uncommitted"],
@@ -95,7 +96,7 @@ describe("diary generator", () => {
         entryMode: "daily_global",
         persona: "wry coworker",
         storyFormatPlan: {
-          formatName: "Bug Court Transcript",
+          mood: "grind",
           suggestedSlideCount: 4
         },
         roastPolicy: {
@@ -197,7 +198,6 @@ describe("diary generator", () => {
         ]
       }),
       storyFormatPlan: createStoryFormatPlan({
-        formatName: "Quiet Terminal Watch",
         reason: "No recorded work was available.",
         suggestedSlideCount: 3
       }),
@@ -250,6 +250,41 @@ describe("diary generator", () => {
     expect(provider.requests[0]?.instructions).toContain(
       "guidance, not a hard validation limit"
     );
+  });
+
+  it("forwards pacing openWith/shape into the safe diary input and instructions", async () => {
+    const provider = new MockAiProvider({
+      response: createProviderDraft({ title: "Pacing Variation Day" })
+    });
+    const basePlan = createStoryFormatPlan({ suggestedSlideCount: 5 });
+    const plan: MoodPlan = {
+      ...basePlan,
+      pacing: {
+        openWith: "thought",
+        shape: "spiral",
+        suggestedSlideCount: 5
+      }
+    };
+
+    await generateDiaryDraft({
+      activitySummary: createActivitySummary(),
+      storyFormatPlan: plan,
+      provider,
+      persona: "wry coworker",
+      roastLevel: 2
+    });
+
+    const input = provider.requests[0]?.input.storyFormatPlan as Record<
+      string,
+      unknown
+    >;
+    expect(input.openWith).toBe("thought");
+    expect(input.shape).toBe("spiral");
+    expect(input.suggestedSlideCount).toBe(5);
+
+    const instructions = provider.requests[0]?.instructions ?? "";
+    expect(instructions).toContain("spiral");
+    expect(instructions).toContain("thought");
   });
 
   it("rejects malformed provider output", async () => {
@@ -323,7 +358,6 @@ describe("diary generator", () => {
           unfinishedThreads: []
         }),
         storyFormatPlan: createStoryFormatPlan({
-          formatName: "Quiet Terminal Watch",
           suggestedSlideCount: 3
         }),
         provider: new MockAiProvider({
@@ -358,6 +392,25 @@ describe("diary generator", () => {
       message: "AI provider fabricated quiet-day activity."
     });
   });
+
+  it("writes mood (not formatName) into story.json metadata (UNC-215)", async () => {
+    const provider = new MockAiProvider({
+      response: createProviderDraft({ title: "Mood Output Day" })
+    });
+    const plan = createStoryFormatPlan({ suggestedSlideCount: 4 });
+
+    const draft = await generateDiaryDraft({
+      activitySummary: createActivitySummary(),
+      storyFormatPlan: plan,
+      provider,
+      persona: "wry coworker",
+      roastLevel: 2
+    });
+
+    expect(draft.metadata.mood).toBe(plan.mood);
+    expect(draft.metadata.angle).toBe(plan.angle);
+    expect(JSON.stringify(draft)).not.toContain("formatName");
+  });
 });
 
 describe("architecture disclosure redaction (UNC-206)", () => {
@@ -385,7 +438,8 @@ describe("architecture disclosure redaction (UNC-206)", () => {
         targetDate: "2026-05-12",
         generatedAt: "2026-05-12T23:30:00.000Z",
         activityLevel: "medium",
-        formatName: "Bug Court Transcript",
+        mood: "grind",
+        angle: "The day circled the same flaky provider validation bug.",
         storyFormatVoice: "tired QA narrator",
         storyFormatTone: "deadpan, witty, affectionate",
         projectIds: ["uncommitted"],
@@ -411,6 +465,43 @@ describe("architecture disclosure redaction (UNC-206)", () => {
     expect(redacted.metadata).toEqual(draft.metadata);
   });
 
+  it("redacts architecture-disclosure detail from the draft metadata angle", () => {
+    const draft: DiaryDraft = {
+      schemaVersion: 1,
+      targetDate: "2026-05-12",
+      title: "a perfectly normal day",
+      slides: [
+        {
+          index: 1,
+          title: "signal",
+          body: "Shipped a small feature and fixed a typo.",
+          visualMood: "quiet terminal"
+        }
+      ],
+      altText: "diary",
+      metadata: {
+        targetDate: "2026-05-12",
+        generatedAt: "2026-05-12T23:30:00.000Z",
+        activityLevel: "medium",
+        mood: "grind",
+        angle: "Framed as the route guard that finally stopped flaking.",
+        storyFormatVoice: "dry coworker",
+        storyFormatTone: "concise and lightly amused",
+        projectIds: ["uncommitted"],
+        entryMode: "daily_global",
+        slideCount: 1
+      }
+    };
+
+    const redacted = redactArchitectureDisclosureFromDraft(draft);
+
+    expect(redacted.metadata.angle).not.toContain("route guard");
+    expect(redacted.metadata.angle).toContain("[redacted-architecture]");
+    // Non-angle metadata fields stay byte-for-byte unchanged.
+    expect(redacted.metadata.mood).toBe(draft.metadata.mood);
+    expect(redacted.metadata.slideCount).toBe(draft.metadata.slideCount);
+  });
+
   it("leaves a draft with no disclosure content unchanged", () => {
     const draft: DiaryDraft = {
       schemaVersion: 1,
@@ -429,7 +520,8 @@ describe("architecture disclosure redaction (UNC-206)", () => {
         targetDate: "2026-05-12",
         generatedAt: "2026-05-12T23:30:00.000Z",
         activityLevel: "medium",
-        formatName: "Implementation Dispatch",
+        mood: "cleanup",
+        angle: "A small feature shipped and a typo got fixed.",
         storyFormatVoice: "dry coworker",
         storyFormatTone: "concise and lightly amused",
         projectIds: ["uncommitted"],
@@ -460,7 +552,8 @@ describe("architecture disclosure redaction (UNC-206)", () => {
         targetDate: "2026-05-12",
         generatedAt: "2026-05-12T23:30:00.000Z",
         activityLevel: "medium",
-        formatName: "Implementation Dispatch",
+        mood: "cleanup",
+        angle: "A small feature shipped and a typo got fixed.",
         storyFormatVoice: "dry coworker",
         storyFormatTone: "concise and lightly amused",
         projectIds: ["uncommitted"],
@@ -917,11 +1010,15 @@ function createSlides(count: number): ReturnType<typeof baseProviderDraft>["slid
   }));
 }
 
+// Fixture overrides keep the flat legacy shape (formatName/suggestedSlideCount)
+// so existing call sites stay unchanged; internally mapped onto the MoodPlan
+// diary-generator now requires (mood/angle/pacing.suggestedSlideCount).
+// `formatName` here is fixture-only shorthand — MoodPlan has no such field
+// since UNC-215.
 function createStoryFormatPlan(
-  overrides: Partial<StoryFormatPlan> = {}
-): StoryFormatPlan {
-  return {
-    schemaVersion: 1,
+  overrides: Partial<Omit<StoryFormatPlan, "schemaVersion">> = {}
+): MoodPlan {
+  const plan = {
     formatName: "Bug Court Transcript",
     voice: "tired QA narrator",
     tone: "deadpan, witty, affectionate",
@@ -944,6 +1041,23 @@ function createStoryFormatPlan(
     captionStyle: "short witty caption",
     doNotMention: ["raw diffs", "private paths"],
     ...overrides
+  };
+
+  return {
+    schemaVersion: 2,
+    mood: "grind",
+    angle: "The day circled the same flaky provider validation bug.",
+    pacing: {
+      openWith: "scene",
+      shape: "hook-turn-landing",
+      suggestedSlideCount: plan.suggestedSlideCount
+    },
+    voice: plan.voice,
+    tone: plan.tone,
+    reason: plan.reason,
+    structure: plan.structure,
+    captionStyle: plan.captionStyle,
+    doNotMention: plan.doNotMention
   };
 }
 

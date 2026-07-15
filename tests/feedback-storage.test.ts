@@ -1,4 +1,4 @@
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -17,7 +17,7 @@ function makeTmpDir(): string {
 const baseRecord: FeedbackRecord = {
   date: "2026-05-19",
   revision: "rev-001",
-  formatName: "AI의 퇴근일지",
+  mood: "grind",
   fun: 4,
   share: 3,
   accuracy: 5,
@@ -59,7 +59,7 @@ describe("saveFeedback", () => {
     const parsed = JSON.parse(lines[0]) as Record<string, unknown>;
     expect(parsed.date).toBe("2026-05-19");
     expect(parsed.revision).toBe("rev-001");
-    expect(parsed.formatName).toBe("AI의 퇴근일지");
+    expect(parsed.mood).toBe("grind");
     expect(parsed.fun).toBe(4);
     expect(parsed.share).toBe(3);
     expect(parsed.accuracy).toBe(5);
@@ -78,7 +78,7 @@ describe("saveFeedback", () => {
     const record2: FeedbackRecord = {
       ...baseRecord,
       date: "2026-05-20",
-      formatName: "TODO들의 야간 회의록",
+      mood: "breakthrough",
       fun: 5,
       wouldPost: true,
       reasons: [],
@@ -197,5 +197,35 @@ describe("readFeedback", () => {
 
     const result = await readFeedback(draftDir);
     expect(result).toBeNull();
+  });
+
+  it("reads a legacy feedback.json carrying formatName instead of mood without throwing (UNC-215)", async () => {
+    const draftDir = join(makeTmpDir(), "2026-05-19", "rev-001");
+    await mkdir(draftDir, { recursive: true });
+
+    const legacyRecord = {
+      date: "2026-05-19",
+      revision: "rev-001",
+      formatName: "AI의 퇴근일지",
+      fun: 4,
+      share: 3,
+      accuracy: 5,
+      safetyConcern: false,
+      wouldPost: false,
+      reasons: ["weak-caption"],
+      note: "캡션이 너무 담백함",
+      createdAt: "2026-05-19T23:30:00.000Z"
+    };
+    await writeFile(
+      join(draftDir, "feedback.json"),
+      JSON.stringify(legacyRecord),
+      "utf8"
+    );
+
+    const result = await readFeedback(draftDir);
+
+    expect(result).not.toBeNull();
+    expect(result!.mood).toBe("AI의 퇴근일지");
+    expect(result!.fun).toBe(4);
   });
 });

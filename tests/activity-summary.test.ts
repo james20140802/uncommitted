@@ -106,6 +106,41 @@ describe("activity summary", () => {
     expect(serialized).not.toContain("prior day");
   });
 
+  // UNC-213: the mood/angle/pacing engine derives its mood and angle from
+  // exactly these 4 already-safe ActivitySummary fields — no new signal
+  // collection is needed, they are already public, read-only fields on the
+  // summary returned by buildActivitySummary.
+  it("exposes activityLevel, smallWins, blockersOrConfusion, and unfinishedThreads as the read-only mood/angle derivation surface", () => {
+    const summary = buildActivitySummary(
+      createInput({
+        gitEvents: [
+          createGitEvent({
+            projectId: "cli",
+            projectName: "CLI",
+            commits: [
+              createCommit({
+                subject: "implement collect git command",
+                filesChanged: 4,
+                insertions: 80,
+                deletions: 10
+              })
+            ],
+            dirtyFiles: [{ path: "src/activity-summary.ts", status: "modified" }]
+          })
+        ]
+      })
+    );
+
+    expect(summary.activityLevel).toEqual(expect.any(String));
+    expect(Array.isArray(summary.smallWins)).toBe(true);
+    expect(Array.isArray(summary.blockersOrConfusion)).toBe(true);
+    expect(Array.isArray(summary.unfinishedThreads)).toBe(true);
+    expect(summary.smallWins).toContain("implement collect git command");
+    expect(summary.unfinishedThreads).toContain(
+      "1 uncommitted file remains in CLI."
+    );
+  });
+
   it("treats quiet days as valid summaries without inventing work", () => {
     const summary = buildActivitySummary(createInput());
 
