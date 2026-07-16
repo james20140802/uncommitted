@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   buildActivitySummary,
+  buildSignalsFromInput,
   type ActivitySummary
 } from "./activity-summary.js";
 import {
@@ -18,6 +19,10 @@ import type { GitActivityEvent } from "./collect-git-command.js";
 import { redactArchitectureDisclosure } from "./architecture-disclosure.js";
 import { isActivitySignal, type ActivitySignal } from "./event-source.js";
 import { resolveConfigPaths } from "./config-paths.js";
+import type { MemoryThread } from "./memory-store.js";
+import { gateMemoryForInjection } from "./memory-safety-gate.js";
+import { readCoreFacts } from "./persona-core-facts.js";
+import { reflectProjectThreads } from "./reflection.js";
 import {
   isRoastLevel,
   loadGlobalConfig,
@@ -258,6 +263,86 @@ export async function runGenerateCommand(
   const githubSignals = sourceConfig.github.enabled
     ? await readGitHubActivitySignals(projects, targetDate)
     : [];
+  // UNC-222 / T2: reflection runs BEFORE buildActivitySummary so the resulting
+  // threads are available for T3's activity-summary injection. Signals are
+  // grouped by `projectId` (not by which source produced them — a thread is a
+  // per-project concept) and folded into that project's on-disk thread store
+  // via `reflectProjectThreads`, which itself re-derives every note through
+  // `sanitizeText` + the safety gate (see reflection.ts
+  // `deriveSafeThreadNote`) before persisting — no raw/unredacted and no
+  // safety-blocked text ever reaches `threads.jsonl`.
+  //
+  // `memoryThreadsByProject` is kept in scope (rather than discarded) so it
+  // can be flattened into a single list and injected into
+  // `buildActivitySummary` below (UNC-223 / T3), without re-reading
+  // `threads.jsonl` from disk.
+  //
+  // Memory is aged against the ACTIVITY's day, not the wall-clock run time:
+  // on a `--date` backfill the two differ, and stamping `lastSeen` with the
+  // run time would make a backfilled thread look freshly seen today and keep
+  // it alive long past its decay/expiry window. `reflectionClock` is the run
+  // time for a same-day run (targetDate's end-of-day is still ahead) and the
+  // end of targetDate for a backfill.
+  const reflectionClock = memoryClock(targetDate, generatedAt);
+  // Git commits and manual notes are the only MVP-scope sources (Claude /
+  // Codex / GitHub collection are all MVP-out-of-scope), so reflection has to
+  // consume them or the memory feature is inert for default users.
+  // `buildSignalsFromInput` is the same normalizer buildActivitySummary uses,
+  // so both paths see byte-identical, already-redacted signals.
+  //
+  // `dirty-file` signals are deliberately excluded: an uncommitted file is
+  // per-day working state, not a recurring topic, and it already reaches the
+  // summary through the source-shaped `unfinishedThreads` aggregate. Letting
+  // it create threads would spend the top-K budget on "modified: <path>".
+  const sourceSignals = buildSignalsFromInput({
+    targetDate,
+    gitEvents,
+    manualNotes
+  }).filter((signal) => signal.kind !== "dirty-file");
+  const allSignals = [
+    ...sourceSignals,
+    ...claudeSignals,
+    ...codexSignals,
+    ...githubSignals
+  ];
+  const memoryThreadsByProject = new Map<string, MemoryThread[]>();
+
+  for (const project of projects) {
+    const projectSignals = allSignals.filter(
+      (signal) => signal.projectId === project.id
+    );
+    // Reflection is a best-effort side-channel. Persisting threads.jsonl does
+    // filesystem I/O (mkdir + writeFile) that can fail per project (read-only
+    // fs, permissions, disk full). A failure here must never break the core
+    // draft/caption/carousel output — generate is what the launchd scheduler
+    // runs unattended, so it has to preserve partial output and keep future
+    // runs alive. On any failure we fall back to no threads for that project,
+    // mirroring the rawNarrativeProjection guard above.
+    try {
+      const threads = await reflectProjectThreads(
+        project.root,
+        projectSignals,
+        reflectionClock
+      );
+
+      memoryThreadsByProject.set(project.id, threads);
+    } catch {
+      memoryThreadsByProject.set(project.id, []);
+    }
+  }
+
+  // UNC-223 / T3: flatten the per-project reflected threads into one list and
+  // read the durable persona core facts, then inject both into the existing
+  // `unfinishedThreads`/`possibleJokes` slots (see activity-summary.ts).
+  const memoryThreads = Array.from(memoryThreadsByProject.values()).flat();
+  const coreFacts = await readCoreFacts(options.homeDir);
+
+  // UNC-224 / T4: gate reflected threads and core facts through the existing
+  // safety pipeline immediately before injection — blocked content is
+  // dropped and warning content is redacted, so only safe/redacted memory
+  // ever reaches buildActivitySummary.
+  const gated = gateMemoryForInjection({ threads: memoryThreads, coreFacts });
+
   const activitySummary = buildActivitySummary({
     targetDate,
     generatedAt,
@@ -265,7 +350,9 @@ export async function runGenerateCommand(
     manualNotes,
     claudeSignals,
     codexSignals,
-    githubSignals
+    githubSignals,
+    memoryThreads: gated.threads,
+    coreFacts: gated.coreFacts
   });
   const draftRevision = await runDraftStorageOperation(() =>
     createDraftRevision({
@@ -616,6 +703,23 @@ async function generateVisualAssetsForDraft(options: {
 
     throw error;
   }
+}
+
+/**
+ * The clock reflection ages memory against: the earlier of the run time and
+ * the end of `targetDate`.
+ *
+ * `generate today` derives `targetDate` from `generatedAt`, so end-of-day is
+ * always ahead of the run time and this returns `generatedAt` unchanged. A
+ * `--date` backfill of a past day returns that day's end instead, so
+ * `lastSeen` and the decay/expiry window follow the activity's date rather
+ * than whenever the backfill happened to run.
+ */
+function memoryClock(targetDate: string, generatedAt: string): Date {
+  const runTime = new Date(generatedAt);
+  const endOfTargetDate = new Date(`${targetDate}T23:59:59.999Z`);
+
+  return endOfTargetDate.getTime() < runTime.getTime() ? endOfTargetDate : runTime;
 }
 
 function parseGenerateDate(
