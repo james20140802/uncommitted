@@ -282,9 +282,20 @@ export async function runGenerateCommand(
     const projectSignals = allSignals.filter(
       (signal) => signal.projectId === project.id
     );
-    const threads = await reflectProjectThreads(project.root, projectSignals, now);
+    // Reflection is a best-effort side-channel. Persisting threads.jsonl does
+    // filesystem I/O (mkdir + writeFile) that can fail per project (read-only
+    // fs, permissions, disk full). A failure here must never break the core
+    // draft/caption/carousel output — generate is what the launchd scheduler
+    // runs unattended, so it has to preserve partial output and keep future
+    // runs alive. On any failure we fall back to no threads for that project,
+    // mirroring the rawNarrativeProjection guard above.
+    try {
+      const threads = await reflectProjectThreads(project.root, projectSignals, now);
 
-    memoryThreadsByProject.set(project.id, threads);
+      memoryThreadsByProject.set(project.id, threads);
+    } catch {
+      memoryThreadsByProject.set(project.id, []);
+    }
   }
 
   const activitySummary = buildActivitySummary({
