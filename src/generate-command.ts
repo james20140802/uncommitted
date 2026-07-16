@@ -19,6 +19,7 @@ import { redactArchitectureDisclosure } from "./architecture-disclosure.js";
 import { isActivitySignal, type ActivitySignal } from "./event-source.js";
 import { resolveConfigPaths } from "./config-paths.js";
 import type { MemoryThread } from "./memory-store.js";
+import { gateMemoryForInjection } from "./memory-safety-gate.js";
 import { readCoreFacts } from "./persona-core-facts.js";
 import { reflectProjectThreads } from "./reflection.js";
 import {
@@ -303,6 +304,12 @@ export async function runGenerateCommand(
   const memoryThreads = Array.from(memoryThreadsByProject.values()).flat();
   const coreFacts = await readCoreFacts(options.homeDir);
 
+  // UNC-224 / T4: gate reflected threads and core facts through the existing
+  // safety pipeline immediately before injection — blocked content is
+  // dropped and warning content is redacted, so only safe/redacted memory
+  // ever reaches buildActivitySummary.
+  const gated = gateMemoryForInjection({ threads: memoryThreads, coreFacts });
+
   const activitySummary = buildActivitySummary({
     targetDate,
     generatedAt,
@@ -311,8 +318,8 @@ export async function runGenerateCommand(
     claudeSignals,
     codexSignals,
     githubSignals,
-    memoryThreads,
-    coreFacts
+    memoryThreads: gated.threads,
+    coreFacts: gated.coreFacts
   });
   const draftRevision = await runDraftStorageOperation(() =>
     createDraftRevision({
