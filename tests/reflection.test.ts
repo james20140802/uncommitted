@@ -78,4 +78,52 @@ describe("reflection", () => {
     expect(out1[0].id).toBe(out2[0].id);
     expect(out1[0].id).toMatch(/^bug:/);
   });
+
+  // sanitizeText only covers emails / absolute paths / private URLs / raw code.
+  // A credential like `SECRET=...` survives it but is `blocked` by
+  // checkDraftSafety — it must never reach the durable thread store, not just
+  // be filtered at the injection boundary.
+  it("drops safety-blocked signals instead of persisting them (AC3/AC4)", () => {
+    const now = new Date("2026-07-15T10:00:00.000Z");
+    const out = reflectThreads({
+      threads: [],
+      signals: [signal({ summary: "fix login with SECRET=abc123def456ghi789" })],
+      now
+    });
+
+    expect(out).toEqual([]);
+  });
+
+  it("keeps safe signals and stores their redacted note", () => {
+    const now = new Date("2026-07-15T10:00:00.000Z");
+    const out = reflectThreads({
+      threads: [],
+      signals: [signal({ summary: "fix race condition in scheduler" })],
+      now
+    });
+
+    expect(out).toHaveLength(1);
+    expect(out[0].note).toBe("fix race condition in scheduler");
+  });
+
+  it("drops stored threads whose note is safety-blocked (AC3/AC4)", () => {
+    const now = new Date("2026-07-15T10:00:00.000Z");
+    const out = reflectThreads({
+      threads: [
+        {
+          id: "bug:legacy",
+          firstSeen: "2026-07-14T10:00:00.000Z",
+          lastSeen: "2026-07-14T10:00:00.000Z",
+          kind: "bug",
+          note: "fix login with SECRET=abc123def456ghi789",
+          status: "active",
+          decay: 1
+        }
+      ],
+      signals: [],
+      now
+    });
+
+    expect(out).toEqual([]);
+  });
 });

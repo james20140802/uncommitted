@@ -3,8 +3,13 @@
  * (an ongoing bug, refactor, running joke, blocker, or win tracked across
  * days). This module is the boundary between "raw-ish" signal summaries and
  * the long-lived thread store — every note that leaves it has been re-run
- * through `sanitizeText` (see `deriveThreadNote`), so it can never persist
- * more than the signal's own already-redacted `summary` allowed.
+ * through `sanitizeText` AND the `checkDraftSafety` pipeline (see
+ * `deriveSafeThreadNote`), so it can never persist more than the signal's own
+ * already-redacted `summary` allowed, and never persists safety-blocked
+ * content at all. The gate runs here, at the persistence boundary, rather
+ * than only at injection: `threads.jsonl` is durable storage, so a secret
+ * that `sanitizeText` misses must be dropped before it is written, not merely
+ * withheld from the prompt.
  *
  * `reflectThreads` is pure and deterministic: no `Math.random()`, no
  * `Date.now()` — every timestamp comes from the caller-supplied `now`, and
@@ -14,6 +19,7 @@
 import { applyThreadBounds, type MemoryThread, type ThreadKind } from "./memory-store.js";
 import { readThreads, writeThreads } from "./memory-store.js";
 import { sanitizeText } from "./redaction.js";
+import { checkDraftSafety } from "./safety-report.js";
 import type { ActivitySignal } from "./event-source.js";
 
 const BUG_PATTERN = /\b(fix|bug|broken|crash|error|race condition)\b/i;
@@ -80,6 +86,20 @@ export function deriveThreadNote(summary: string): string {
   return sanitizeText(summary).value;
 }
 
+/**
+ * The full persistence gate for a note: `sanitizeText` first, then the same
+ * `checkDraftSafety` pipeline the injection gate uses. Returns `null` when the
+ * text is `"blocked"` (a secret, database credential, or exploit detail that
+ * `sanitizeText`'s four categories do not cover — e.g. `SECRET=…`), and the
+ * redacted form otherwise. Nothing this returns `null` for may be written to
+ * `threads.jsonl`.
+ */
+export function deriveSafeThreadNote(summary: string): string | null {
+  const { report, redactedText } = checkDraftSafety(deriveThreadNote(summary));
+
+  return report.status === "blocked" ? null : redactedText;
+}
+
 function slug(value: string): string {
   const normalized = value
     .trim()
@@ -114,15 +134,29 @@ export function reflectThreads(input: {
   const { signals, now } = input;
   const byKey = new Map<string, MemoryThread>();
 
+  // Stored threads are re-gated on every read: a note written by an older
+  // build (or by a future regression) that is blocked today must not survive
+  // this write-back.
   for (const thread of input.threads) {
-    byKey.set(threadKey(thread.kind, thread.note), thread);
+    const note = deriveSafeThreadNote(thread.note);
+
+    if (note === null) {
+      continue;
+    }
+
+    byKey.set(threadKey(thread.kind, note), { ...thread, note });
   }
 
   const nowIso = now.toISOString();
 
   for (const signal of signals) {
     const kind = signalThreadKind(signal.kind, signal.summary);
-    const note = deriveThreadNote(signal.summary);
+    const note = deriveSafeThreadNote(signal.summary);
+
+    if (note === null) {
+      continue;
+    }
+
     const key = threadKey(kind, note);
     const existing = byKey.get(key);
 

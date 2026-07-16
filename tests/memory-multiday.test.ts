@@ -127,7 +127,7 @@ describe("memory multi-day continuity & decay (integration)", () => {
     expect(summary.unfinishedThreads).toContain("fix race condition in scheduler");
   });
 
-  it("drops a blocked-safety thread note from the injection slots in the multi-day flow (AC4)", async () => {
+  it("never persists a blocked-safety thread note, and keeps it out of the injection slots (AC3/AC4)", async () => {
     // Verified against src/safety-report.ts's `secret` detection rule (see
     // tests/memory-safety-gate.test.ts): "SECRET=..." matches and blocks.
     // An AKIA-style string is NOT matched by that rule and would not block.
@@ -140,10 +140,11 @@ describe("memory multi-day continuity & decay (integration)", () => {
     );
 
     const persisted = await readThreads(projectRoot);
-    // Sanity check: reflection's defensive re-sanitization (sanitizeText)
-    // does not itself strip this pattern — safety gating is a distinct,
-    // later stage in the pipeline, not reflection's job.
-    expect(persisted.some((t) => t.note.includes("SECRET=abc123def456"))).toBe(true);
+    // threads.jsonl is durable project storage, so the safety gate runs at the
+    // persistence boundary, not only before injection: sanitizeText's four
+    // categories do not cover "SECRET=...", so reflection re-checks through
+    // checkDraftSafety and drops the thread rather than writing it to disk.
+    expect(persisted.some((t) => t.note.includes("SECRET"))).toBe(false);
 
     const coreFacts = await readCoreFacts(homeDir);
     const gated = gateMemoryForInjection({ threads: persisted, coreFacts });
