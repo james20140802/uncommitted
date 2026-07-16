@@ -18,6 +18,8 @@ import type { GitActivityEvent } from "./collect-git-command.js";
 import { redactArchitectureDisclosure } from "./architecture-disclosure.js";
 import { isActivitySignal, type ActivitySignal } from "./event-source.js";
 import { resolveConfigPaths } from "./config-paths.js";
+import type { MemoryThread } from "./memory-store.js";
+import { reflectProjectThreads } from "./reflection.js";
 import {
   isRoastLevel,
   loadGlobalConfig,
@@ -258,6 +260,33 @@ export async function runGenerateCommand(
   const githubSignals = sourceConfig.github.enabled
     ? await readGitHubActivitySignals(projects, targetDate)
     : [];
+  // UNC-222 / T2: reflection runs BEFORE buildActivitySummary so the resulting
+  // threads are available for T3's activity-summary injection. Signals are
+  // grouped by `projectId` (not by which source produced them — a thread is a
+  // per-project concept) and folded into that project's on-disk thread store
+  // via `reflectProjectThreads`, which itself re-derives every note through
+  // `sanitizeText` (see reflection.ts `deriveThreadNote`) before persisting —
+  // no raw/unredacted text ever reaches `threads.jsonl`.
+  //
+  // `memoryThreadsByProject` is kept in scope (rather than discarded) so T3
+  // can inject the reflected threads into `buildActivitySummary`/the prompt
+  // without re-reading `threads.jsonl` from disk. T3 still needs to decide the
+  // exact shape that injection takes (e.g. per-project vs a single merged
+  // list, and how it flows into `ActivitySummary`/the story-format prompt) —
+  // that wiring is intentionally left for T3 to finalize.
+  const now = new Date(generatedAt);
+  const allSignals = [...claudeSignals, ...codexSignals, ...githubSignals];
+  const memoryThreadsByProject = new Map<string, MemoryThread[]>();
+
+  for (const project of projects) {
+    const projectSignals = allSignals.filter(
+      (signal) => signal.projectId === project.id
+    );
+    const threads = await reflectProjectThreads(project.root, projectSignals, now);
+
+    memoryThreadsByProject.set(project.id, threads);
+  }
+
   const activitySummary = buildActivitySummary({
     targetDate,
     generatedAt,
