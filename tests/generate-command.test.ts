@@ -12,6 +12,7 @@ import type {
 import { runCli } from "../src/cli.js";
 import type { GitActivityEvent } from "../src/collect-git-command.js";
 import type { CaptionResult, DiaryDraft } from "../src/diary-generator.js";
+import type { MemoryThread } from "../src/memory-store.js";
 import { PERSONA_PRESETS, type Persona } from "../src/persona.js";
 import { addProject, type ProjectRecord } from "../src/project-add.js";
 import type { Mood, MoodPlan, StoryFormatPlan } from "../src/story-format-plan.js";
@@ -192,6 +193,56 @@ describe("generate command", () => {
     expect(metadata).toMatchObject({ mood: "grind" });
     expect(JSON.stringify(story)).not.toContain("formatName");
     expect(JSON.stringify(metadata)).not.toContain("formatName");
+  });
+
+  // UNC-203: git commits and manual notes are the only MVP-scope sources
+  // (claude/codex/github collection are all MVP-out-of-scope), so if they do
+  // not reach reflection the whole memory feature is dead for default users.
+  it("reflects git commits and manual notes into project memory threads (UNC-203)", async () => {
+    const { io } = createIo();
+    const fixture = await createRegisteredProjectFixture();
+    const provider = new TaskAwareProvider();
+
+    await writeGitEvent(fixture.project, "2026-05-12");
+    await writeManualNote(fixture.project, "2026-05-12");
+
+    const exitCode = await runCli(["generate", "today"], io, {
+      homeDir: fixture.homeDir,
+      now: () => "2026-05-12T23:30:00.000Z",
+      aiProvider: provider
+    });
+    const threads = await readThreadLines(fixture.project.root);
+
+    expect(exitCode).toBe(0);
+    expect(threads.map((thread) => thread.note)).toEqual(
+      expect.arrayContaining([
+        "implement generate command",
+        "Finished the text draft workflow without exposing [redacted-email] or [redacted-path]"
+      ])
+    );
+  });
+
+  // A `--date` backfill must age memory against the activity's day, not the
+  // wall-clock run day, or a backfilled thread looks freshly seen today and
+  // never decays/expires on schedule.
+  it("stamps memory threads with the target date, not the run date, on --date backfill (UNC-203)", async () => {
+    const { io } = createIo();
+    const fixture = await createRegisteredProjectFixture();
+    const provider = new TaskAwareProvider();
+
+    await writeGitEvent(fixture.project, "2026-05-12");
+
+    const exitCode = await runCli(["generate", "--date", "2026-05-12"], io, {
+      homeDir: fixture.homeDir,
+      now: () => "2026-05-20T09:00:00.000Z",
+      aiProvider: provider
+    });
+    const threads = await readThreadLines(fixture.project.root);
+
+    expect(exitCode).toBe(0);
+    expect(threads).toHaveLength(1);
+    expect(threads[0].lastSeen.slice(0, 10)).toBe("2026-05-12");
+    expect(threads[0].firstSeen.slice(0, 10)).toBe("2026-05-12");
   });
 
   it("accepts a structured persona config and threads its backstory into generation requests", async () => {
@@ -1506,4 +1557,16 @@ function createProviderCaption(overrides: Partial<CaptionResult> = {}): CaptionR
 
 async function readJson(path: string): Promise<unknown> {
   return JSON.parse(await readFile(path, "utf8")) as unknown;
+}
+
+async function readThreadLines(projectRoot: string): Promise<MemoryThread[]> {
+  const content = await readFile(
+    join(projectRoot, ".uncommitted", "memory", "threads.jsonl"),
+    "utf8"
+  );
+
+  return content
+    .split("\n")
+    .filter((line) => line.trim() !== "")
+    .map((line) => JSON.parse(line) as MemoryThread);
 }
