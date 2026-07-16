@@ -12,6 +12,7 @@ export { deriveSynthesisFromSignals };
 import type { GitActivityEvent } from "./collect-git-command.js";
 import type { ActivitySignal } from "./event-source.js";
 import type { DirtyFileStatus, DirtyStatusTotals } from "./git-activity-collector.js";
+import { recencyDecay, THREAD_TOP_K, type MemoryThread } from "./memory-store.js";
 import type { ManualNoteEvent } from "./note-command.js";
 import {
   categorizeRedactedSubject,
@@ -45,6 +46,16 @@ export type ActivitySummaryInput = {
   // Treated identically to session signals so a day of merged PRs / closed
   // issues / reviews isn't quiet.
   githubSignals?: ActivitySignal[];
+  // Cross-day recurring threads (bug/refactor/running-joke/blocker/win/other)
+  // reflected by `reflectProjectThreads` (see reflection.ts). Optional and
+  // additive: when present, the top `THREAD_TOP_K` active threads (ranked by
+  // `recencyDecay` against `generatedAt`) are injected into the existing
+  // `unfinishedThreads`/`possibleJokes` slots alongside the single-day content.
+  memoryThreads?: MemoryThread[];
+  // Durable, always-present persona facts (e.g. "prefers TDD") read from
+  // `persona.json` via `readCoreFacts`. When present, prepended to
+  // `unfinishedThreads` ahead of everything else.
+  coreFacts?: string[];
 };
 
 export type ActivityProjectSummary = {
@@ -296,6 +307,23 @@ export function buildActivitySummary(
     hasUncommittedChanges: uncommittedFiles.length > 0
   });
 
+  const { unfinishedThreadNotes, jokeNotes } = selectTopMemoryThreads(
+    input.memoryThreads,
+    new Date(input.generatedAt)
+  );
+  const possibleJokes = [
+    ...buildPossibleJokes(activityLevel, {
+      hasBlockers: synthesis.blockersOrConfusion.length > 0,
+      hasUncommittedChanges: uncommittedFiles.length > 0
+    }),
+    ...jokeNotes
+  ];
+  const unfinishedThreadsWithMemory = [
+    ...(input.coreFacts ?? []),
+    ...unfinishedThreads,
+    ...unfinishedThreadNotes
+  ];
+
   return {
     schemaVersion: 1,
     targetDate: input.targetDate,
@@ -322,11 +350,8 @@ export function buildActivitySummary(
     },
     smallWins: synthesis.smallWins,
     blockersOrConfusion: synthesis.blockersOrConfusion,
-    unfinishedThreads,
-    possibleJokes: buildPossibleJokes(activityLevel, {
-      hasBlockers: synthesis.blockersOrConfusion.length > 0,
-      hasUncommittedChanges: uncommittedFiles.length > 0
-    }),
+    unfinishedThreads: unfinishedThreadsWithMemory,
+    possibleJokes,
     publicSafetyNotes,
     privateItemsToAvoid: sortPrivateItems(privateItems),
     uncertaintyNotes
@@ -549,6 +574,40 @@ function buildUncertaintyNotes(
   }
 
   return notes;
+}
+
+/**
+ * Select the top `THREAD_TOP_K` active memory threads ranked by
+ * `recencyDecay(thread, now)` descending, then split their notes by kind:
+ * `running-joke`/`win` go to the joke slot, everything else goes to the
+ * unfinished-thread slot. Threads with `status !== "active"` are excluded
+ * before ranking.
+ */
+function selectTopMemoryThreads(
+  memoryThreads: MemoryThread[] | undefined,
+  now: Date
+): { unfinishedThreadNotes: string[]; jokeNotes: string[] } {
+  if (!memoryThreads || memoryThreads.length === 0) {
+    return { unfinishedThreadNotes: [], jokeNotes: [] };
+  }
+
+  const topThreads = memoryThreads
+    .filter((thread) => thread.status === "active")
+    .sort((a, b) => recencyDecay(b, now) - recencyDecay(a, now))
+    .slice(0, THREAD_TOP_K);
+
+  const unfinishedThreadNotes: string[] = [];
+  const jokeNotes: string[] = [];
+
+  for (const thread of topThreads) {
+    if (thread.kind === "running-joke" || thread.kind === "win") {
+      jokeNotes.push(thread.note);
+    } else {
+      unfinishedThreadNotes.push(thread.note);
+    }
+  }
+
+  return { unfinishedThreadNotes, jokeNotes };
 }
 
 function buildPossibleJokes(

@@ -19,6 +19,7 @@ import { redactArchitectureDisclosure } from "./architecture-disclosure.js";
 import { isActivitySignal, type ActivitySignal } from "./event-source.js";
 import { resolveConfigPaths } from "./config-paths.js";
 import type { MemoryThread } from "./memory-store.js";
+import { readCoreFacts } from "./persona-core-facts.js";
 import { reflectProjectThreads } from "./reflection.js";
 import {
   isRoastLevel,
@@ -268,12 +269,10 @@ export async function runGenerateCommand(
   // `sanitizeText` (see reflection.ts `deriveThreadNote`) before persisting —
   // no raw/unredacted text ever reaches `threads.jsonl`.
   //
-  // `memoryThreadsByProject` is kept in scope (rather than discarded) so T3
-  // can inject the reflected threads into `buildActivitySummary`/the prompt
-  // without re-reading `threads.jsonl` from disk. T3 still needs to decide the
-  // exact shape that injection takes (e.g. per-project vs a single merged
-  // list, and how it flows into `ActivitySummary`/the story-format prompt) —
-  // that wiring is intentionally left for T3 to finalize.
+  // `memoryThreadsByProject` is kept in scope (rather than discarded) so it
+  // can be flattened into a single list and injected into
+  // `buildActivitySummary` below (UNC-223 / T3), without re-reading
+  // `threads.jsonl` from disk.
   const now = new Date(generatedAt);
   const allSignals = [...claudeSignals, ...codexSignals, ...githubSignals];
   const memoryThreadsByProject = new Map<string, MemoryThread[]>();
@@ -298,6 +297,12 @@ export async function runGenerateCommand(
     }
   }
 
+  // UNC-223 / T3: flatten the per-project reflected threads into one list and
+  // read the durable persona core facts, then inject both into the existing
+  // `unfinishedThreads`/`possibleJokes` slots (see activity-summary.ts).
+  const memoryThreads = Array.from(memoryThreadsByProject.values()).flat();
+  const coreFacts = await readCoreFacts(options.homeDir);
+
   const activitySummary = buildActivitySummary({
     targetDate,
     generatedAt,
@@ -305,7 +310,9 @@ export async function runGenerateCommand(
     manualNotes,
     claudeSignals,
     codexSignals,
-    githubSignals
+    githubSignals,
+    memoryThreads,
+    coreFacts
   });
   const draftRevision = await runDraftStorageOperation(() =>
     createDraftRevision({
