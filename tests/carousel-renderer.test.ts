@@ -571,6 +571,37 @@ describe("carousel renderer", () => {
   });
 });
 
+describe("story-card fallback korean + short slides (UNC-218)", () => {
+  const longMood =
+    "an extremely long english visual concept description that rambles on and on about a cinematic aftermath scene with far too many words to scan quickly";
+  const story = {
+    schemaVersion: 1 as const,
+    targetDate: "2026-07-18",
+    slides: [
+      {
+        index: 1,
+        title: "오늘의 기록",
+        body: "조용한 하루였다.",
+        visualMood: longMood
+      }
+    ]
+  };
+
+  it("renders story-card html with korean lang attribute", () => {
+    const [card] = createCarouselHtmlCards(story, { visualStyle: "story-card" });
+    expect(card.visualStyle).toBe("story-card");
+    expect(card.html).toContain('lang="ko"');
+    expect(card.html).not.toContain('lang="en"');
+  });
+
+  it("truncates the visual concept placeholder to a short, scannable snippet", () => {
+    const [card] = createCarouselHtmlCards(story, { visualStyle: "story-card" });
+    // 원본 장문이 그대로 노출되지 않고 잘린 스니펫(말줄임표)으로 표시된다
+    expect(card.html).not.toContain(longMood);
+    expect(card.html).toContain("…");
+  });
+});
+
 const fixturePng = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=",
   "base64"
