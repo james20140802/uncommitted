@@ -20,6 +20,7 @@ import type {
   ImageAssetProvider,
   ImageAssetRequest
 } from "../src/visual-assets.js";
+import { VISUAL_IDENTITY } from "../src/visual-identity.js";
 
 describe("visual asset generation", () => {
   it("creates an OpenAI image asset provider that requests a supported 1024x1536 source and returns a 1024x1280 Instagram 4:5 crop", async () => {
@@ -524,6 +525,24 @@ describe("createPhotoFirstPrompt grounding (UNC-217)", () => {
   it("still forbids readable text, code, faces, and secrets in the image", () => {
     const prompt = createPhotoFirstPrompt("anything");
     expect(prompt.toLowerCase()).toContain("no readable text");
+  });
+});
+
+describe("createPhotoFirstPrompt visual identity composition (UNC-219)", () => {
+  it("includes the shared identity palette, composition, and materials in every prompt", () => {
+    const prompt = createPhotoFirstPrompt("a quiet refactor day");
+
+    expect(prompt).toContain(VISUAL_IDENTITY.palette);
+    expect(prompt).toContain(VISUAL_IDENTITY.composition);
+    expect(prompt).toContain(VISUAL_IDENTITY.materialGrammar);
+  });
+
+  it("keeps identity constant even as mood/anchor varies (recognizable common look)", () => {
+    const a = createPhotoFirstPrompt("day one", { tone: "bright" });
+    const b = createPhotoFirstPrompt("day two", { tone: "somber" });
+
+    expect(a).toContain(VISUAL_IDENTITY.palette);
+    expect(b).toContain(VISUAL_IDENTITY.palette);
   });
 });
 

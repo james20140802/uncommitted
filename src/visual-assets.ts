@@ -21,6 +21,7 @@ import {
   BILLING_429_MESSAGE,
   classify429ResponseBody
 } from "./provider-429-classifier.js";
+import { visualIdentityPromptLines } from "./visual-identity.js";
 
 export type VisualAssetFallbackState =
   | "none"
@@ -228,6 +229,7 @@ export function createPhotoFirstPrompt(
     "Create a natural 4:5 editorial photo for an Instagram photo dump.",
     `Ground the image in today's real work — anchor it in: ${anchors}.`,
     ...(moodTokens ? [`Match the mood: ${moodTokens}.`] : []),
+    ...visualIdentityPromptLines(),
     "No readable text, no code, no UI screenshots, no logos, no people faces, no file paths, no emails, no tokens, and no private URLs.",
     "Not a poster, not an infographic, not an explanatory card, and not a text-overlay concept.",
     `Visual intent: ${promptSummary}`
