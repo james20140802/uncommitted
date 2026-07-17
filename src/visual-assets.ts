@@ -206,14 +206,34 @@ function createImageAssetRequest(card: CarouselHtmlCard): ImageAssetRequest {
   };
 }
 
-function createPhotoFirstPrompt(promptSummary: string): string {
-  return [
+export type VisualMoodInput = {
+  tone?: string;
+  energy?: string;
+  anchorKeywords?: readonly string[];
+};
+
+export function createPhotoFirstPrompt(
+  promptSummary: string,
+  mood?: VisualMoodInput
+): string {
+  const anchors =
+    mood?.anchorKeywords && mood.anchorKeywords.length > 0
+      ? mood.anchorKeywords.join(", ")
+      : promptSummary;
+  const moodTokens = [mood?.tone, mood?.energy]
+    .filter((token): token is string => Boolean(token && token.trim()))
+    .join(", ");
+
+  const lines = [
     "Create a natural 4:5 editorial photo for an Instagram photo dump.",
-    "Use cinematic but casual workspace mood, detail shot, aftermath shot, desk object, or quiet developer environment language.",
+    `Ground the image in today's real work — anchor it in: ${anchors}.`,
+    ...(moodTokens ? [`Match the mood: ${moodTokens}.`] : []),
     "No readable text, no code, no UI screenshots, no logos, no people faces, no file paths, no emails, no tokens, and no private URLs.",
     "Not a poster, not an infographic, not an explanatory card, and not a text-overlay concept.",
     `Visual intent: ${promptSummary}`
-  ].join("\n");
+  ];
+
+  return lines.join("\n");
 }
 
 function createStoryCardPrompt(promptSummary: string): string {

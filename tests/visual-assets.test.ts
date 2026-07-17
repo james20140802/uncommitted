@@ -12,6 +12,7 @@ import { createCarouselHtmlCards } from "../src/carousel-renderer.js";
 import { createDraftRevision } from "../src/draft-storage.js";
 import {
   createImageAssetProvider,
+  createPhotoFirstPrompt,
   generateCarouselVisualAssets,
   VisualAssetGenerationError
 } from "../src/visual-assets.js";
@@ -497,6 +498,34 @@ function createTransport(
     };
   };
 }
+
+describe("createPhotoFirstPrompt grounding (UNC-217)", () => {
+  it("grounds the prompt in the day's anchor summary when no structured mood is given", () => {
+    const prompt = createPhotoFirstPrompt("migrating the feedback store to mood fields");
+
+    expect(prompt).toContain("migrating the feedback store to mood fields");
+    // 회전형 고정 장르 코스튬 문구가 제거되었다
+    expect(prompt).not.toContain("aftermath shot");
+  });
+
+  it("injects structured mood tone, energy, and anchor keywords when provided", () => {
+    const prompt = createPhotoFirstPrompt("debugging a flaky test", {
+      tone: "quiet",
+      energy: "low",
+      anchorKeywords: ["flaky test", "terminal logs"]
+    });
+
+    expect(prompt).toContain("quiet");
+    expect(prompt).toContain("low");
+    expect(prompt).toContain("flaky test");
+    expect(prompt).toContain("terminal logs");
+  });
+
+  it("still forbids readable text, code, faces, and secrets in the image", () => {
+    const prompt = createPhotoFirstPrompt("anything");
+    expect(prompt.toLowerCase()).toContain("no readable text");
+  });
+});
 
 async function createTestRevision() {
   const draftRoot = join(tmpdir(), `uncommitted-visual-assets-${randomUUID()}`);
