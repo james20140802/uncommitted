@@ -247,7 +247,7 @@ function createStoryCardPrompt(promptSummary: string): string {
   ].join("\n");
 }
 
-function sanitizeVisualPrompt(value: string): string {
+export function sanitizeVisualPrompt(value: string): string {
   const safetyChecked = checkDraftSafety(value).redactedText;
   const codeRedacted = safetyChecked
     .replace(/`[^`]*`/g, "[redacted-code]")
