@@ -658,6 +658,16 @@ function parseDiarySlide(value: unknown, index: number): DiarySlide {
   };
 }
 
+const storyCardConceptMaxChars = 48;
+
+function toScannableConcept(concept: string): string {
+  const normalized = concept.replace(/\s+/g, " ").trim();
+  if (normalized.length <= storyCardConceptMaxChars) {
+    return normalized;
+  }
+  return `${normalized.slice(0, storyCardConceptMaxChars).trimEnd()}…`;
+}
+
 function renderCardHtml(options: {
   targetDate: string;
   projectMarker: string;
@@ -678,12 +688,16 @@ function renderCardHtml(options: {
   const visualStyle = escapeHtml(options.visualStyle);
   const visualAssetSlotId = escapeHtml(options.visualTreatment.assetSlotId);
   const visualKind = escapeHtml(options.visualTreatment.kind);
-  const visualPrompt = escapeHtml(options.visualTreatment.prompt);
-  const visualAltText = escapeHtml(options.visualTreatment.altText);
+  const visualConceptSnippet = escapeHtml(
+    toScannableConcept(options.visualTreatment.prompt)
+  );
+  const visualConceptAriaLabel = escapeHtml(
+    `Story-card visual concept: ${toScannableConcept(options.visualTreatment.prompt)}`
+  );
   const pageIndicator = `${options.pageNumber} / ${options.pageCount}`;
 
   return `<!doctype html>
-<html lang="en">
+<html lang="ko">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=1080, initial-scale=1">
@@ -892,10 +906,10 @@ function renderCardHtml(options: {
       class="visual-stage"
       data-visual-kind="${visualKind}"
       data-asset-slot-id="${visualAssetSlotId}"
-      data-visual-prompt="${visualPrompt}"
-      aria-label="${visualAltText}"
+      data-visual-prompt="${visualConceptSnippet}"
+      aria-label="${visualConceptAriaLabel}"
     >
-      <div class="visual-placeholder">${visualPrompt}</div>
+      <div class="visual-placeholder">${visualConceptSnippet}</div>
     </section>
     <main class="content">
       <h1>${title}</h1>
