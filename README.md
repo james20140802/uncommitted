@@ -49,8 +49,8 @@ pnpm release:smoke
 
 # Or install the tarball into your own project / global location:
 npm pack
-# → produces sangchu04-uncommitted-0.2.2.tgz
-pnpm add -g file:./sangchu04-uncommitted-0.2.2.tgz
+# → produces sangchu04-uncommitted-0.3.0.tgz
+pnpm add -g file:./sangchu04-uncommitted-0.3.0.tgz
 uncommitted --help
 ```
 
