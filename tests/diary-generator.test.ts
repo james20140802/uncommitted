@@ -14,6 +14,10 @@ import { PERSONA_PRESETS, type Persona } from "../src/persona.js";
 import type { MoodPlan, StoryFormatPlan } from "../src/story-format-plan.js";
 
 const captionTestPersona: Persona = PERSONA_PRESETS["시니컬한 관찰자"].persona;
+const captionTestMoodPlan: MoodPlan = createStoryFormatPlan({
+  captionStyle: "짧고 위트있는 캡션",
+  doNotMention: ["raw diffs", "private paths"]
+});
 
 describe("diary generator", () => {
   it("returns a validated story draft and derives caption text", async () => {
@@ -589,30 +593,41 @@ describe("architecture disclosure redaction (UNC-206)", () => {
 });
 
 describe("caption generator", () => {
-  it("buildCaptionInstructions includes few-shot good and bad examples", () => {
+  it("buildCaptionInstructions replaces fixed-voice good examples with a structure-only skeleton and keeps bad examples", () => {
     const instructions = buildCaptionInstructions({
       quiet: false,
-      persona: captionTestPersona
+      persona: captionTestPersona,
+      moodPlan: captionTestMoodPlan
     });
 
-    // Good example anchors
-    expect(instructions).toContain("caption 몇 줄만 손보자고 했는데");
-    expect(instructions).toContain("preview 만든다길래");
+    // Fixed-voice GOOD examples (fossilized observer narrator) removed
+    expect(instructions).not.toContain("caption 몇 줄만 손보자고 했는데");
+    expect(instructions).not.toContain("preview 만든다길래");
+    expect(instructions).not.toContain("=== GOOD EXAMPLES ===");
 
-    // Bad example anchors
+    // Structure-only skeleton present, explicitly not a voice source
+    expect(instructions).toContain("STRUCTURE SKELETON");
+    expect(instructions).toContain(
+      "come from the persona voice lines above and today's mood guidance"
+    );
+
+    // Bad examples (voice-neutral anti-patterns) still present
     expect(instructions).toContain("보이지 않는 가능성이");
     expect(instructions).toContain("오늘도 개발했습니다");
 
     // Core style rules
     expect(instructions).toContain("AI");
     expect(instructions).toContain("Instagram");
-    expect(instructions).not.toContain("captionStyle");
+
+    // captionStyle is now legitimately consumed from the day's mood plan
+    expect(instructions).toContain(captionTestMoodPlan.captionStyle);
   });
 
   it("buildCaptionInstructions quiet-day variant mentions absence of work", () => {
     const instructions = buildCaptionInstructions({
       quiet: true,
-      persona: captionTestPersona
+      persona: captionTestPersona,
+      moodPlan: captionTestMoodPlan
     });
 
     expect(instructions).toContain("조용한 날");
@@ -624,11 +639,13 @@ describe("caption generator", () => {
 
     const instructionsA = buildCaptionInstructions({
       quiet: false,
-      persona: personaA
+      persona: personaA,
+      moodPlan: captionTestMoodPlan
     });
     const instructionsB = buildCaptionInstructions({
       quiet: false,
-      persona: personaB
+      persona: personaB,
+      moodPlan: captionTestMoodPlan
     });
 
     expect(instructionsA).not.toBe(instructionsB);
@@ -654,7 +671,8 @@ describe("caption generator", () => {
 
     const instructions = buildCaptionInstructions({
       quiet: false,
-      persona: captionTestPersona
+      persona: captionTestPersona,
+      moodPlan: captionTestMoodPlan
     });
 
     expect(instructions).toContain("음");
@@ -673,10 +691,77 @@ describe("caption generator", () => {
 
     const instructions = buildCaptionInstructions({
       quiet: false,
-      persona: uniformPersona
+      persona: uniformPersona,
+      moodPlan: captionTestMoodPlan
     });
 
     expect(instructions).not.toContain("일변도 금지");
+  });
+
+  it("buildCaptionInstructions reflects today's mood/captionStyle/angle and differs across moods", () => {
+    const moodPlanA = createStoryFormatPlan({
+      captionStyle: "말수 적고 건조한 관찰 캡션"
+    });
+    const moodPlanB: MoodPlan = {
+      ...moodPlanA,
+      mood: "breakthrough",
+      angle: "A stubborn bug finally gave up after a week of circling it.",
+      captionStyle: "들뜬 축하 캡션",
+      doNotMention: []
+    };
+
+    const instructionsA = buildCaptionInstructions({
+      quiet: false,
+      persona: captionTestPersona,
+      moodPlan: moodPlanA
+    });
+    const instructionsB = buildCaptionInstructions({
+      quiet: false,
+      persona: captionTestPersona,
+      moodPlan: moodPlanB
+    });
+
+    expect(instructionsA).not.toBe(instructionsB);
+    expect(instructionsA).toContain(moodPlanA.mood);
+    expect(instructionsA).toContain(moodPlanA.captionStyle);
+    expect(instructionsA).toContain(moodPlanA.angle);
+    expect(instructionsB).toContain(moodPlanB.mood);
+    expect(instructionsB).toContain(moodPlanB.captionStyle);
+    expect(instructionsB).toContain(moodPlanB.angle);
+  });
+
+  it("buildCaptionInstructions includes a doNotMention line only when the mood plan's doNotMention is non-empty", () => {
+    const withDoNotMention = buildCaptionInstructions({
+      quiet: false,
+      persona: captionTestPersona,
+      moodPlan: captionTestMoodPlan
+    });
+
+    expect(withDoNotMention).toContain("Do not mention:");
+    expect(withDoNotMention).toContain("raw diffs");
+
+    const withoutDoNotMention = buildCaptionInstructions({
+      quiet: false,
+      persona: captionTestPersona,
+      moodPlan: { ...captionTestMoodPlan, doNotMention: [] }
+    });
+
+    expect(withoutDoNotMention).not.toContain("Do not mention:");
+  });
+
+  it("buildCaptionInstructions instructs translating developer jargon into human stakes", () => {
+    const instructions = buildCaptionInstructions({
+      quiet: false,
+      persona: captionTestPersona,
+      moodPlan: captionTestMoodPlan
+    });
+
+    expect(instructions).toContain("archive-context PR");
+    expect(instructions).toContain("뒤로가기 버튼을 못 믿는 하루");
+    expect(instructions).toContain("human stakes");
+    expect(instructions).toContain(
+      "Do not leave raw jargon such as PR numbers, version tags, or module/file names"
+    );
   });
 
   it("generateCaption sends commitSubjects as caption anchor in prompt input", async () => {
@@ -701,7 +786,8 @@ describe("caption generator", () => {
       }),
       provider,
       persona: captionTestPersona,
-      roastLevel: 2
+      roastLevel: 2,
+      moodPlan: captionTestMoodPlan
     });
 
     expect(provider.requests).toHaveLength(1);
@@ -710,6 +796,31 @@ describe("caption generator", () => {
     const inputJson = JSON.stringify(request.input);
     expect(inputJson).toContain("add caption prompt");
     expect(inputJson).toContain("fix rendering bug");
+  });
+
+  it("generateCaption forwards the day's moodPlan (mood/angle/captionStyle/doNotMention) into the provider input", async () => {
+    const provider = new MockAiProvider({
+      response: {
+        caption: "그 버그를 오늘도 또 만났습니다",
+        hashtags: ["#Uncommitted", "#버그"]
+      }
+    });
+
+    await generateCaption({
+      activitySummary: createActivitySummary(),
+      provider,
+      persona: captionTestPersona,
+      roastLevel: 2,
+      moodPlan: captionTestMoodPlan
+    });
+
+    const request = provider.requests[0]!;
+    expect(request.input.moodPlan).toEqual({
+      mood: captionTestMoodPlan.mood,
+      angle: captionTestMoodPlan.angle,
+      captionStyle: captionTestMoodPlan.captionStyle,
+      doNotMention: captionTestMoodPlan.doNotMention
+    });
   });
 
   it("generateCaption forwards the raw narrative projection to the caption prompt input", async () => {
@@ -725,6 +836,7 @@ describe("caption generator", () => {
       provider,
       persona: captionTestPersona,
       roastLevel: 2,
+      moodPlan: captionTestMoodPlan,
       rawNarrativeProjection: {
         turns: [
           {
@@ -760,7 +872,8 @@ describe("caption generator", () => {
       activitySummary: createActivitySummary(),
       provider,
       persona: captionTestPersona,
-      roastLevel: 2
+      roastLevel: 2,
+      moodPlan: captionTestMoodPlan
     });
 
     expect(result.caption).toBe(
@@ -793,7 +906,8 @@ describe("caption generator", () => {
         activitySummary: createActivitySummary(),
         provider: emptyProvider,
         persona: captionTestPersona,
-        roastLevel: 2
+        roastLevel: 2,
+        moodPlan: captionTestMoodPlan
       })
     ).rejects.toMatchObject({ code: "malformed-response" });
 
@@ -802,7 +916,8 @@ describe("caption generator", () => {
         activitySummary: createActivitySummary(),
         provider: missingHashtagsProvider,
         persona: captionTestPersona,
-        roastLevel: 2
+        roastLevel: 2,
+        moodPlan: captionTestMoodPlan
       })
     ).rejects.toMatchObject({ code: "malformed-response" });
 
@@ -811,7 +926,8 @@ describe("caption generator", () => {
         activitySummary: createActivitySummary(),
         provider: badHashtagProvider,
         persona: captionTestPersona,
-        roastLevel: 2
+        roastLevel: 2,
+        moodPlan: captionTestMoodPlan
       })
     ).rejects.toMatchObject({ code: "malformed-response" });
 
@@ -820,7 +936,8 @@ describe("caption generator", () => {
         activitySummary: createActivitySummary(),
         provider: failingProvider,
         persona: captionTestPersona,
-        roastLevel: 2
+        roastLevel: 2,
+        moodPlan: captionTestMoodPlan
       })
     ).rejects.toBeInstanceOf(AiGenerationError);
   });
@@ -853,7 +970,8 @@ describe("caption generator", () => {
           }
         }),
         persona: captionTestPersona,
-        roastLevel: 2
+        roastLevel: 2,
+        moodPlan: captionTestMoodPlan
       })
     ).rejects.toMatchObject({
       code: "malformed-response",
@@ -870,7 +988,8 @@ describe("caption generator", () => {
           }
         }),
         persona: captionTestPersona,
-        roastLevel: 2
+        roastLevel: 2,
+        moodPlan: captionTestMoodPlan
       })
     ).rejects.toMatchObject({
       code: "malformed-response"
@@ -886,7 +1005,8 @@ describe("caption generator", () => {
           }
         }),
         persona: captionTestPersona,
-        roastLevel: 2
+        roastLevel: 2,
+        moodPlan: captionTestMoodPlan
       })
     ).resolves.toMatchObject({
       caption: "오늘은 조용한 하루였습니다. 기다리고 관찰했습니다."
@@ -949,7 +1069,8 @@ describe("caption generator", () => {
       activitySummary: noteOnlySummary,
       provider,
       persona: captionTestPersona,
-      roastLevel: 2
+      roastLevel: 2,
+      moodPlan: captionTestMoodPlan
     });
 
     const inputJson = JSON.stringify(provider.requests[0]?.input);
