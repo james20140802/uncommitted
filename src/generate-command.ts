@@ -387,6 +387,7 @@ export async function runGenerateCommand(
   });
   const captionResult = await generateCaption({
     activitySummary,
+    moodPlan: storyFormatPlan,
     provider,
     persona: config.persona,
     roastLevel: config.roastLevel,

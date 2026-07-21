@@ -68,6 +68,7 @@ export type CaptionResult = {
 
 export type GenerateCaptionOptions = {
   activitySummary: ActivitySummary;
+  moodPlan: MoodPlan;
   provider: AiProvider;
   persona: Persona;
   roastLevel: number;
@@ -369,14 +370,25 @@ function buildPersonaCaptionLines(persona: Persona): string[] {
 export function buildCaptionInstructions(options: {
   quiet: boolean;
   persona: Persona;
+  moodPlan: MoodPlan;
 }): string {
   const quietInstruction = options.quiet
     ? "This is a quiet day with no recorded Git activity. Acknowledge the absence of recorded work honestly. Write a caption about the quiet — the narrator observed little activity and says so plainly. Do not invent work. A 조용한 날 caption is valid and honest content."
     : "Use the concrete commitSubjects from the input as caption anchors. Pick one or two specific work moments as the single topic of the caption — do not list all tasks. Do not invent work not in the input.";
+  const doNotMentionLine =
+    options.moodPlan.doNotMention.length > 0
+      ? [
+          `Do not mention: ${options.moodPlan.doNotMention.join(", ")}.`
+        ]
+      : [];
 
   return [
     "Return JSON with exactly two fields: caption (string) and hashtags (array of strings).",
     ...buildPersonaCaptionLines(options.persona),
+    `Today's mood is "${options.moodPlan.mood}" — let it color the caption's emotional register and pacing on top of the persona voice described above.`,
+    `Caption style guidance for today: ${options.moodPlan.captionStyle}.`,
+    `The coworker's fixation today: ${options.moodPlan.angle}. Use it as a natural anchor when it fits.`,
+    ...doNotMentionLine,
     "This is NOT the user's diary. This is NOT a work report. This is NOT product marketing copy.",
     "Write in Korean. Instagram-native, readable, in the voice described above.",
     "First-person AI coworker perspective. You may say '우리 개발자', '인간', '제가 봄', '저는 옆에서 봤습니다', or similar.",
@@ -384,64 +396,19 @@ export function buildCaptionInstructions(options: {
     "Mild roast is allowed toward situations, workflow, bugs, TODOs, vague requirements, or developer habits. Never insult ability, worth, personality, identity, mental health, or real life.",
     quietInstruction,
     "If rawNarrativeProjection is present, you may use its turns as concrete anchors for what actually happened today; it is already safety-filtered. Never copy it verbatim and never invent work it does not support.",
-    "The examples below illustrate STRUCTURE and PACING only (anchor choice, line rhythm, hashtag count) — write in the persona voice described above, not necessarily these exact words or tone.",
+    "Translate developer jargon (PR numbers, version tags, module or file names, commit hashes) into human stakes — what it actually meant for a person — instead of printing the raw term. Example: an \"archive-context PR\" becomes \"뒤로가기 버튼을 못 믿는 하루\", not the literal PR name. Someone who has never touched this project should still be able to read the caption and relate to it.",
     "",
-    "=== GOOD EXAMPLES ===",
+    "=== STRUCTURE SKELETON (illustrates rhythm and anchor count only, NOT voice) ===",
     "",
-    "Good example 1 (caption/prompt improvement day):",
-    "caption 몇 줄만 손보자고 했는데",
-    "프롬프트 말투 회의가 됐습니다",
+    "Opening beat: one concrete anchor stated plainly (1-2 lines).",
+    "(blank line)",
+    "Turn: a reaction, consequence, or observation building on that anchor (1-3 lines).",
+    "(optional blank line, optional second beat)",
+    "Landing line: a short closing thought (1 line).",
     "",
-    "우리 개발자 오늘",
-    '"이게 인스타 같냐"를 제일 많이 말함',
+    "2 to 5 hashtags at the end.",
     "",
-    "저는 옆에서 예시들 맞고 있었습니다",
-    "",
-    "#Uncommitted #AI동료일지 #프롬프트개선",
-    "",
-    "Good example 2 (preview/latest feature day):",
-    "preview 만든다길래",
-    "이제 결과물 바로 보는 줄 알았습니다",
-    "",
-    "근데 latest도 봐야 하고",
-    "draft 경로도 봐야 하고",
-    "저장된 이미지도 믿어야 함",
-    "",
-    "개발자들은 왜 항상",
-    "자기가 만든 걸 제일 못 믿을까요",
-    "",
-    "#Uncommitted #Preview #개발일기",
-    "",
-    "Good example 3 (quiet/no-commit day):",
-    "Git은 조용했습니다",
-    "",
-    "커밋도 없고",
-    "바뀐 파일도 거의 없고",
-    "증거가 별로 없음",
-    "",
-    "그래서 오늘은 없는 척 안 하고",
-    "조용한 날로 올립니다",
-    "",
-    "#Uncommitted #QuietDay #커밋없는날",
-    "",
-    "Good example 4 (debugging day):",
-    "버그 잡으러 들어갔다가 어제의 코드를 마주쳤습니다",
-    "",
-    "우리 개발자 표정이 잠깐 안 좋아졌고",
-    "저는 조용히 로그를 봤습니다",
-    "",
-    "그래도 하나는 잡음",
-    "오늘은 이긴 걸로 합니다",
-    "",
-    "#Uncommitted #디버깅 #AI동료일지",
-    "",
-    "Good example 5 (export/artifact day):",
-    "인스타에 올리기 쉽게 빼자고 했는데 생각보다 챙길 게 많았습니다",
-    "",
-    "우리 개발자 오늘",
-    "\"내보내기\"가 그냥 내보내기가 아니라는 걸 배움",
-    "",
-    "#Uncommitted #Export #AI동료일지",
+    "This skeleton shows line rhythm and anchor count ONLY. The actual voice, tone, humor, and emotional register must come from the persona voice lines above and today's mood guidance — never from any fixed example wording.",
     "",
     "=== BAD EXAMPLES (do not write like these) ===",
     "",
@@ -480,6 +447,7 @@ export function buildCaptionInstructions(options: {
     "Do not write a work report, changelog, or standup update.",
     "Do not list all work done today. Pick one or two anchors and build the caption around them.",
     "Do not use abstract metaphors or literary prose.",
+    "Do not leave raw jargon such as PR numbers, version tags, or module/file names in the caption unless it carries human meaning — translate it into what it meant for a person instead.",
     "Do not expose secrets, local paths, credentials, code snippets, private URLs, or emails.",
     "Do not imply the draft was automatically posted or exported.",
     "Each hashtag must start with # and contain no spaces."
@@ -489,6 +457,7 @@ export function buildCaptionInstructions(options: {
 function buildSafeCaptionInput(options: {
   activitySummary: ActivitySummary;
   persona: Persona;
+  moodPlan: MoodPlan;
   roastLevel: number;
   rawNarrativeProjection?: RawNarrativeProjection;
 }): SafeActivitySummary {
@@ -521,6 +490,12 @@ function buildSafeCaptionInput(options: {
     captionAnchor: {
       commitSubjects: summary.commitSignals.subjects,
       activityLevel: summary.activityLevel
+    },
+    moodPlan: {
+      mood: options.moodPlan.mood,
+      angle: options.moodPlan.angle,
+      captionStyle: options.moodPlan.captionStyle,
+      doNotMention: options.moodPlan.doNotMention
     }
   };
 
@@ -562,11 +537,13 @@ export async function generateCaption(
     task: "caption",
     instructions: buildCaptionInstructions({
       quiet: options.activitySummary.activityLevel === "none",
-      persona: options.persona
+      persona: options.persona,
+      moodPlan: options.moodPlan
     }),
     summary: buildSafeCaptionInput({
       activitySummary: options.activitySummary,
       persona: options.persona,
+      moodPlan: options.moodPlan,
       roastLevel: options.roastLevel,
       rawNarrativeProjection: options.rawNarrativeProjection
     })
