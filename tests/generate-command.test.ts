@@ -884,16 +884,12 @@ describe("generate command", () => {
     const fixture = await createRegisteredProjectFixture();
     const firstProvider = new TaskAwareProvider({
       plan: createStoryFormatPlan({
-        mood: "firefight",
-        voice: "tired QA narrator",
-        tone: "deadpan courtroom"
+        mood: "firefight"
       })
     });
     const secondProvider = new TaskAwareProvider({
       plan: createStoryFormatPlan({
-        mood: "cleanup",
-        voice: "field researcher",
-        tone: "observant and warm"
+        mood: "cleanup"
       })
     });
 
@@ -1498,8 +1494,6 @@ function createStoryFormatPlan(
   const { mood, ...legacyOverrides } = overrides;
   const plan = {
     formatName: "Implementation Dispatch",
-    voice: "dry coworker",
-    tone: "concise and lightly amused",
     reason: "Generation workflow had enough real signals for a compact update.",
     structure: [
       {
@@ -1530,8 +1524,6 @@ function createStoryFormatPlan(
       shape: "hook-turn-landing",
       suggestedSlideCount: plan.suggestedSlideCount
     },
-    voice: plan.voice,
-    tone: plan.tone,
     reason: plan.reason,
     structure: plan.structure,
     captionStyle: plan.captionStyle,

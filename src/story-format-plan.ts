@@ -21,8 +21,6 @@ export type StoryFormatStructurePart = {
 export type StoryFormatPlan = {
   schemaVersion: 1;
   formatName: string;
-  voice: string;
-  tone: string;
   reason: string;
   structure: StoryFormatStructurePart[];
   suggestedSlideCount: number;
@@ -65,8 +63,6 @@ export type MoodPlan = {
   mood: Mood;
   angle: string; // what the coworker fixated on today (free text, safe)
   pacing: StoryPacing;
-  voice: string;
-  tone: string;
   reason: string;
   structure: StoryFormatStructurePart[];
   captionStyle: string;
@@ -86,10 +82,6 @@ export function isMoodPlan(value: unknown): value is MoodPlan {
     typeof value.angle === "string" &&
     value.angle.trim().length > 0 &&
     isStoryPacing(pacing) &&
-    typeof value.voice === "string" &&
-    value.voice.trim().length > 0 &&
-    typeof value.tone === "string" &&
-    value.tone.trim().length > 0 &&
     typeof value.reason === "string" &&
     value.reason.trim().length > 0 &&
     Array.isArray(value.structure) &&
@@ -174,8 +166,6 @@ type MoodPlanProviderData = JsonObject & {
   mood?: JsonValue;
   angle?: JsonValue;
   pacing?: JsonValue;
-  voice?: JsonValue;
-  tone?: JsonValue;
   reason?: JsonValue;
   structure?: JsonValue;
   captionStyle?: JsonValue;
@@ -385,14 +375,13 @@ function buildStoryFormatInstructions(options: {
   return [
     "Design a Mood Plan for an Uncommitted diary draft.",
     `Entry mode is ${options.entryMode}; create one global diary plan across all projects.`,
-    "Return structured JSON with mood, angle, pacing, voice, tone, reason, structure, captionStyle, and doNotMention.",
+    "Return structured JSON with mood, angle, pacing, reason, structure, captionStyle, and doNotMention.",
     "Classify today into exactly ONE mood from the fixed vocabulary: release, firefight, quiet, grind, breakthrough, cleanup. Do not invent a new mood label or a fictional genre.",
     "Choose an angle: the one thing the coworker actually noticed today, such as an irritating bug, work the user avoided, an unnoticed small win, or a tool that betrayed everyone. Ground the angle in the real activity signals only, never invented ones.",
     "Vary pacing (openWith, shape, suggestedSlideCount) structurally so entries feel different day to day, without announcing a genre or costume.",
     "This is not the user's diary. It is the AI coworker's own off-the-record account of what it noticed while working alongside the user.",
     "Choose a format that supports a felt diary, not a project status recap.",
     "Do not make the plan a report, changelog, sprint update, or metrics summary.",
-    "Do not default to generic coworker essay mode; use a distinct narrative device such as a case file, field note, broadcast, trial, forecast, object monologue, letter, patrol log, or a newly invented equivalent structure, while staying inside the chosen mood rather than a separate genre.",
     "Use concrete work signals only as emotional context: tension, relief, confusion, momentum, fatigue, or tiny satisfaction.",
     "Do not claim to know the user's private feelings; describe the narrator's observations, suspicions, reactions, and workplace atmosphere.",
     "Do not invent work, commits, bugs, features, or user activity.",
@@ -512,8 +501,6 @@ function parseStoryFormatPlan(data: MoodPlanProviderData): MoodPlan {
     mood: data.mood,
     angle: data.angle,
     pacing: data.pacing,
-    voice: data.voice,
-    tone: data.tone,
     reason: data.reason,
     structure: data.structure,
     captionStyle: data.captionStyle,
@@ -534,8 +521,6 @@ function isMoodPlanProviderData(
     isMood(value.mood) &&
     typeof value.angle === "string" &&
     isStoryPacing(value.pacing) &&
-    typeof value.voice === "string" &&
-    typeof value.tone === "string" &&
     typeof value.reason === "string" &&
     Array.isArray(value.structure) &&
     value.structure.every(isStoryFormatStructurePart) &&

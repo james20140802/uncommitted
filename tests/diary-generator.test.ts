@@ -1172,8 +1172,6 @@ function createStoryFormatPlan(
 ): MoodPlan {
   const plan = {
     formatName: "Bug Court Transcript",
-    voice: "tired QA narrator",
-    tone: "deadpan, witty, affectionate",
     reason: "The day had enough debugging evidence for a courtroom bit.",
     structure: [
       {
@@ -1204,8 +1202,6 @@ function createStoryFormatPlan(
       shape: "hook-turn-landing",
       suggestedSlideCount: plan.suggestedSlideCount
     },
-    voice: plan.voice,
-    tone: plan.tone,
     reason: plan.reason,
     structure: plan.structure,
     captionStyle: plan.captionStyle,

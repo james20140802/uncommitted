@@ -244,8 +244,6 @@ function createStoryFormatPlan(): MoodPlan {
       shape: "hook-turn-landing",
       suggestedSlideCount: 3
     },
-    voice: "tired QA narrator",
-    tone: "deadpan, witty, affectionate",
     reason: "Medium coding day with clear evidence suits a wry recap.",
     structure: [
       { part: "Opening", purpose: "Set the scene" },

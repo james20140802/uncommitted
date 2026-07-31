@@ -333,6 +333,47 @@ describe("story format plan", () => {
     expect(recent[0].mood).toBe("quiet");
     expect(recent[0]).not.toHaveProperty("voice");
   });
+
+  it("accepts a provider plan without voice or tone and returns a voice-neutral MoodPlan", async () => {
+    const provider = new MockAiProvider({
+      response: createMoodProviderPlan({ mood: "cleanup" })
+    });
+
+    const plan = await generateStoryFormatPlan({
+      activitySummary: createActivitySummary({ activityLevel: "low" }),
+      provider,
+      persona: "wry coworker",
+      roastLevel: 2
+    });
+
+    expect(plan.mood).toBe("cleanup");
+    expect(plan).not.toHaveProperty("voice");
+    expect(plan).not.toHaveProperty("tone");
+  });
+
+  it("does not ask the provider for voice, tone, or a narrative device costume", async () => {
+    const provider = new MockAiProvider({
+      response: createMoodProviderPlan({ mood: "grind" })
+    });
+
+    await generateStoryFormatPlan({
+      activitySummary: createActivitySummary(),
+      provider,
+      persona: "wry coworker",
+      roastLevel: 2
+    });
+
+    const instructions = (provider.requests[0] as { instructions: string })
+      .instructions;
+
+    expect(instructions).toContain("mood, angle, pacing");
+    expect(instructions).not.toMatch(/\bvoice\b/i);
+    expect(instructions).not.toMatch(/\btone\b/i);
+    expect(instructions).not.toMatch(/narrative device/i);
+    expect(instructions).not.toMatch(
+      /case file|field note|patrol log|object monologue/i
+    );
+  });
 });
 
 describe("format history diversity (UNC-214)", () => {
@@ -351,8 +392,6 @@ describe("format history diversity (UNC-214)", () => {
           shape: "hook-turn-landing",
           suggestedSlideCount: 4
         },
-        voice: "tired QA narrator",
-        tone: "deadpan",
         reason: "The day had enough debugging evidence for a courtroom bit.",
         structure: [
           { part: "Opening statement", purpose: "Introduce the work." }
@@ -446,6 +485,31 @@ describe("format history diversity (UNC-214)", () => {
     expect(instructions).toContain("Refactor busywork all day.");
     expect(instructions).toMatch(/different mood/i);
   });
+
+  it("limits anti-repetition guidance to moods and angles", async () => {
+    const provider = new MockAiProvider({
+      response: createMoodProviderPlan({ mood: "release" })
+    });
+
+    await generateStoryFormatPlan({
+      activitySummary: createActivitySummary(),
+      provider,
+      persona: "wry coworker",
+      roastLevel: 2,
+      recentFormats: [
+        { date: "2026-05-11", mood: "grind", angle: "slow test suite" },
+        { date: "2026-05-10", mood: "quiet", angle: "waiting on review" }
+      ]
+    });
+
+    const instructions = (provider.requests[0] as { instructions: string })
+      .instructions;
+
+    expect(instructions).toContain("Recently used moods");
+    expect(instructions).toContain("Recently used angles");
+    expect(instructions).not.toMatch(/narrator device/i);
+    expect(instructions).not.toMatch(/Recently used voices/i);
+  });
 });
 
 describe("mood vocabulary and MoodPlan contract", () => {
@@ -475,8 +539,6 @@ describe("mood vocabulary and MoodPlan contract", () => {
         shape: "hook-turn-landing",
         suggestedSlideCount: 5
       },
-      voice: "tired QA narrator",
-      tone: "deadpan, witty, affectionate",
       reason: "The day had enough debugging evidence for a courtroom bit.",
       structure: [
         {
@@ -501,8 +563,6 @@ describe("mood vocabulary and MoodPlan contract", () => {
         shape: "single-beat",
         suggestedSlideCount: 3
       },
-      voice: "quiet observer",
-      tone: "calm",
       reason: "Low activity day.",
       structure: [{ part: "Beat", purpose: "Sit with the quiet." }],
       captionStyle: "short",
@@ -519,6 +579,21 @@ describe("mood vocabulary and MoodPlan contract", () => {
       })
     ).toBe(false);
   });
+
+  it("isMoodPlan accepts a plan without voice or tone", () => {
+    expect(
+      isMoodPlan({
+        schemaVersion: 2,
+        mood: "quiet",
+        angle: "waiting on review",
+        pacing: { openWith: "thought", shape: "single-beat", suggestedSlideCount: 3 },
+        reason: "Nothing landed today.",
+        structure: [{ part: "open", purpose: "set the scene" }],
+        captionStyle: "short and dry",
+        doNotMention: []
+      })
+    ).toBe(true);
+  });
 });
 
 function createMoodPlan(overrides: Partial<MoodPlan> = {}): MoodPlan {
@@ -527,8 +602,6 @@ function createMoodPlan(overrides: Partial<MoodPlan> = {}): MoodPlan {
     mood: "grind",
     angle: "the test suite that keeps getting slower",
     pacing: { openWith: "scene", shape: "hook-turn-landing", suggestedSlideCount: 4 },
-    voice: "tired QA narrator",
-    tone: "deadpan",
     reason: "The day was mostly maintenance.",
     structure: [{ part: "open", purpose: "set the scene" }],
     captionStyle: "short and dry",
@@ -555,8 +628,6 @@ function baseMoodProviderPlan() {
       shape: "hook-turn-landing",
       suggestedSlideCount: 4
     },
-    voice: "tired QA narrator",
-    tone: "deadpan, witty, affectionate",
     reason: "The day had enough debugging evidence for a courtroom bit.",
     structure: [
       {
