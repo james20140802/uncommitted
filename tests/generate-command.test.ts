@@ -898,9 +898,7 @@ describe("generate command", () => {
       {
         date: "2026-05-12",
         mood: "firefight",
-        angle: sharedAngle,
-        voice: "tired QA narrator",
-        tone: "deadpan courtroom"
+        angle: sharedAngle
       }
     ]);
     expect(formats).toMatchObject({
@@ -909,19 +907,19 @@ describe("generate command", () => {
         {
           date: "2026-05-12",
           mood: "cleanup",
-          angle: sharedAngle,
-          voice: "field researcher",
-          tone: "observant and warm"
+          angle: sharedAngle
         },
         {
           date: "2026-05-12",
           mood: "firefight",
-          angle: sharedAngle,
-          voice: "tired QA narrator",
-          tone: "deadpan courtroom"
+          angle: sharedAngle
         }
       ]
     });
+    const storedFormats = (formats as { formats: Record<string, unknown>[] })
+      .formats;
+    expect(storedFormats[0]).not.toHaveProperty("voice");
+    expect(storedFormats[0]).not.toHaveProperty("tone");
   });
 
   it("returns a config error when no projects are registered", async () => {

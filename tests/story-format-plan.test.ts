@@ -186,15 +186,11 @@ describe("story format plan", () => {
     expect(recentFormats).toEqual([
       {
         date: "2026-05-11",
-        formatName: "TODO Night Council",
-        voice: "TODO list",
-        tone: "deadpan"
+        formatName: "TODO Night Council"
       },
       {
         date: "2026-05-10",
-        formatName: "Commit Weather",
-        voice: "weather report",
-        tone: "witty"
+        formatName: "Commit Weather"
       }
     ]);
     expect(provider.requests[0]?.input.recentFormats).toEqual(recentFormats);
@@ -259,10 +255,88 @@ describe("story format plan", () => {
       message: "AI provider returned invalid story format plan."
     });
   });
+
+  it("does not write voice or tone into formats.json", async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), "uncommitted-history-"));
+
+    await recordStoryFormatHistory({
+      homeDir,
+      targetDate: "2026-05-12",
+      storyFormatPlan: createMoodPlan({ mood: "firefight", angle: "flaky retry handling" })
+    });
+
+    const raw = JSON.parse(
+      await readFile(join(homeDir, ".uncommitted", "history", "formats.json"), "utf8")
+    ) as { formats: Record<string, unknown>[] };
+
+    expect(raw.formats).toHaveLength(1);
+    expect(raw.formats[0]).toEqual({
+      date: "2026-05-12",
+      mood: "firefight",
+      angle: "flaky retry handling"
+    });
+    expect(raw.formats[0]).not.toHaveProperty("voice");
+    expect(raw.formats[0]).not.toHaveProperty("tone");
+  });
+
+  it("loads a legacy formats.json entry that still carries voice/tone without error", async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), "uncommitted-history-"));
+    const historyDir = join(homeDir, ".uncommitted", "history");
+    await mkdir(historyDir, { recursive: true });
+    await writeFile(
+      join(historyDir, "formats.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        formats: [
+          {
+            date: "2026-05-11",
+            mood: "grind",
+            angle: "slow test suite",
+            voice: "night librarian",
+            tone: "deadpan"
+          }
+        ]
+      }),
+      "utf8"
+    );
+
+    const recent = await loadRecentStoryFormatHistory({ homeDir });
+
+    expect(recent).toHaveLength(1);
+    expect(recent[0]).toMatchObject({
+      date: "2026-05-11",
+      mood: "grind",
+      angle: "slow test suite"
+    });
+    expect(recent[0]).not.toHaveProperty("voice");
+    expect(recent[0]).not.toHaveProperty("tone");
+  });
+
+  it("keeps a legacy entry loadable when voice/tone are its only extra fields", async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), "uncommitted-history-"));
+    const historyDir = join(homeDir, ".uncommitted", "history");
+    await mkdir(historyDir, { recursive: true });
+    await writeFile(
+      join(historyDir, "formats.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        formats: [
+          { date: "2026-05-10", formatName: "quiet", voice: "quiet observer", tone: "calm" }
+        ]
+      }),
+      "utf8"
+    );
+
+    const recent = await loadRecentStoryFormatHistory({ homeDir });
+
+    expect(recent).toHaveLength(1);
+    expect(recent[0].mood).toBe("quiet");
+    expect(recent[0]).not.toHaveProperty("voice");
+  });
 });
 
 describe("format history diversity (UNC-214)", () => {
-  it("round-trips mood/angle/voice/tone through recordStoryFormatHistory and loadRecentStoryFormatHistory", async () => {
+  it("round-trips mood/angle through recordStoryFormatHistory and loadRecentStoryFormatHistory", async () => {
     const homeDir = await mkdtemp(join(tmpdir(), "uncommitted-story-format-"));
 
     await recordStoryFormatHistory({
@@ -294,9 +368,7 @@ describe("format history diversity (UNC-214)", () => {
       {
         date: "2026-05-12",
         mood: "grind",
-        angle: "The same flaky test kept failing all afternoon.",
-        voice: "tired QA narrator",
-        tone: "deadpan"
+        angle: "The same flaky test kept failing all afternoon."
       }
     ]);
 
@@ -309,7 +381,7 @@ describe("format history diversity (UNC-214)", () => {
     expect(raw.formats[0]).not.toHaveProperty("formatName");
   });
 
-  it("migrates a legacy formats.json entry with only formatName, mapping formatName to mood when valid and preserving voice/tone otherwise", async () => {
+  it("migrates a legacy formats.json entry with only formatName, mapping formatName to mood when valid", async () => {
     const homeDir = await createHomeWithFormatHistory({
       formats: [
         {
@@ -333,34 +405,26 @@ describe("format history diversity (UNC-214)", () => {
       {
         date: "2026-05-11",
         formatName: "quiet",
-        mood: "quiet",
-        voice: "quiet observer",
-        tone: "calm"
+        mood: "quiet"
       },
       {
         date: "2026-05-10",
-        formatName: "TODO Night Council",
-        voice: "TODO list",
-        tone: "deadpan"
+        formatName: "TODO Night Council"
       }
     ]);
   });
 
-  it("biases story-format instructions away from recently used moods, angles, and voices", async () => {
+  it("biases story-format instructions away from recently used moods and angles", async () => {
     const recentFormats: RecentStoryFormat[] = [
       {
         date: "2026-05-11",
         mood: "firefight",
-        angle: "A flaky test kept failing.",
-        voice: "tired QA narrator",
-        tone: "deadpan"
+        angle: "A flaky test kept failing."
       },
       {
         date: "2026-05-10",
         mood: "grind",
-        angle: "Refactor busywork all day.",
-        voice: "weather reporter",
-        tone: "witty"
+        angle: "Refactor busywork all day."
       }
     ];
     const provider = new MockAiProvider({
@@ -380,8 +444,6 @@ describe("format history diversity (UNC-214)", () => {
     expect(instructions).toContain("grind");
     expect(instructions).toContain("A flaky test kept failing.");
     expect(instructions).toContain("Refactor busywork all day.");
-    expect(instructions).toContain("tired QA narrator");
-    expect(instructions).toContain("weather reporter");
     expect(instructions).toMatch(/different mood/i);
   });
 });
@@ -458,6 +520,22 @@ describe("mood vocabulary and MoodPlan contract", () => {
     ).toBe(false);
   });
 });
+
+function createMoodPlan(overrides: Partial<MoodPlan> = {}): MoodPlan {
+  return {
+    schemaVersion: 2,
+    mood: "grind",
+    angle: "the test suite that keeps getting slower",
+    pacing: { openWith: "scene", shape: "hook-turn-landing", suggestedSlideCount: 4 },
+    voice: "tired QA narrator",
+    tone: "deadpan",
+    reason: "The day was mostly maintenance.",
+    structure: [{ part: "open", purpose: "set the scene" }],
+    captionStyle: "short and dry",
+    doNotMention: [],
+    ...overrides
+  };
+}
 
 function createMoodProviderPlan(
   overrides: Partial<ReturnType<typeof baseMoodProviderPlan>> = {}
