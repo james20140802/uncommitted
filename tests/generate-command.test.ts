@@ -195,6 +195,30 @@ describe("generate command", () => {
     expect(JSON.stringify(metadata)).not.toContain("formatName");
   });
 
+  it("omits voice and tone from the storyFormat block in metadata.json", async () => {
+    const { io } = createIo();
+    const fixture = await createRegisteredProjectFixture();
+    const provider = new TaskAwareProvider();
+
+    await writeGitEvent(fixture.project, "2026-05-12");
+
+    const exitCode = await runCli(["generate", "today"], io, {
+      homeDir: fixture.homeDir,
+      now: () => "2026-05-12T23:30:00.000Z",
+      aiProvider: provider
+    });
+    const outputDir = join(fixture.draftRoot, "2026-05-12", "rev-001");
+    const metadata = (await readJson(join(outputDir, "metadata.json"))) as {
+      storyFormat: Record<string, unknown>;
+    };
+
+    expect(exitCode).toBe(0);
+    expect(metadata.storyFormat).not.toHaveProperty("voice");
+    expect(metadata.storyFormat).not.toHaveProperty("tone");
+    expect(metadata.storyFormat.mood).toBeDefined();
+    expect(metadata.storyFormat.angle).toBeDefined();
+  });
+
   // UNC-203: git commits and manual notes are the only MVP-scope sources
   // (claude/codex/github collection are all MVP-out-of-scope), so if they do
   // not reach reflection the whole memory feature is dead for default users.

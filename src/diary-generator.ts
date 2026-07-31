@@ -34,8 +34,6 @@ export type DiaryDraftMetadata = {
   activityLevel: ActivityLevel;
   mood: Mood;
   angle: string;
-  storyFormatVoice: string;
-  storyFormatTone: string;
   projectIds: string[];
   entryMode: "daily_global";
   slideCount: number;
@@ -224,8 +222,6 @@ function buildSafeDiaryInput(options: {
     storyFormatPlan: {
       mood: options.storyFormatPlan.mood,
       angle: options.storyFormatPlan.angle,
-      voice: options.storyFormatPlan.voice,
-      tone: options.storyFormatPlan.tone,
       reason: options.storyFormatPlan.reason,
       structure: options.storyFormatPlan.structure.map((part) => ({
         part: part.part,
@@ -608,8 +604,6 @@ function parseDiaryDraft(options: {
       activityLevel: options.activitySummary.activityLevel,
       mood: options.storyFormatPlan.mood,
       angle: options.storyFormatPlan.angle,
-      storyFormatVoice: options.storyFormatPlan.voice,
-      storyFormatTone: options.storyFormatPlan.tone,
       projectIds: options.activitySummary.projects.map(
         (project) => project.projectId
       ),
@@ -684,8 +678,6 @@ function isDiaryMetadata(value: unknown): value is DiaryDraftMetadata {
     typeof value.activityLevel === "string" &&
     isMood(value.mood) &&
     typeof value.angle === "string" &&
-    typeof value.storyFormatVoice === "string" &&
-    typeof value.storyFormatTone === "string" &&
     Array.isArray(value.projectIds) &&
     value.projectIds.every((projectId) => typeof projectId === "string") &&
     value.entryMode === "daily_global" &&

@@ -154,8 +154,6 @@ type DraftMetadataBase = {
   storyFormat: {
     mood: Mood;
     angle: string;
-    voice: string;
-    tone: string;
   };
   projects: {
     id: string;
@@ -418,9 +416,7 @@ export async function runGenerateCommand(
     mood: storyFormatPlan.mood,
     storyFormat: {
       mood: storyFormatPlan.mood,
-      angle: storyFormatPlan.angle,
-      voice: storyFormatPlan.voice,
-      tone: storyFormatPlan.tone
+      angle: storyFormatPlan.angle
     },
     projects: activitySummary.projects.map((project) => ({
       id: project.projectId,

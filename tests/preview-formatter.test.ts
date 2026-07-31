@@ -57,8 +57,6 @@ const baseMetadata = {
   activityLevel: "moderate",
   mood: "grind",
   angle: "The day circled a concrete signal.",
-  storyFormatVoice: "casual",
-  storyFormatTone: "warm",
   projectIds: ["proj-1", "proj-2"],
   entryMode: "daily_global",
   slideCount: 3

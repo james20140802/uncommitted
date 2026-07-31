@@ -75,8 +75,6 @@ describe("diary generator", () => {
         activityLevel: "medium",
         mood: "grind",
         angle: "The day circled the same flaky provider validation bug.",
-        storyFormatVoice: "tired QA narrator",
-        storyFormatTone: "deadpan, witty, affectionate",
         projectIds: ["uncommitted"],
         entryMode: "daily_global",
         slideCount: 4
@@ -131,6 +129,47 @@ describe("diary generator", () => {
     expect(instructions).not.toContain(
       "Do not use the Story Format Plan, formatName, voice, tone, or captionStyle to create a concept for the caption"
     );
+  });
+
+  it("omits storyFormatVoice and storyFormatTone from draft metadata", async () => {
+    const plan = createStoryFormatPlan({ suggestedSlideCount: 4 });
+    const provider = new MockAiProvider({
+      response: createProviderDraft()
+    });
+
+    const draft = await generateDiaryDraft({
+      activitySummary: createActivitySummary(),
+      storyFormatPlan: plan,
+      provider,
+      persona: "wry coworker",
+      roastLevel: 2
+    });
+
+    expect(draft.metadata).not.toHaveProperty("storyFormatVoice");
+    expect(draft.metadata).not.toHaveProperty("storyFormatTone");
+    expect(draft.metadata.mood).toBe(plan.mood);
+    expect(draft.metadata.angle).toBe(plan.angle);
+  });
+
+  it("does not pass voice or tone into the story instruction payload", async () => {
+    const provider = new MockAiProvider({
+      response: createProviderDraft()
+    });
+
+    await generateDiaryDraft({
+      activitySummary: createActivitySummary(),
+      storyFormatPlan: createStoryFormatPlan({ suggestedSlideCount: 4 }),
+      provider,
+      persona: "wry coworker",
+      roastLevel: 2
+    });
+
+    const input = provider.requests[0]?.input as Record<string, unknown>;
+    const storyFormatPlan = input.storyFormatPlan as Record<string, unknown>;
+
+    expect(storyFormatPlan).not.toHaveProperty("voice");
+    expect(storyFormatPlan).not.toHaveProperty("tone");
+    expect(storyFormatPlan.mood).toBeDefined();
   });
 
   it("generates a quiet-day request without fabricating activity", async () => {
@@ -444,8 +483,6 @@ describe("architecture disclosure redaction (UNC-206)", () => {
         activityLevel: "medium",
         mood: "grind",
         angle: "The day circled the same flaky provider validation bug.",
-        storyFormatVoice: "tired QA narrator",
-        storyFormatTone: "deadpan, witty, affectionate",
         projectIds: ["uncommitted"],
         entryMode: "daily_global",
         slideCount: 2
@@ -489,8 +526,6 @@ describe("architecture disclosure redaction (UNC-206)", () => {
         activityLevel: "medium",
         mood: "grind",
         angle: "Framed as the route guard that finally stopped flaking.",
-        storyFormatVoice: "dry coworker",
-        storyFormatTone: "concise and lightly amused",
         projectIds: ["uncommitted"],
         entryMode: "daily_global",
         slideCount: 1
@@ -526,8 +561,6 @@ describe("architecture disclosure redaction (UNC-206)", () => {
         activityLevel: "medium",
         mood: "cleanup",
         angle: "A small feature shipped and a typo got fixed.",
-        storyFormatVoice: "dry coworker",
-        storyFormatTone: "concise and lightly amused",
         projectIds: ["uncommitted"],
         entryMode: "daily_global",
         slideCount: 1
@@ -558,8 +591,6 @@ describe("architecture disclosure redaction (UNC-206)", () => {
         activityLevel: "medium",
         mood: "cleanup",
         angle: "A small feature shipped and a typo got fixed.",
-        storyFormatVoice: "dry coworker",
-        storyFormatTone: "concise and lightly amused",
         projectIds: ["uncommitted"],
         entryMode: "daily_global",
         slideCount: 1

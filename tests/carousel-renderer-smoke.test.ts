@@ -309,8 +309,6 @@ function createStoryDraft(options: {
       activityLevel: options.activityLevel ?? "medium",
       mood: "grind",
       angle: "Renderer smoke fixture angle.",
-      storyFormatVoice: "deadpan QA narrator",
-      storyFormatTone: "practical",
       projectIds: ["uncommitted"],
       entryMode: "daily_global",
       slideCount: options.slides.length

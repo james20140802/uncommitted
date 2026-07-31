@@ -1712,8 +1712,6 @@ describe("cli", () => {
       generatedAt: "2026-05-20T00:00:00.000Z",
       activityLevel: "moderate",
       formatName: "daily-summary",
-      storyFormatVoice: "casual",
-      storyFormatTone: "warm",
       projectIds: ["proj-a"],
       entryMode: "daily_global",
       slideCount: 3
@@ -2111,8 +2109,6 @@ describe("cli", () => {
         generatedAt: `${targetDate}T00:00:00.000Z`,
         activityLevel: "moderate",
         formatName: "daily-summary",
-        storyFormatVoice: "casual",
-        storyFormatTone: "warm",
         projectIds: ["proj-a"],
         entryMode: "daily_global",
         slideCount: 3
