@@ -7,6 +7,7 @@ import {
   DraftStorageError,
   writeDraftArtifactBinary
 } from "./draft-storage.js";
+import { escapeHtml } from "./html-escape.js";
 
 export type CarouselRenderInputErrorCode = "invalid-story";
 export type CarouselPngRenderErrorCode = "render-failed" | "write-failed";
@@ -1096,15 +1097,6 @@ function deriveProjectMarker(value: Record<string, unknown>): string {
   const firstProjectId = metadata.projectIds.find(isNonEmptyString);
 
   return firstProjectId?.trim() ?? "Uncommitted";
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
