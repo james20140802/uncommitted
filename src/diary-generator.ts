@@ -165,7 +165,7 @@ export function redactArchitectureDisclosureFromCaption(
  * title/body/visualMood, and the free-text `metadata.angle`. The angle is a
  * provider-generated string that reaches story.json, so it is scrubbed here
  * too; the remaining metadata fields are safe (`mood` is a fixed-vocabulary
- * enum, voice/tone are persona-derived style labels, the rest are structural).
+ * enum, the rest are structural).
  * Pure function — returns a new DiaryDraft, does not mutate the input.
  */
 export function redactArchitectureDisclosureFromDraft(
@@ -310,7 +310,6 @@ function buildDiaryInstructions(options: {
   return [
     "Return structured JSON for story.json with title, slides, and altText.",
     "Follow the Story Format Plan for story title, slide titles, slide bodies, and visualMood only.",
-    "Use the Story Format Plan's voice and tone for the story slides only.",
     `Create ${options.storyFormatPlan.pacing.suggestedSlideCount} slides when possible, while staying within 3-8 slides.`,
     options.storyFormatPlan.pacing.openWith === "scene"
       ? "Open the story on a concrete scene, then move into reflection."

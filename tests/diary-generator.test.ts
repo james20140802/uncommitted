@@ -172,6 +172,31 @@ describe("diary generator", () => {
     expect(storyFormatPlan.mood).toBeDefined();
   });
 
+  it("does not instruct the provider to use the Story Format Plan's voice or tone", async () => {
+    const provider = new MockAiProvider({
+      response: createProviderDraft()
+    });
+
+    await generateDiaryDraft({
+      activitySummary: createActivitySummary(),
+      storyFormatPlan: createStoryFormatPlan({ suggestedSlideCount: 4 }),
+      provider,
+      persona: "wry coworker",
+      roastLevel: 2
+    });
+
+    const instructions = provider.requests[0]?.instructions ?? "";
+
+    // The plan no longer carries voice/tone; asking the provider to "use" them
+    // would invite it to invent a rotating narrator costume from nothing.
+    expect(instructions).not.toMatch(
+      /Story Format Plan[^\n]*\b(voice|tone)\b/i
+    );
+    expect(instructions).toContain(
+      "Use the Story Format Plan for slide structure and story flow"
+    );
+  });
+
   it("generates a quiet-day request without fabricating activity", async () => {
     const provider = new MockAiProvider({
       response: createProviderDraft({
