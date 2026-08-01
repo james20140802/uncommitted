@@ -21,8 +21,6 @@ export type StoryFormatStructurePart = {
 export type StoryFormatPlan = {
   schemaVersion: 1;
   formatName: string;
-  voice: string;
-  tone: string;
   reason: string;
   structure: StoryFormatStructurePart[];
   suggestedSlideCount: number;
@@ -65,8 +63,6 @@ export type MoodPlan = {
   mood: Mood;
   angle: string; // what the coworker fixated on today (free text, safe)
   pacing: StoryPacing;
-  voice: string;
-  tone: string;
   reason: string;
   structure: StoryFormatStructurePart[];
   captionStyle: string;
@@ -86,10 +82,6 @@ export function isMoodPlan(value: unknown): value is MoodPlan {
     typeof value.angle === "string" &&
     value.angle.trim().length > 0 &&
     isStoryPacing(pacing) &&
-    typeof value.voice === "string" &&
-    value.voice.trim().length > 0 &&
-    typeof value.tone === "string" &&
-    value.tone.trim().length > 0 &&
     typeof value.reason === "string" &&
     value.reason.trim().length > 0 &&
     Array.isArray(value.structure) &&
@@ -126,8 +118,6 @@ export type RecentStoryFormat = {
   date: string;
   mood?: Mood;
   angle?: string;
-  voice?: string;
-  tone?: string;
   /**
    * Legacy-tolerant read only: pre-mood-engine records carried a free-text
    * `formatName` instead of `mood`. Never written for new entries (UNC-214).
@@ -176,8 +166,6 @@ type MoodPlanProviderData = JsonObject & {
   mood?: JsonValue;
   angle?: JsonValue;
   pacing?: JsonValue;
-  voice?: JsonValue;
-  tone?: JsonValue;
   reason?: JsonValue;
   structure?: JsonValue;
   captionStyle?: JsonValue;
@@ -240,6 +228,7 @@ export async function loadRecentStoryFormatHistory(
 
     return entries
       .filter(isRecentStoryFormat)
+      .map(pickRecentStoryFormatFields)
       .map(migrateLegacyRecentStoryFormat)
       .sort((a, b) => b.date.localeCompare(a.date))
       .slice(0, limit);
@@ -267,9 +256,7 @@ export async function recordStoryFormatHistory(
   const nextFormat: RecentStoryFormat = {
     date: options.targetDate,
     mood: options.storyFormatPlan.mood,
-    angle: options.storyFormatPlan.angle,
-    voice: options.storyFormatPlan.voice,
-    tone: options.storyFormatPlan.tone
+    angle: options.storyFormatPlan.angle
   };
   const formats = [nextFormat, ...existingFormats]
     .filter((format, index, allFormats) => {
@@ -278,9 +265,7 @@ export async function recordStoryFormatHistory(
           (candidate) =>
             candidate.date === format.date &&
             candidate.mood === format.mood &&
-            candidate.angle === format.angle &&
-            candidate.voice === format.voice &&
-            candidate.tone === format.tone
+            candidate.angle === format.angle
         ) === index
       );
     })
@@ -390,14 +375,13 @@ function buildStoryFormatInstructions(options: {
   return [
     "Design a Mood Plan for an Uncommitted diary draft.",
     `Entry mode is ${options.entryMode}; create one global diary plan across all projects.`,
-    "Return structured JSON with mood, angle, pacing, voice, tone, reason, structure, captionStyle, and doNotMention.",
+    "Return structured JSON with mood, angle, pacing, reason, structure, captionStyle, and doNotMention.",
     "Classify today into exactly ONE mood from the fixed vocabulary: release, firefight, quiet, grind, breakthrough, cleanup. Do not invent a new mood label or a fictional genre.",
     "Choose an angle: the one thing the coworker actually noticed today, such as an irritating bug, work the user avoided, an unnoticed small win, or a tool that betrayed everyone. Ground the angle in the real activity signals only, never invented ones.",
     "Vary pacing (openWith, shape, suggestedSlideCount) structurally so entries feel different day to day, without announcing a genre or costume.",
     "This is not the user's diary. It is the AI coworker's own off-the-record account of what it noticed while working alongside the user.",
     "Choose a format that supports a felt diary, not a project status recap.",
     "Do not make the plan a report, changelog, sprint update, or metrics summary.",
-    "Do not default to generic coworker essay mode; use a distinct narrative device such as a case file, field note, broadcast, trial, forecast, object monologue, letter, patrol log, or a newly invented equivalent structure, while staying inside the chosen mood rather than a separate genre.",
     "Use concrete work signals only as emotional context: tension, relief, confusion, momentum, fatigue, or tiny satisfaction.",
     "Do not claim to know the user's private feelings; describe the narrator's observations, suspicions, reactions, and workplace atmosphere.",
     "Do not invent work, commits, bugs, features, or user activity.",
@@ -415,8 +399,8 @@ function buildStoryFormatInstructions(options: {
 
 /**
  * Turns recent history into concrete anti-repetition guidance (UNC-214):
- * bias each day's plan away from the specific moods/angles/voices that were
- * just used, instead of a generic "avoid duplicates" instruction.
+ * bias each day's plan away from the specific moods/angles that were just
+ * used, instead of a generic "avoid duplicates" instruction.
  */
 function buildRecentFormatsDiversityInstructions(
   recentFormats: RecentStoryFormat[]
@@ -431,9 +415,6 @@ function buildRecentFormatsDiversityInstructions(
   const recentAngles = uniqueDefinedStrings(
     recentFormats.map((format) => format.angle)
   );
-  const recentVoices = uniqueDefinedStrings(
-    recentFormats.map((format) => format.voice)
-  );
 
   const instructions: string[] = [];
 
@@ -446,12 +427,6 @@ function buildRecentFormatsDiversityInstructions(
   if (recentAngles.length > 0) {
     instructions.push(
       `Recently used angles: ${recentAngles.join("; ")}. Choose a distinct angle instead of repeating one of these framings.`
-    );
-  }
-
-  if (recentVoices.length > 0) {
-    instructions.push(
-      `Recently used voices/narrator devices: ${recentVoices.join(", ")}. Prefer a different voice today for structural variety.`
     );
   }
 
@@ -473,10 +448,34 @@ function uniqueDefinedStrings(values: (string | undefined)[]): string[] {
 }
 
 /**
- * Maps a legacy `{date, formatName, voice, tone}` history entry onto the new
- * shape: `formatName` is mapped to `mood` only when it matches the fixed
- * mood vocabulary, otherwise `mood` is left undefined without discarding
- * `voice`/`tone` (UNC-214).
+ * Legacy-tolerant projection (UNC-226): older entries may still carry the
+ * removed rotating-costume fields `voice`/`tone`. They load without error but
+ * are dropped here, so they never reach prompts or get written back.
+ */
+function pickRecentStoryFormatFields(
+  entry: Record<string, unknown>
+): RecentStoryFormat {
+  const recent: RecentStoryFormat = { date: entry.date as string };
+
+  if (isMood(entry.mood)) {
+    recent.mood = entry.mood;
+  }
+
+  if (typeof entry.angle === "string") {
+    recent.angle = entry.angle;
+  }
+
+  if (typeof entry.formatName === "string") {
+    recent.formatName = entry.formatName;
+  }
+
+  return recent;
+}
+
+/**
+ * Maps a legacy `{date, formatName}` history entry onto the new shape:
+ * `formatName` is mapped to `mood` only when it matches the fixed mood
+ * vocabulary, otherwise `mood` is left undefined (UNC-214).
  */
 function migrateLegacyRecentStoryFormat(
   entry: RecentStoryFormat
@@ -502,8 +501,6 @@ function parseStoryFormatPlan(data: MoodPlanProviderData): MoodPlan {
     mood: data.mood,
     angle: data.angle,
     pacing: data.pacing,
-    voice: data.voice,
-    tone: data.tone,
     reason: data.reason,
     structure: data.structure,
     captionStyle: data.captionStyle,
@@ -524,8 +521,6 @@ function isMoodPlanProviderData(
     isMood(value.mood) &&
     typeof value.angle === "string" &&
     isStoryPacing(value.pacing) &&
-    typeof value.voice === "string" &&
-    typeof value.tone === "string" &&
     typeof value.reason === "string" &&
     Array.isArray(value.structure) &&
     value.structure.every(isStoryFormatStructurePart) &&
@@ -547,7 +542,7 @@ function isStoryFormatStructurePart(
   );
 }
 
-function isRecentStoryFormat(value: unknown): value is RecentStoryFormat {
+function isRecentStoryFormat(value: unknown): value is Record<string, unknown> {
   if (!isRecord(value) || typeof value.date !== "string") {
     return false;
   }
@@ -555,20 +550,10 @@ function isRecentStoryFormat(value: unknown): value is RecentStoryFormat {
   const hasValidMood = value.mood === undefined || isMood(value.mood);
   const hasValidAngle =
     value.angle === undefined || typeof value.angle === "string";
-  const hasValidVoice =
-    value.voice === undefined || typeof value.voice === "string";
-  const hasValidTone =
-    value.tone === undefined || typeof value.tone === "string";
   const hasValidFormatName =
     value.formatName === undefined || typeof value.formatName === "string";
 
-  if (
-    !hasValidMood ||
-    !hasValidAngle ||
-    !hasValidVoice ||
-    !hasValidTone ||
-    !hasValidFormatName
-  ) {
+  if (!hasValidMood || !hasValidAngle || !hasValidFormatName) {
     return false;
   }
 

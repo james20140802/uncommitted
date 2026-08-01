@@ -181,6 +181,25 @@ describe("loadLatestDraftPreview", () => {
     }
   });
 
+  it("loads a legacy draft whose metadata still carries storyFormatVoice/storyFormatTone", async () => {
+    const draftRoot = await createDraftRoot();
+    const outputDir = await writeDraftRevision(draftRoot, "2026-05-19", "rev-001", {
+      caption: "Legacy draft\n",
+      story: defaultStory,
+      metadata: {
+        ...defaultMetadata,
+        storyFormatVoice: "night librarian",
+        storyFormatTone: "deadpan"
+      },
+      safetyReport: defaultSafetyReport
+    });
+    await writeLatestPointer(draftRoot, "2026-05-19", "rev-001", outputDir);
+
+    const result = await loadLatestDraftPreview(draftRoot);
+
+    expect(result.outcome).toBe("success");
+  });
+
   it("returns success with null caption when caption.txt is missing", async () => {
     const draftRoot = await createDraftRoot();
     const outputDir = await writeDraftRevision(draftRoot, "2026-05-19", "rev-001", {

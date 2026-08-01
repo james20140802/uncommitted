@@ -1014,7 +1014,7 @@ describe("AI provider abstraction", () => {
 });
 
 describe("createMoodPlanSchema", () => {
-  it("requires mood/angle/pacing/voice/tone/reason/structure/captionStyle/doNotMention and forbids extras", () => {
+  it("requires mood/angle/pacing/reason/structure/captionStyle/doNotMention and forbids extras", () => {
     const schema = createMoodPlanSchema();
 
     expect(schema).toMatchObject({
@@ -1024,8 +1024,6 @@ describe("createMoodPlanSchema", () => {
         "mood",
         "angle",
         "pacing",
-        "voice",
-        "tone",
         "reason",
         "structure",
         "captionStyle",
@@ -1066,6 +1064,21 @@ describe("createMoodPlanSchema", () => {
     expect(
       (schema as { required?: string[] }).required
     ).not.toContain("formatName");
+  });
+
+  it("omits voice and tone from the mood plan schema", () => {
+    const schema = createMoodPlanSchema() as {
+      required: string[];
+      properties: Record<string, unknown>;
+    };
+
+    expect(schema.required).not.toContain("voice");
+    expect(schema.required).not.toContain("tone");
+    expect(schema.properties).not.toHaveProperty("voice");
+    expect(schema.properties).not.toHaveProperty("tone");
+    expect(schema.required).toContain("mood");
+    expect(schema.required).toContain("angle");
+    expect(schema.required).toContain("pacing");
   });
 });
 

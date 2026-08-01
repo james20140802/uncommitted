@@ -550,8 +550,6 @@ class TaskAwareProvider implements AiProvider {
           shape: "hook-turn-landing",
           suggestedSlideCount: 3
         },
-        voice: "dry coworker",
-        tone: "concise and lightly amused",
         reason: "Source-gating test fixture.",
         structure: [
           { part: "Signal", purpose: "Name the activity." },

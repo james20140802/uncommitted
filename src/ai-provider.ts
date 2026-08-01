@@ -587,8 +587,6 @@ export function createMoodPlanSchema(): JsonObject {
       "mood",
       "angle",
       "pacing",
-      "voice",
-      "tone",
       "reason",
       "structure",
       "captionStyle",
@@ -620,8 +618,6 @@ export function createMoodPlanSchema(): JsonObject {
           suggestedSlideCount: { type: "integer" }
         }
       },
-      voice: { type: "string" },
-      tone: { type: "string" },
       reason: { type: "string" },
       structure: {
         type: "array",

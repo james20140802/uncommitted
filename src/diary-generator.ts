@@ -34,8 +34,6 @@ export type DiaryDraftMetadata = {
   activityLevel: ActivityLevel;
   mood: Mood;
   angle: string;
-  storyFormatVoice: string;
-  storyFormatTone: string;
   projectIds: string[];
   entryMode: "daily_global";
   slideCount: number;
@@ -167,7 +165,7 @@ export function redactArchitectureDisclosureFromCaption(
  * title/body/visualMood, and the free-text `metadata.angle`. The angle is a
  * provider-generated string that reaches story.json, so it is scrubbed here
  * too; the remaining metadata fields are safe (`mood` is a fixed-vocabulary
- * enum, voice/tone are persona-derived style labels, the rest are structural).
+ * enum, the rest are structural).
  * Pure function — returns a new DiaryDraft, does not mutate the input.
  */
 export function redactArchitectureDisclosureFromDraft(
@@ -224,8 +222,6 @@ function buildSafeDiaryInput(options: {
     storyFormatPlan: {
       mood: options.storyFormatPlan.mood,
       angle: options.storyFormatPlan.angle,
-      voice: options.storyFormatPlan.voice,
-      tone: options.storyFormatPlan.tone,
       reason: options.storyFormatPlan.reason,
       structure: options.storyFormatPlan.structure.map((part) => ({
         part: part.part,
@@ -314,7 +310,6 @@ function buildDiaryInstructions(options: {
   return [
     "Return structured JSON for story.json with title, slides, and altText.",
     "Follow the Story Format Plan for story title, slide titles, slide bodies, and visualMood only.",
-    "Use the Story Format Plan's voice and tone for the story slides only.",
     `Create ${options.storyFormatPlan.pacing.suggestedSlideCount} slides when possible, while staying within 3-8 slides.`,
     options.storyFormatPlan.pacing.openWith === "scene"
       ? "Open the story on a concrete scene, then move into reflection."
@@ -608,8 +603,6 @@ function parseDiaryDraft(options: {
       activityLevel: options.activitySummary.activityLevel,
       mood: options.storyFormatPlan.mood,
       angle: options.storyFormatPlan.angle,
-      storyFormatVoice: options.storyFormatPlan.voice,
-      storyFormatTone: options.storyFormatPlan.tone,
       projectIds: options.activitySummary.projects.map(
         (project) => project.projectId
       ),
@@ -684,8 +677,6 @@ function isDiaryMetadata(value: unknown): value is DiaryDraftMetadata {
     typeof value.activityLevel === "string" &&
     isMood(value.mood) &&
     typeof value.angle === "string" &&
-    typeof value.storyFormatVoice === "string" &&
-    typeof value.storyFormatTone === "string" &&
     Array.isArray(value.projectIds) &&
     value.projectIds.every((projectId) => typeof projectId === "string") &&
     value.entryMode === "daily_global" &&

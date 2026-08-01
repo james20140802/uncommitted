@@ -348,8 +348,6 @@ describe("carousel renderer", () => {
           activityLevel: "medium",
           mood: "grind",
           angle: "Renderer test fixture angle.",
-          storyFormatVoice: "tired QA narrator",
-          storyFormatTone: "deadpan",
           projectIds: ["uncommitted"],
           entryMode: "daily_global",
           slideCount: 1
@@ -472,8 +470,6 @@ describe("carousel renderer", () => {
           activityLevel: "medium",
           mood: "grind",
           angle: "Renderer test fixture angle.",
-          storyFormatVoice: "tired QA narrator",
-          storyFormatTone: "deadpan",
           projectIds: ["uncommitted"],
           entryMode: "daily_global",
           slideCount: 2
@@ -726,8 +722,6 @@ function createStoryDraft(overrides: Partial<DiaryDraft> = {}): DiaryDraft {
       activityLevel: "medium",
       mood: "grind",
       angle: "Renderer test fixture angle.",
-      storyFormatVoice: "tired QA narrator",
-      storyFormatTone: "deadpan",
       projectIds: ["uncommitted"],
       entryMode: "daily_global",
       slideCount: 3

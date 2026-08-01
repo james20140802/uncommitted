@@ -523,8 +523,6 @@ function createStoryFormatPlan(
       shape: "hook-turn-landing",
       suggestedSlideCount: 3
     },
-    voice: "dry coworker",
-    tone: "concise and lightly amused",
     reason: "Collect-all E2E fixture: enough real signals for a compact update.",
     structure: [
       { part: "Signal", purpose: "Name the concrete activity." },
