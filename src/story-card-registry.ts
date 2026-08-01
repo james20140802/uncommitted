@@ -1,4 +1,5 @@
 import type { ActivitySummary } from "./activity-summary.js";
+import { checkboardStoryCard } from "./story-card-kind-checkboard.js";
 import { modalStoryCard } from "./story-card-kind-modal.js";
 import { terminalStoryCard } from "./story-card-kind-terminal.js";
 import { typoStoryCard } from "./story-card-kind-typo.js";
@@ -18,7 +19,8 @@ export { readSlotText, readSlotLines } from "./story-card-slots.js";
 export const storyCardRegistry: readonly StoryCardDefinition[] = [
   typoStoryCard,
   terminalStoryCard,
-  modalStoryCard
+  modalStoryCard,
+  checkboardStoryCard
 ];
 
 export function listStoryCardKindIds(

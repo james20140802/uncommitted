@@ -1,0 +1,98 @@
+import { escapeHtml } from "./html-escape.js";
+import { renderStoryCardDocument, type StoryCardChrome } from "./story-card-chrome.js";
+import {
+  readSlotLines,
+  readSlotText,
+  type StoryCardDefinition,
+  type StoryCardSlots
+} from "./story-card-slots.js";
+
+const checkboardStyles = `
+    .checkboard {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75em;
+    }
+
+    .checkboard-heading {
+      margin: 0 0 0.3em;
+      font-size: 1.3em;
+      font-weight: 800;
+      color: #111827;
+      overflow-wrap: anywhere;
+    }
+
+    .checkboard-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.7em;
+      padding: 0.55em 0.7em;
+      border-radius: 0.3em;
+      background: #ffffff;
+      border: 2px solid #e2e8f0;
+      overflow-wrap: anywhere;
+    }
+
+    .checkboard-box {
+      flex: none;
+      width: 1.15em;
+      height: 1.15em;
+      border-radius: 0.2em;
+      border: 2px solid #94a3b8;
+      text-align: center;
+      line-height: 1.05em;
+      font-weight: 800;
+    }
+
+    .checkboard-item[data-checked="true"] .checkboard-box {
+      background: #0f766e;
+      border-color: #0f766e;
+      color: #ffffff;
+    }
+
+    .checkboard-item[data-checked="true"] .checkboard-label {
+      color: #475569;
+      text-decoration: line-through;
+    }
+
+    .checkboard-label { color: #1f2937; }
+`;
+
+function renderItems(lines: string[], checked: boolean): string {
+  return lines
+    .map(
+      (line) => `      <div class="checkboard-item" data-checked="${checked ? "true" : "false"}">
+        <span class="checkboard-box">${checked ? "✓" : ""}</span>
+        <span class="checkboard-label">${escapeHtml(line)}</span>
+      </div>`
+    )
+    .join("\n");
+}
+
+export const checkboardStoryCard: StoryCardDefinition = {
+  id: "checkboard",
+  requires: (summary) =>
+    summary.smallWins.length > 0 || summary.unfinishedThreads.length > 0,
+  slots: {
+    heading: { type: "text", required: true },
+    done: { type: "lines", required: false },
+    todo: { type: "lines", required: false }
+  },
+  render(slots: StoryCardSlots, chrome: StoryCardChrome): string {
+    const heading = escapeHtml(readSlotText(slots, "heading").trim());
+    const doneHtml = renderItems(readSlotLines(slots, "done"), true);
+    const todoHtml = renderItems(readSlotLines(slots, "todo"), false);
+    const itemsHtml = [doneHtml, todoHtml].filter((part) => part.length > 0).join("\n");
+
+    return renderStoryCardDocument({
+      kindId: "checkboard",
+      title: readSlotText(slots, "heading").trim(),
+      stageStyles: checkboardStyles,
+      stageHtml: `    <div class="checkboard">
+      <p class="checkboard-heading">${heading}</p>
+${itemsHtml}
+    </div>`,
+      chrome
+    });
+  }
+};
