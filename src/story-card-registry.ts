@@ -1,4 +1,5 @@
 import type { ActivitySummary } from "./activity-summary.js";
+import { modalStoryCard } from "./story-card-kind-modal.js";
 import { terminalStoryCard } from "./story-card-kind-terminal.js";
 import { typoStoryCard } from "./story-card-kind-typo.js";
 import type { StoryCardDefinition, StoryCardSlotSchema } from "./story-card-slots.js";
@@ -16,7 +17,8 @@ export { readSlotText, readSlotLines } from "./story-card-slots.js";
 // 아래의 파생 뷰(열거형 / 슬롯 스키마 / 후보 목록)에 자동으로 반영된다.
 export const storyCardRegistry: readonly StoryCardDefinition[] = [
   typoStoryCard,
-  terminalStoryCard
+  terminalStoryCard,
+  modalStoryCard
 ];
 
 export function listStoryCardKindIds(
