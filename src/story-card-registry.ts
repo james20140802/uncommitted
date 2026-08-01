@@ -1,6 +1,7 @@
 import type { ActivitySummary } from "./activity-summary.js";
 import { chatStoryCard } from "./story-card-kind-chat.js";
 import { checkboardStoryCard } from "./story-card-kind-checkboard.js";
+import { diffStoryCard } from "./story-card-kind-diff.js";
 import { modalStoryCard } from "./story-card-kind-modal.js";
 import { terminalStoryCard } from "./story-card-kind-terminal.js";
 import { typoStoryCard } from "./story-card-kind-typo.js";
@@ -22,7 +23,8 @@ export const storyCardRegistry: readonly StoryCardDefinition[] = [
   terminalStoryCard,
   modalStoryCard,
   checkboardStoryCard,
-  chatStoryCard
+  chatStoryCard,
+  diffStoryCard
 ];
 
 export function listStoryCardKindIds(

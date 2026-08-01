@@ -189,6 +189,14 @@ describe("story card slot injection regression (parent AC4)", () => {
   });
 });
 
+describe("story card registry completeness (parent AC1)", () => {
+  it("registers all six card kinds", () => {
+    expect(listStoryCardKindIds().sort()).toEqual(
+      ["chat", "checkboard", "diff", "modal", "terminal", "typo"].sort()
+    );
+  });
+});
+
 describe("typo card (parent AC3)", () => {
   it("renders representative slot values escaped into the output", () => {
     const typo = storyCardRegistry.find((kind) => kind.id === "typo");
