@@ -1,6 +1,6 @@
 import { escapeHtml } from "./html-escape.js";
 import { renderStoryCardDocument, type StoryCardChrome } from "./story-card-chrome.js";
-import { readSlotText, type StoryCardDefinition, type StoryCardSlots } from "./story-card-registry.js";
+import { readSlotText, type StoryCardDefinition, type StoryCardSlots } from "./story-card-slots.js";
 
 const typoStyles = `
     .typo {
