@@ -46,4 +46,34 @@ describe("chat story card", () => {
 
     expect(html).toContain("그냥 한 줄");
   });
+
+  it("treats an HH:MM timestamp as speakerless rather than inventing a speaker", () => {
+    const html = chatStoryCard.render(
+      { messages: ["09:15 스탠드업 시작"] },
+      chrome
+    );
+
+    expect(html).toContain("09:15 스탠드업 시작");
+    expect(html).not.toContain('class="chat-speaker"');
+  });
+
+  it("treats a bare URL as speakerless, keeping the scheme colon intact", () => {
+    const html = chatStoryCard.render(
+      { messages: ["https://github.com/org/repo/pull/12 확인해주세요"] },
+      chrome
+    );
+
+    expect(html).toContain("https://github.com/org/repo/pull/12 확인해주세요");
+    expect(html).not.toContain('class="chat-speaker"');
+  });
+
+  it("keeps a URL in the message body intact when a real speaker prefix is present", () => {
+    const html = chatStoryCard.render(
+      { messages: ["나: 링크는 https://x.com 참고"] },
+      chrome
+    );
+
+    expect(html).toContain('class="chat-speaker">나<');
+    expect(html).toContain("링크는 https://x.com 참고");
+  });
 });

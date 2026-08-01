@@ -48,11 +48,12 @@ const chatStyles = `
 `;
 
 function splitMessage(line: string): { speaker: string; message: string } {
-  const separator = line.indexOf(":");
-  if (separator === -1) {
+  const match = /:\s/.exec(line);
+  if (!match) {
     return { speaker: "", message: line.trim() };
   }
 
+  const separator = match.index;
   return {
     speaker: line.slice(0, separator).trim(),
     message: line.slice(separator + 1).trim()
