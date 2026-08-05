@@ -1,8 +1,5 @@
 import { escapeHtml } from "./html-escape.js";
 
-export const storyCardLayoutFits = ["base", "tight", "compact"] as const;
-export type StoryCardLayoutFit = (typeof storyCardLayoutFits)[number];
-
 export type StoryCardChrome = {
   projectMarker: string;
   targetDate: string;
