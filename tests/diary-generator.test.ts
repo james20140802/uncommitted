@@ -267,6 +267,108 @@ describe("diary generator", () => {
     expect(instructions).toContain("ticket keys such as UNC-123");
   });
 
+  it("still rejects quiet-day fabrication dressed up as universal framing (UNC-251)", async () => {
+    await expect(
+      generateDiaryDraft({
+        activitySummary: createActivitySummary({
+          activityLevel: "none",
+          dominantTheme: "quiet",
+          projects: [],
+          commitSignals: {
+            totalCommits: 0,
+            filesChanged: 0,
+            insertions: 0,
+            deletions: 0,
+            subjects: [],
+            themes: []
+          },
+          smallWins: [],
+          unfinishedThreads: []
+        }),
+        storyFormatPlan: createStoryFormatPlan({ suggestedSlideCount: 3 }),
+        provider: new MockAiProvider({
+          response: createProviderDraft({
+            slides: [
+              {
+                index: 1,
+                title: "좋은 협업 팁 ①",
+                body: "누구나 아는 그 순간이 왔습니다. 오늘도 조용히 3 commits 를 밀어 넣는 하루.",
+                visualMood: "still terminal"
+              },
+              {
+                index: 2,
+                title: "보편적인 오후",
+                body: "모두가 겪는 일입니다. 아무 말 없이 버그가 fixed 되어 있는 오후 말입니다.",
+                visualMood: "waiting cursor"
+              },
+              {
+                index: 3,
+                title: "마무리",
+                body: "내일의 기록을 기다리는 쪽으로 닫았다.",
+                visualMood: "small note"
+              }
+            ]
+          })
+        }),
+        persona: "wry coworker",
+        roastLevel: 2
+      })
+    ).rejects.toMatchObject({
+      code: "malformed-response",
+      message: "AI provider fabricated quiet-day activity."
+    });
+  });
+
+  it("accepts a quiet day framed universally when no work is claimed (UNC-251)", async () => {
+    const draft = await generateDiaryDraft({
+      activitySummary: createActivitySummary({
+        activityLevel: "none",
+        dominantTheme: "quiet",
+        projects: [],
+        commitSignals: {
+          totalCommits: 0,
+          filesChanged: 0,
+          insertions: 0,
+          deletions: 0,
+          subjects: [],
+          themes: []
+        },
+        smallWins: [],
+        unfinishedThreads: []
+      }),
+      storyFormatPlan: createStoryFormatPlan({ suggestedSlideCount: 3 }),
+      provider: new MockAiProvider({
+        response: createProviderDraft({
+          slides: [
+            {
+              index: 1,
+              title: "좋은 생산성 팁 ①",
+              body: "아무것도 기록되지 않은 날을 가지세요. 기록할 게 없다는 것도 하루의 모양입니다.",
+              visualMood: "still terminal"
+            },
+            {
+              index: 2,
+              title: "기다림",
+              body: "누구에게나 있는 그 하루. 커서만 깜빡이고 아무 일도 일어나지 않았습니다.",
+              visualMood: "waiting cursor"
+            },
+            {
+              index: 3,
+              title: "마무리",
+              body: "내일의 기록을 기다리는 쪽으로 닫았습니다.",
+              visualMood: "small note"
+            }
+          ]
+        })
+      }),
+      persona: "wry coworker",
+      roastLevel: 2
+    });
+
+    expect(draft.metadata.activityLevel).toBe("none");
+    expect(draft.slides).toHaveLength(3);
+  });
+
   it("generates a quiet-day request without fabricating activity", async () => {
     const provider = new MockAiProvider({
       response: createProviderDraft({
@@ -824,6 +926,78 @@ describe("caption generator", () => {
     expect(instructions).toContain(
       "Do not leave raw jargon or untranslated English noun phrases"
     );
+  });
+
+  it("still rejects a quiet-day caption that hides fabrication behind universal framing (UNC-251)", async () => {
+    const quietSummary = createActivitySummary({
+      activityLevel: "none",
+      dominantTheme: "quiet",
+      projects: [],
+      commitSignals: {
+        totalCommits: 0,
+        filesChanged: 0,
+        insertions: 0,
+        deletions: 0,
+        subjects: [],
+        themes: []
+      },
+      smallWins: [],
+      unfinishedThreads: []
+    });
+
+    await expect(
+      generateCaption({
+        activitySummary: quietSummary,
+        provider: new MockAiProvider({
+          response: {
+            caption:
+              "좋은 하루 관리 팁 ①\n\n누구나 겪는 그 오후에\n버그 하나를 조용히 fixed 해두세요.\n\n아무도 모르게요.",
+            hashtags: ["#Uncommitted", "#개발일기"]
+          }
+        }),
+        persona: captionTestPersona,
+        roastLevel: 2,
+        moodPlan: captionTestMoodPlan
+      })
+    ).rejects.toMatchObject({
+      code: "malformed-response",
+      message: "AI provider fabricated quiet-day activity in caption."
+    });
+  });
+
+  it("accepts a quiet-day caption that stays universal without claiming work (UNC-251)", async () => {
+    const quietSummary = createActivitySummary({
+      activityLevel: "none",
+      dominantTheme: "quiet",
+      projects: [],
+      commitSignals: {
+        totalCommits: 0,
+        filesChanged: 0,
+        insertions: 0,
+        deletions: 0,
+        subjects: [],
+        themes: []
+      },
+      smallWins: [],
+      unfinishedThreads: []
+    });
+
+    const result = await generateCaption({
+      activitySummary: quietSummary,
+      provider: new MockAiProvider({
+        response: {
+          caption:
+            "좋은 생산성 팁 ①\n\n오늘은 아무것도 남기지 마세요.\n기록이 없는 날도 하루의 모양입니다.\n\n저는 옆에서 커서만 봤습니다.",
+          hashtags: ["#Uncommitted", "#개발일기"]
+        }
+      }),
+      persona: captionTestPersona,
+      roastLevel: 2,
+      moodPlan: captionTestMoodPlan
+    });
+
+    expect(result.caption).toContain("기록이 없는 날");
+    expect(result.hashtags).toHaveLength(2);
   });
 
   it("buildCaptionInstructions derives identity/voice/humor from the persona and changes across presets", () => {
