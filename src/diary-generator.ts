@@ -301,7 +301,7 @@ function buildHighlights(summary: ActivitySummary, quiet: boolean): string[] {
  */
 const ALTITUDE_RULE_LINES = [
   "Altitude rule: raise the framing, never the facts. Describe the work you were given as a situation any developer would recognize, instead of naming the specific ticket, screen, module, or file it happened in.",
-  "Raising altitude means rewording the same event. It never means adding one: do not invent work, drama, stakes, or consequences the activity summary does not support."
+  "Raising altitude means rewording the same event. It never means adding one: do not invent work, drama, stakes, or consequences the activity summary does not support. Universal does not mean vague: the framing must still be specific enough that only today's work fits it. If the line could be published unchanged on any other day, it is too high."
 ] as const;
 
 /**
@@ -311,8 +311,8 @@ const ALTITUDE_RULE_LINES = [
  * 막는다.
  */
 const DEADPAN_FRAME_LINES = [
-  "Deadpan frame: deliver the universal framing straight-faced, as if stating sincere advice or an obvious truth. The humor comes from the gap between the calm delivery and the actual situation.",
-  "Never signal that you are joking: no winking, no explaining the bit, no exclamation-stacked punchlines.",
+  "When the humor lands as irony, deliver it straight-faced, as if stating sincere advice or an obvious truth. The humor comes from the gap between the calm delivery and the actual situation.",
+  "Never signal that you are joking: no winking and no explaining the bit.",
   "The deadpan frame targets situations, tools, and workflows only. It never becomes irony aimed at the user's identity, ability, appearance, mental health, personal value, or real life."
 ] as const;
 
@@ -323,9 +323,9 @@ const DEADPAN_FRAME_LINES = [
  * 보편 상황 서술로 바꾸는 것이다.
  */
 const KOREAN_SURFACE_LINES = [
-  "Write the surface in Korean. Any English noun phrase that has a natural Korean equivalent must be written in Korean instead — for example \"working tree\", \"fire-and-forget\", \"boundary tape\", \"release-shaped moment\" should be expressed as Korean, not printed in English.",
-  "Exceptions: hashtag tokens (anything starting with #) may stay in English, and widely used abbreviations may stay as-is: CI, PR, API, UI, AI, JSON, URL. Public tool, language, and platform names such as Git, TypeScript, or Instagram are also allowed.",
-  "Internal identifiers must never appear: ticket keys such as UNC-123, and internal screen, module, class, or file names such as FeedbackModal or diary-generator.ts. Reframe them as the universal situation they describe instead of masking them with placeholder text."
+  "Write the reader-facing surface — story title, slide titles, slide bodies, altText, and caption — in Korean. Any English noun phrase that has a natural Korean equivalent must be written in Korean instead — for example \"working tree\", \"fire-and-forget\", \"boundary tape\", \"release-shaped moment\" should be expressed as Korean, not printed in English.",
+  "Exceptions: hashtag tokens (anything starting with #) may stay in English, and widely used abbreviations may stay as-is: CI, PR, API, UI, AI, JSON, URL — the abbreviation only, never a specific number or key attached to it. Public tool, language, and platform names such as Git, TypeScript, or Instagram are also allowed. The persona's Korean-English mix setting governs how freely these allowed English tokens appear; it never licenses untranslated internal or translatable noun phrases.",
+  "Internal identifiers must never appear: ticket keys such as UNC-123, internal screen, module, class, or file names such as FeedbackModal or diary-generator.ts, and proper nouns that appear only in internal branch names or PR titles. Reframe them as the universal situation they describe instead of masking them with placeholder text."
 ] as const;
 
 function buildDiaryInstructions(options: {
@@ -483,6 +483,8 @@ export function buildCaptionInstructions(options: {
     "Do not list all work done today. Pick one or two anchors and build the caption around them.",
     "Do not use abstract metaphors or literary prose.",
     "Do not leave raw jargon or untranslated English noun phrases such as PR numbers, version tags, module/file names, or internal screen names in the caption — translate each into what it meant for a person instead.",
+    "Do not print internal identifiers — ticket keys, screen, module, class, or file names.",
+    "Do not explain the joke or signal that a line is meant to be funny.",
     "Do not expose secrets, local paths, credentials, code snippets, private URLs, or emails.",
     "Do not imply the draft was automatically posted or exported.",
     "Each hashtag must start with # and contain no spaces."

@@ -235,7 +235,9 @@ describe("diary generator", () => {
     });
 
     const instructions = provider.requests[0]?.instructions ?? "";
-    expect(instructions).toContain("Deadpan frame: deliver the universal framing straight-faced");
+    expect(instructions).toContain(
+      "When the humor lands as irony, deliver it straight-faced, as if stating sincere advice or an obvious truth"
+    );
     expect(instructions).toContain("Never signal that you are joking");
     expect(instructions).toContain(
       "It never becomes irony aimed at the user's identity, ability, appearance, mental health, personal value, or real life"
@@ -260,7 +262,9 @@ describe("diary generator", () => {
     });
 
     const instructions = provider.requests[0]?.instructions ?? "";
-    expect(instructions).toContain("Write the surface in Korean");
+    expect(instructions).toContain(
+      "Write the reader-facing surface — story title, slide titles, slide bodies, altText, and caption — in Korean"
+    );
     expect(instructions).toContain("hashtag tokens (anything starting with #) may stay in English");
     expect(instructions).toContain("CI, PR, API, UI, AI, JSON, URL");
     expect(instructions).toContain("Internal identifiers must never appear");
@@ -886,7 +890,9 @@ describe("caption generator", () => {
       moodPlan: captionTestMoodPlan
     });
 
-    expect(instructions).toContain("Deadpan frame: deliver the universal framing straight-faced");
+    expect(instructions).toContain(
+      "When the humor lands as irony, deliver it straight-faced, as if stating sincere advice or an obvious truth"
+    );
     expect(instructions).toContain("Never signal that you are joking");
     expect(instructions).toContain(
       "It never becomes irony aimed at the user's identity, ability, appearance, mental health, personal value, or real life"
@@ -905,7 +911,9 @@ describe("caption generator", () => {
     });
 
     // 일반 영어 명사구 억제로 확대
-    expect(instructions).toContain("Write the surface in Korean");
+    expect(instructions).toContain(
+      "Write the reader-facing surface — story title, slide titles, slide bodies, altText, and caption — in Korean"
+    );
     expect(instructions).toContain("English noun phrase that has a natural Korean equivalent");
     expect(instructions).toContain("working tree");
     expect(instructions).toContain("fire-and-forget");
@@ -926,6 +934,47 @@ describe("caption generator", () => {
     expect(instructions).toContain(
       "Do not leave raw jargon or untranslated English noun phrases"
     );
+  });
+
+  it("keeps the altitude, deadpan, and Korean-surface rule blocks in sync across both prompts (UNC-234)", async () => {
+    const captionInstructions = buildCaptionInstructions({
+      quiet: false,
+      persona: captionTestPersona,
+      moodPlan: captionTestMoodPlan
+    });
+
+    const provider = new MockAiProvider({
+      response: createProviderDraft()
+    });
+
+    await generateDiaryDraft({
+      activitySummary: createActivitySummary(),
+      storyFormatPlan: createStoryFormatPlan({ suggestedSlideCount: 4 }),
+      provider,
+      persona: "wry coworker",
+      roastLevel: 2
+    });
+
+    const diaryInstructions = provider.requests[0]?.instructions ?? "";
+
+    const sharedRuleLines = [
+      // ALTITUDE_RULE_LINES
+      "Altitude rule: raise the framing, never the facts. Describe the work you were given as a situation any developer would recognize, instead of naming the specific ticket, screen, module, or file it happened in.",
+      "Raising altitude means rewording the same event. It never means adding one: do not invent work, drama, stakes, or consequences the activity summary does not support. Universal does not mean vague: the framing must still be specific enough that only today's work fits it. If the line could be published unchanged on any other day, it is too high.",
+      // DEADPAN_FRAME_LINES
+      "When the humor lands as irony, deliver it straight-faced, as if stating sincere advice or an obvious truth. The humor comes from the gap between the calm delivery and the actual situation.",
+      "Never signal that you are joking: no winking and no explaining the bit.",
+      "The deadpan frame targets situations, tools, and workflows only. It never becomes irony aimed at the user's identity, ability, appearance, mental health, personal value, or real life.",
+      // KOREAN_SURFACE_LINES
+      "Write the reader-facing surface — story title, slide titles, slide bodies, altText, and caption — in Korean. Any English noun phrase that has a natural Korean equivalent must be written in Korean instead — for example \"working tree\", \"fire-and-forget\", \"boundary tape\", \"release-shaped moment\" should be expressed as Korean, not printed in English.",
+      "Exceptions: hashtag tokens (anything starting with #) may stay in English, and widely used abbreviations may stay as-is: CI, PR, API, UI, AI, JSON, URL — the abbreviation only, never a specific number or key attached to it. Public tool, language, and platform names such as Git, TypeScript, or Instagram are also allowed. The persona's Korean-English mix setting governs how freely these allowed English tokens appear; it never licenses untranslated internal or translatable noun phrases.",
+      "Internal identifiers must never appear: ticket keys such as UNC-123, internal screen, module, class, or file names such as FeedbackModal or diary-generator.ts, and proper nouns that appear only in internal branch names or PR titles. Reframe them as the universal situation they describe instead of masking them with placeholder text."
+    ];
+
+    for (const line of sharedRuleLines) {
+      expect(captionInstructions).toContain(line);
+      expect(diaryInstructions).toContain(line);
+    }
   });
 
   it("still rejects a quiet-day caption that hides fabrication behind universal framing (UNC-251)", async () => {
