@@ -221,6 +221,31 @@ describe("diary generator", () => {
     );
   });
 
+  it("diary instructions carry the deadpan frame without weakening the human boundary (UNC-249)", async () => {
+    const provider = new MockAiProvider({
+      response: createProviderDraft()
+    });
+
+    await generateDiaryDraft({
+      activitySummary: createActivitySummary(),
+      storyFormatPlan: createStoryFormatPlan({ suggestedSlideCount: 4 }),
+      provider,
+      persona: "wry coworker",
+      roastLevel: 2
+    });
+
+    const instructions = provider.requests[0]?.instructions ?? "";
+    expect(instructions).toContain("Deadpan frame: deliver the universal framing straight-faced");
+    expect(instructions).toContain("Never signal that you are joking");
+    expect(instructions).toContain(
+      "It never becomes irony aimed at the user's identity, ability, appearance, mental health, personal value, or real life"
+    );
+    // 기존 로스트 경계가 그대로 남아 있어야 한다
+    expect(instructions).toContain(
+      "Never attack the user's identity, ability, appearance, mental health, personal value, or real life"
+    );
+  });
+
   it("generates a quiet-day request without fabricating activity", async () => {
     const provider = new MockAiProvider({
       response: createProviderDraft({
@@ -728,6 +753,24 @@ describe("caption generator", () => {
     expect(instructions).toContain("Raising altitude means rewording the same event");
     expect(instructions).toContain(
       "do not invent work, drama, stakes, or consequences the activity summary does not support"
+    );
+  });
+
+  it("buildCaptionInstructions carries the deadpan frame without weakening the human boundary (UNC-249)", () => {
+    const instructions = buildCaptionInstructions({
+      quiet: false,
+      persona: captionTestPersona,
+      moodPlan: captionTestMoodPlan
+    });
+
+    expect(instructions).toContain("Deadpan frame: deliver the universal framing straight-faced");
+    expect(instructions).toContain("Never signal that you are joking");
+    expect(instructions).toContain(
+      "It never becomes irony aimed at the user's identity, ability, appearance, mental health, personal value, or real life"
+    );
+    // 기존 로스트 경계가 그대로 남아 있어야 한다
+    expect(instructions).toContain(
+      "Never insult ability, worth, personality, identity, mental health, or real life"
     );
   });
 
