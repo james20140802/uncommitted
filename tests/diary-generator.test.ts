@@ -197,6 +197,30 @@ describe("diary generator", () => {
     );
   });
 
+  it("diary instructions carry the altitude rule with its no-fabrication boundary (UNC-248)", async () => {
+    const provider = new MockAiProvider({
+      response: createProviderDraft()
+    });
+
+    await generateDiaryDraft({
+      activitySummary: createActivitySummary(),
+      storyFormatPlan: createStoryFormatPlan({ suggestedSlideCount: 4 }),
+      provider,
+      persona: "wry coworker",
+      roastLevel: 2
+    });
+
+    const instructions = provider.requests[0]?.instructions ?? "";
+    expect(instructions).toContain("Altitude rule: raise the framing, never the facts");
+    expect(instructions).toContain(
+      "instead of naming the specific ticket, screen, module, or file"
+    );
+    expect(instructions).toContain("Raising altitude means rewording the same event");
+    expect(instructions).toContain(
+      "do not invent work, drama, stakes, or consequences the activity summary does not support"
+    );
+  });
+
   it("generates a quiet-day request without fabricating activity", async () => {
     const provider = new MockAiProvider({
       response: createProviderDraft({
@@ -687,6 +711,24 @@ describe("caption generator", () => {
     });
 
     expect(instructions).toContain("조용한 날");
+  });
+
+  it("buildCaptionInstructions carries the altitude rule with its no-fabrication boundary (UNC-248)", () => {
+    const instructions = buildCaptionInstructions({
+      quiet: false,
+      persona: captionTestPersona,
+      moodPlan: captionTestMoodPlan
+    });
+
+    expect(instructions).toContain("Altitude rule: raise the framing, never the facts");
+    expect(instructions).toContain(
+      "instead of naming the specific ticket, screen, module, or file"
+    );
+    // 보편화가 지어내기로 번지지 않도록 같은 자리에 경계를 명시한다
+    expect(instructions).toContain("Raising altitude means rewording the same event");
+    expect(instructions).toContain(
+      "do not invent work, drama, stakes, or consequences the activity summary does not support"
+    );
   });
 
   it("buildCaptionInstructions derives identity/voice/humor from the persona and changes across presets", () => {
