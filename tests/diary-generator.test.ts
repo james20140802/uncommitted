@@ -246,6 +246,27 @@ describe("diary generator", () => {
     );
   });
 
+  it("diary instructions gain the Korean-surface rule and the internal-identifier policy (UNC-250)", async () => {
+    const provider = new MockAiProvider({
+      response: createProviderDraft()
+    });
+
+    await generateDiaryDraft({
+      activitySummary: createActivitySummary(),
+      storyFormatPlan: createStoryFormatPlan({ suggestedSlideCount: 4 }),
+      provider,
+      persona: "wry coworker",
+      roastLevel: 2
+    });
+
+    const instructions = provider.requests[0]?.instructions ?? "";
+    expect(instructions).toContain("Write the surface in Korean");
+    expect(instructions).toContain("hashtag tokens (anything starting with #) may stay in English");
+    expect(instructions).toContain("CI, PR, API, UI, AI, JSON, URL");
+    expect(instructions).toContain("Internal identifiers must never appear");
+    expect(instructions).toContain("ticket keys such as UNC-123");
+  });
+
   it("generates a quiet-day request without fabricating activity", async () => {
     const provider = new MockAiProvider({
       response: createProviderDraft({
@@ -774,6 +795,37 @@ describe("caption generator", () => {
     );
   });
 
+  it("buildCaptionInstructions widens English suppression and carries the internal-identifier policy (UNC-250)", () => {
+    const instructions = buildCaptionInstructions({
+      quiet: false,
+      persona: captionTestPersona,
+      moodPlan: captionTestMoodPlan
+    });
+
+    // 일반 영어 명사구 억제로 확대
+    expect(instructions).toContain("Write the surface in Korean");
+    expect(instructions).toContain("English noun phrase that has a natural Korean equivalent");
+    expect(instructions).toContain("working tree");
+    expect(instructions).toContain("fire-and-forget");
+
+    // 해시태그·통용 약어 예외 명시
+    expect(instructions).toContain("hashtag tokens (anything starting with #) may stay in English");
+    expect(instructions).toContain("CI, PR, API, UI, AI, JSON, URL");
+
+    // 내부 식별자 전면 마스킹 정책 (UNC-247 결정)
+    expect(instructions).toContain("Internal identifiers must never appear");
+    expect(instructions).toContain("ticket keys such as UNC-123");
+    expect(instructions).toContain("FeedbackModal");
+
+    // 기존 좁은 규칙이 넓혀진 형태로 남아 있다
+    expect(instructions).toContain(
+      "Translate developer jargon and any project-internal English noun phrase"
+    );
+    expect(instructions).toContain(
+      "Do not leave raw jargon or untranslated English noun phrases"
+    );
+  });
+
   it("buildCaptionInstructions derives identity/voice/humor from the persona and changes across presets", () => {
     const personaA = PERSONA_PRESETS["까칠한 시니어"].persona;
     const personaB = PERSONA_PRESETS["텐션 높은 주니어"].persona;
@@ -901,7 +953,7 @@ describe("caption generator", () => {
     expect(instructions).toContain("뒤로가기 버튼을 못 믿는 하루");
     expect(instructions).toContain("human stakes");
     expect(instructions).toContain(
-      "Do not leave raw jargon such as PR numbers, version tags, or module/file names"
+      "Do not leave raw jargon or untranslated English noun phrases such as PR numbers, version tags, module/file names, or internal screen names"
     );
   });
 

@@ -316,6 +316,18 @@ const DEADPAN_FRAME_LINES = [
   "The deadpan frame targets situations, tools, and workflows only. It never becomes irony aimed at the user's identity, ability, appearance, mental health, personal value, or real life."
 ] as const;
 
+/**
+ * 영어 명사구 억제 + 내부 식별자 정책 (UNC-250). 내부 식별자 처리는
+ * docs/superpowers/specs/2026-08-07-unc-247-internal-identifier-exposure-policy.md
+ * 에서 결정한 (a) 전면 마스킹을 따른다 — 마스킹 placeholder를 찍는 게 아니라
+ * 보편 상황 서술로 바꾸는 것이다.
+ */
+const KOREAN_SURFACE_LINES = [
+  "Write the surface in Korean. Any English noun phrase that has a natural Korean equivalent must be written in Korean instead — for example \"working tree\", \"fire-and-forget\", \"boundary tape\", \"release-shaped moment\" should be expressed as Korean, not printed in English.",
+  "Exceptions: hashtag tokens (anything starting with #) may stay in English, and widely used abbreviations may stay as-is: CI, PR, API, UI, AI, JSON, URL. Public tool, language, and platform names such as Git, TypeScript, or Instagram are also allowed.",
+  "Internal identifiers must never appear: ticket keys such as UNC-123, and internal screen, module, class, or file names such as FeedbackModal or diary-generator.ts. Reframe them as the universal situation they describe instead of masking them with placeholder text."
+] as const;
+
 function buildDiaryInstructions(options: {
   quiet: boolean;
   roastLevel: number;
@@ -345,6 +357,7 @@ function buildDiaryInstructions(options: {
     "Do not invent work, commits, bugs, features, shipped changes, or user activity.",
     ...ALTITUDE_RULE_LINES,
     ...DEADPAN_FRAME_LINES,
+    ...KOREAN_SURFACE_LINES,
     quietInstruction,
     "Never include raw code, raw diffs, secrets, private paths, emails, private URLs, or private remote URLs.",
     "Roast policy: jokes may target situations, tools, TODOs, bugs, recurring work patterns, or requirement churn.",
@@ -415,9 +428,10 @@ export function buildCaptionInstructions(options: {
     "Mild roast is allowed toward situations, workflow, bugs, TODOs, vague requirements, or developer habits. Never insult ability, worth, personality, identity, mental health, or real life.",
     quietInstruction,
     "If rawNarrativeProjection is present, you may use its turns as concrete anchors for what actually happened today; it is already safety-filtered. Never copy it verbatim and never invent work it does not support.",
-    "Translate developer jargon (PR numbers, version tags, module or file names, commit hashes) into human stakes — what it actually meant for a person — instead of printing the raw term. Example: an \"archive-context PR\" becomes \"뒤로가기 버튼을 못 믿는 하루\", not the literal PR name. Someone who has never touched this project should still be able to read the caption and relate to it.",
+    "Translate developer jargon and any project-internal English noun phrase (PR numbers, version tags, module or file names, commit hashes, internal screen names) into human stakes — what it actually meant for a person — instead of printing the raw term. Example: an \"archive-context PR\" becomes \"뒤로가기 버튼을 못 믿는 하루\", not the literal PR name. Someone who has never touched this project should still be able to read the caption and relate to it.",
     ...ALTITUDE_RULE_LINES,
     ...DEADPAN_FRAME_LINES,
+    ...KOREAN_SURFACE_LINES,
     "",
     "=== STRUCTURE SKELETON (illustrates rhythm and anchor count only, NOT voice) ===",
     "",
@@ -468,7 +482,7 @@ export function buildCaptionInstructions(options: {
     "Do not write a work report, changelog, or standup update.",
     "Do not list all work done today. Pick one or two anchors and build the caption around them.",
     "Do not use abstract metaphors or literary prose.",
-    "Do not leave raw jargon such as PR numbers, version tags, or module/file names in the caption unless it carries human meaning — translate it into what it meant for a person instead.",
+    "Do not leave raw jargon or untranslated English noun phrases such as PR numbers, version tags, module/file names, or internal screen names in the caption — translate each into what it meant for a person instead.",
     "Do not expose secrets, local paths, credentials, code snippets, private URLs, or emails.",
     "Do not imply the draft was automatically posted or exported.",
     "Each hashtag must start with # and contain no spaces."
