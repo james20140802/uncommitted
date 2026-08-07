@@ -858,32 +858,40 @@ const koreanCountWord = "\\d+|한|두|세|네|다섯|여섯|일곱|여덟|아홉
  */
 /** 커밋 개수 표현. 위 목적어들과 같은 자리에 서서 완료 동사를 이끈다. */
 const koreanCommitCountObjects = [
-  `커밋\\s*(?:${koreanCountWord})\\s*개`,
+  `커밋(?:을|를|이|가)?\\s*(?:${koreanCountWord})\\s*개`,
   `(?:${koreanCountWord})\\s*개의?\\s*커밋`
 ];
+
+/**
+ * 개수 목적어에만 붙는 완료형. "커밋 세 개를 했습니다"는 주장이지만, 일반
+ * 목적어까지 `했`를 허용하면 "코드 구경만 했습니다" 같은 정직한 줄이 걸린다.
+ */
+const koreanCountBoundClaimStems = [...koreanObjectBoundClaimStems, "했"];
 
 const koreanWorkClaimPattern = new RegExp(
   [
     `(?:${koreanWorkClaimNouns.join("|")})(?:했|됐|되었|하였)`,
     koreanNativeWorkClaimStems.join("|"),
-    `(?:${[...koreanWorkObjects, ...koreanCommitCountObjects].join("|")})[^.!?\\n]{0,6}?(?:${koreanObjectBoundClaimStems.join("|")})`
+    `(?:${koreanWorkObjects.join("|")})[^.!?\\n]{0,6}?(?:${koreanObjectBoundClaimStems.join("|")})`,
+    `(?:${koreanCommitCountObjects.join("|")})[^.!?\\n]{0,6}?(?:${koreanCountBoundClaimStems.join("|")})`
   ].join("|"),
   "g"
 );
 
 /**
- * 부정을 예외로 인정하는 유일한 뒤쪽 형태: **주장을 인용해 부인하는** 표지.
- * "고쳤다고 할 것도 없었습니다", "고쳤을 리가 없습니다"가 그것이다.
+ * 부정을 예외로 인정하는 유일한 뒤쪽 형태: **주장을 인용해 곧바로 부인하는**
+ * 구문. "고쳤다고 할 것도 없었습니다", "고쳤을 리가 없습니다"가 그것이다.
  *
  * 연결어미(지만·으며·기에·으므로·-고…)를 열거해 절을 자르는 방식은 끝이
  * 없어서 버렸다. 대신 예외 쪽을 좁혔다 — 뒤 절이 **다른** 일을 부정해도
  * ("기능을 추가했기에 테스트까지는 못했습니다") 앞의 주장은 그대로 남는다.
+ *
+ * 인용 표지와 부정 사이에 또 다른 완료형(했/였/았/었)이 끼면 부인이 아니다.
+ * "추가했다고 기록했지만 테스트는 못했습니다"는 인용된 주장을 오히려 단언한
+ * 뒤 다른 일을 부정하므로, 부정이 주장을 지배하지 않는다.
  */
-const koreanReportedClaimPattern =
-  /^(?:다고|다곤|다는|단\s|을\s*리|ㄹ\s*리|을\s*것도)/;
-
-/** 인용된 주장을 부인하는 표지. */
-const koreanClaimNegationPattern = /없|않|못|아니/;
+const koreanQuotedDenialPattern =
+  /^(?:다고|다곤|다는|단\s|을\s*리|ㄹ\s*리|을\s*것도)[^.!?\n했였았었]*?(?:없|않|못|아니)/;
 
 /**
  * 동사 **바로 앞**에 서는 부정 부사. "오늘은 코드를 안 만들었습니다",
@@ -911,11 +919,8 @@ function isUndeniedClaim(sentence: string, match: RegExpExecArray): boolean {
     return false;
   }
 
-  const tail = sentence.slice(match.index + match[0].length);
-
-  return !(
-    koreanReportedClaimPattern.test(tail) &&
-    koreanClaimNegationPattern.test(tail)
+  return !koreanQuotedDenialPattern.test(
+    sentence.slice(match.index + match[0].length)
   );
 }
 
