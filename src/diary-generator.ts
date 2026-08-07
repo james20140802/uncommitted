@@ -872,7 +872,7 @@ const koreanWorkClaimPattern = new RegExp(
  * 부정할 뿐 `추가했`을 취소하지 않는다. 그래서 부정은 어간이 속한 절 안에서만
  * 찾는다.
  */
-const koreanClauseBoundaryPattern = /지만|는데|은데|으나|면서|,|^고\s/;
+const koreanClauseBoundaryPattern = /지만|는데|은데|으나|으며|며\s|면서|,|^고\s/;
 
 /**
  * 완료 어간 뒤에 오는 부정·인용 꼬리표. "고쳤다고 할 것도 없었습니다",
@@ -883,10 +883,23 @@ const koreanClauseBoundaryPattern = /지만|는데|은데|으나|면서|,|^고\s
  */
 const koreanClaimNegationPattern = /없|않|못|아니/;
 
+/**
+ * 동사 **앞**에 놓이는 부정 부사. "오늘은 코드를 안 만들었습니다",
+ * "버그는 못 고쳤습니다"는 작업이 없었음을 말하는 정직한 문장인데, 어간 뒤만
+ * 보는 검사로는 이 부정이 매칭 구간 안에 삼켜져 보이지 않는다. 낱말로 선
+ * `안`/`못`만 세도록 앞뒤 공백을 요구한다 — "제안"의 `안`은 세지 않는다.
+ */
+const koreanPreVerbalNegationPattern = /(?:^|[\s(])(?:안|못)\s/;
+
 /** 매칭된 주장을 지배하는 절만 남긴다 (다음 절 경계까지). */
 function governingClause(tail: string): string {
   const boundary = koreanClauseBoundaryPattern.exec(tail);
   return boundary ? tail.slice(0, boundary.index) : tail;
+}
+
+/** 매칭 구간과 그 바로 앞을 합쳐 동사 앞 부정을 볼 수 있게 한다. */
+function claimWithLeadIn(sentence: string, match: RegExpExecArray): string {
+  return sentence.slice(Math.max(0, match.index - 4), match.index) + match[0];
 }
 
 function claimsQuietDayWork(text: string): boolean {
@@ -899,6 +912,9 @@ function claimsQuietDayWork(text: string): boolean {
     .some((sentence) =>
       [...sentence.matchAll(koreanWorkClaimPattern)].some(
         (match) =>
+          !koreanPreVerbalNegationPattern.test(
+            claimWithLeadIn(sentence, match)
+          ) &&
           !koreanClaimNegationPattern.test(
             governingClause(sentence.slice(match.index + match[0].length))
           )
