@@ -11,7 +11,7 @@ import type {
   SafeActivitySummary
 } from "./ai-provider.js";
 import { redactArchitectureDisclosure } from "./architecture-disclosure.js";
-import type { Persona } from "./persona.js";
+import type { Persona, PersonaLangMix } from "./persona.js";
 import { emailPattern } from "./redaction.js";
 import { isMood } from "./story-format-plan.js";
 import type {
@@ -57,6 +57,13 @@ export type DiaryGeneratorOptions = {
   projectPersonaHints?: ProjectPersonaHint[];
   entryMode?: "daily_global";
   rawNarrativeProjection?: RawNarrativeProjection;
+  /**
+   * 스토리 프롬프트의 한국어 표면 규칙(UNC-250)이 참조하는 페르소나 노브.
+   * 캡션 프롬프트는 구조화된 페르소나를 그대로 받지만 스토리 프롬프트는
+   * backstory 문자열만 받으므로, 이 노브만 따로 전달한다. 생략하면 가장
+   * 보수적인 `low`(영어 토큰을 가장 아끼는 쪽)로 본다.
+   */
+  koreanEnglishMix?: PersonaLangMix;
 };
 
 export type CaptionResult = {
@@ -114,7 +121,8 @@ export async function generateDiaryDraft(
     instructions: buildDiaryInstructions({
       quiet: options.activitySummary.activityLevel === "none",
       roastLevel: options.roastLevel,
-      storyFormatPlan: options.storyFormatPlan
+      storyFormatPlan: options.storyFormatPlan,
+      koreanEnglishMix: options.koreanEnglishMix ?? "low"
     }),
     summary: buildSafeDiaryInput({
       activitySummary: options.activitySummary,
@@ -332,6 +340,7 @@ function buildDiaryInstructions(options: {
   quiet: boolean;
   roastLevel: number;
   storyFormatPlan: MoodPlan;
+  koreanEnglishMix: PersonaLangMix;
 }): string {
   const directRoastPolicy =
     options.roastLevel >= 3
@@ -358,6 +367,7 @@ function buildDiaryInstructions(options: {
     ...ALTITUDE_RULE_LINES,
     ...DEADPAN_FRAME_LINES,
     ...KOREAN_SURFACE_LINES,
+    `The persona's Korean-English mix setting is "${options.koreanEnglishMix}"; let it govern how freely the allowed English tokens above appear, within the limits stated there.`,
     quietInstruction,
     "Never include raw code, raw diffs, secrets, private paths, emails, private URLs, or private remote URLs.",
     "Roast policy: jokes may target situations, tools, TODOs, bugs, recurring work patterns, or requirement churn.",
@@ -751,6 +761,19 @@ function assertSlideCount(draft: DiaryDraft): void {
   }
 }
 
+/**
+ * 조용한 날 조작 탐지 패턴 (UNC-251). 스토리 가드와 캡션 가드가 같은 패턴을
+ * 쓰도록 한 곳에서만 정의한다.
+ *
+ * 한국어 절이 필요한 이유: `KOREAN_SURFACE_LINES`가 독자용 표면을 한국어로
+ * 강제하므로, 영어 동사만 보는 탐지기는 "버그를 고쳤습니다" 같은 조작을
+ * 그대로 통과시킨다. 한글에는 `\b` 단어 경계가 잡히지 않으므로 영어 절에만
+ * `\b`를 두고, 한국어는 "이미 해냈다"를 단언하는 완료형 어간으로만 좁게
+ * 매칭한다 — 부정형("고치지 않았다")과 미완형은 어간이 달라 걸리지 않는다.
+ */
+const quietDayFabricationPattern =
+  /\b(?:\d+\s+commits?|fixed|implemented|shipped|built|released|merged|debugged)\b|커밋\s*(?:\d+|한|두|세|네|다섯|여섯|일곱|여덟|아홉|열)\s*개|(?:\d+|한|두|세|네|다섯|여섯|일곱|여덟|아홉|열)\s*개의?\s*커밋|고쳤|수정했|구현했|배포했|출시했|머지했|병합했|커밋했|디버깅했|해결했/i;
+
 function assertQuietDayHonesty(
   draft: DiaryDraft,
   summary: ActivitySummary
@@ -761,11 +784,7 @@ function assertQuietDayHonesty(
 
   const text = collectDraftText(draft).join("\n");
 
-  if (
-    /\b(?:\d+\s+commits?|fixed|implemented|shipped|built|released|merged|debugged)\b/i.test(
-      text
-    )
-  ) {
+  if (quietDayFabricationPattern.test(text)) {
     throw new AiGenerationError(
       "AI provider fabricated quiet-day activity.",
       "malformed-response"
@@ -781,11 +800,7 @@ function assertCaptionQuietDayHonesty(
     return;
   }
 
-  if (
-    /\b(?:\d+\s+commits?|fixed|implemented|shipped|built|released|merged|debugged)\b/i.test(
-      caption
-    )
-  ) {
+  if (quietDayFabricationPattern.test(caption)) {
     throw new AiGenerationError(
       "AI provider fabricated quiet-day activity in caption.",
       "malformed-response"

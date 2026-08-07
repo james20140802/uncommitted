@@ -381,6 +381,7 @@ export async function runGenerateCommand(
     provider,
     persona: config.persona.identity.backstory,
     roastLevel: config.roastLevel,
+    koreanEnglishMix: config.persona.voice.koreanEnglishMix,
     rawNarrativeProjection
   });
   const captionResult = await generateCaption({

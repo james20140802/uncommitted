@@ -271,6 +271,35 @@ describe("diary generator", () => {
     expect(instructions).toContain("ticket keys such as UNC-123");
   });
 
+  it("story instructions name the persona's Korean-English mix so the knob is not a dead claim (UNC-250)", async () => {
+    const highMix = new MockAiProvider({ response: createProviderDraft() });
+    const lowMix = new MockAiProvider({ response: createProviderDraft() });
+
+    await generateDiaryDraft({
+      activitySummary: createActivitySummary(),
+      storyFormatPlan: createStoryFormatPlan({ suggestedSlideCount: 4 }),
+      provider: highMix,
+      persona: "wry coworker",
+      roastLevel: 2,
+      koreanEnglishMix: "high"
+    });
+    await generateDiaryDraft({
+      activitySummary: createActivitySummary(),
+      storyFormatPlan: createStoryFormatPlan({ suggestedSlideCount: 4 }),
+      provider: lowMix,
+      persona: "wry coworker",
+      roastLevel: 2,
+      koreanEnglishMix: "low"
+    });
+
+    const highInstructions = highMix.requests[0]?.instructions ?? "";
+    const lowInstructions = lowMix.requests[0]?.instructions ?? "";
+
+    expect(highInstructions).toContain('Korean-English mix setting is "high"');
+    expect(lowInstructions).toContain('Korean-English mix setting is "low"');
+    expect(highInstructions).not.toBe(lowInstructions);
+  });
+
   it("still rejects quiet-day fabrication dressed up as universal framing (UNC-251)", async () => {
     await expect(
       generateDiaryDraft({
@@ -371,6 +400,58 @@ describe("diary generator", () => {
 
     expect(draft.metadata.activityLevel).toBe("none");
     expect(draft.slides).toHaveLength(3);
+  });
+
+  it("rejects quiet-day fabrication written entirely in Korean (UNC-251)", async () => {
+    await expect(
+      generateDiaryDraft({
+        activitySummary: createActivitySummary({
+          activityLevel: "none",
+          dominantTheme: "quiet",
+          projects: [],
+          commitSignals: {
+            totalCommits: 0,
+            filesChanged: 0,
+            insertions: 0,
+            deletions: 0,
+            subjects: [],
+            themes: []
+          },
+          smallWins: [],
+          unfinishedThreads: []
+        }),
+        storyFormatPlan: createStoryFormatPlan({ suggestedSlideCount: 3 }),
+        provider: new MockAiProvider({
+          response: createProviderDraft({
+            slides: [
+              {
+                index: 1,
+                title: "좋은 협업 팁 ①",
+                body: "누구나 아는 그 순간이 왔습니다. 오늘도 조용히 커밋 세 개를 올렸습니다.",
+                visualMood: "still terminal"
+              },
+              {
+                index: 2,
+                title: "보편적인 오후",
+                body: "모두가 겪는 일입니다. 아무 말 없이 버그를 고쳤습니다.",
+                visualMood: "waiting cursor"
+              },
+              {
+                index: 3,
+                title: "마무리",
+                body: "내일의 기록을 기다리는 쪽으로 닫았다.",
+                visualMood: "small note"
+              }
+            ]
+          })
+        }),
+        persona: "wry coworker",
+        roastLevel: 2
+      })
+    ).rejects.toMatchObject({
+      code: "malformed-response",
+      message: "AI provider fabricated quiet-day activity."
+    });
   });
 
   it("generates a quiet-day request without fabricating activity", async () => {
@@ -1047,6 +1128,43 @@ describe("caption generator", () => {
 
     expect(result.caption).toContain("기록이 없는 날");
     expect(result.hashtags).toHaveLength(2);
+  });
+
+  it("rejects a quiet-day caption whose fabrication is written entirely in Korean (UNC-251)", async () => {
+    const quietSummary = createActivitySummary({
+      activityLevel: "none",
+      dominantTheme: "quiet",
+      projects: [],
+      commitSignals: {
+        totalCommits: 0,
+        filesChanged: 0,
+        insertions: 0,
+        deletions: 0,
+        subjects: [],
+        themes: []
+      },
+      smallWins: [],
+      unfinishedThreads: []
+    });
+
+    await expect(
+      generateCaption({
+        activitySummary: quietSummary,
+        provider: new MockAiProvider({
+          response: {
+            caption:
+              "좋은 하루 관리 팁 ①\n\n누구나 겪는 그 오후에\n버그 하나를 조용히 고쳤습니다.\n\n아무도 모르게요.",
+            hashtags: ["#Uncommitted", "#개발일기"]
+          }
+        }),
+        persona: captionTestPersona,
+        roastLevel: 2,
+        moodPlan: captionTestMoodPlan
+      })
+    ).rejects.toMatchObject({
+      code: "malformed-response",
+      message: "AI provider fabricated quiet-day activity in caption."
+    });
   });
 
   it("buildCaptionInstructions derives identity/voice/humor from the persona and changes across presets", () => {
