@@ -197,6 +197,893 @@ describe("diary generator", () => {
     );
   });
 
+  it("diary instructions carry the altitude rule with its no-fabrication boundary (UNC-248)", async () => {
+    const provider = new MockAiProvider({
+      response: createProviderDraft()
+    });
+
+    await generateDiaryDraft({
+      activitySummary: createActivitySummary(),
+      storyFormatPlan: createStoryFormatPlan({ suggestedSlideCount: 4 }),
+      provider,
+      persona: "wry coworker",
+      roastLevel: 2
+    });
+
+    const instructions = provider.requests[0]?.instructions ?? "";
+    expect(instructions).toContain("Altitude rule: raise the framing, never the facts");
+    expect(instructions).toContain(
+      "instead of naming the specific ticket, screen, module, or file"
+    );
+    expect(instructions).toContain("Raising altitude means rewording the same event");
+    expect(instructions).toContain(
+      "do not invent work, drama, stakes, or consequences the activity summary does not support"
+    );
+  });
+
+  it("diary instructions carry the deadpan frame without weakening the human boundary (UNC-249)", async () => {
+    const provider = new MockAiProvider({
+      response: createProviderDraft()
+    });
+
+    await generateDiaryDraft({
+      activitySummary: createActivitySummary(),
+      storyFormatPlan: createStoryFormatPlan({ suggestedSlideCount: 4 }),
+      provider,
+      persona: "wry coworker",
+      roastLevel: 2
+    });
+
+    const instructions = provider.requests[0]?.instructions ?? "";
+    expect(instructions).toContain(
+      "When the humor lands as irony, deliver it straight-faced, as if stating sincere advice or an obvious truth"
+    );
+    expect(instructions).toContain("Never signal that you are joking");
+    expect(instructions).toContain(
+      "It never becomes irony aimed at the user's identity, ability, appearance, mental health, personal value, or real life"
+    );
+    // 기존 로스트 경계가 그대로 남아 있어야 한다
+    expect(instructions).toContain(
+      "Never attack the user's identity, ability, appearance, mental health, personal value, or real life"
+    );
+  });
+
+  it("diary instructions gain the Korean-surface rule and the internal-identifier policy (UNC-250)", async () => {
+    const provider = new MockAiProvider({
+      response: createProviderDraft()
+    });
+
+    await generateDiaryDraft({
+      activitySummary: createActivitySummary(),
+      storyFormatPlan: createStoryFormatPlan({ suggestedSlideCount: 4 }),
+      provider,
+      persona: "wry coworker",
+      roastLevel: 2
+    });
+
+    const instructions = provider.requests[0]?.instructions ?? "";
+    expect(instructions).toContain(
+      "Write the reader-facing surface — story title, slide titles, slide bodies, altText, and caption — in Korean"
+    );
+    expect(instructions).toContain("hashtag tokens (anything starting with #) may stay in English");
+    expect(instructions).toContain("CI, PR, API, UI, AI, JSON, URL");
+    expect(instructions).toContain("Internal identifiers must never appear");
+    expect(instructions).toContain("ticket keys such as UNC-123");
+  });
+
+  it("story instructions name the persona's Korean-English mix so the knob is not a dead claim (UNC-250)", async () => {
+    const highMix = new MockAiProvider({ response: createProviderDraft() });
+    const lowMix = new MockAiProvider({ response: createProviderDraft() });
+
+    await generateDiaryDraft({
+      activitySummary: createActivitySummary(),
+      storyFormatPlan: createStoryFormatPlan({ suggestedSlideCount: 4 }),
+      provider: highMix,
+      persona: "wry coworker",
+      roastLevel: 2,
+      koreanEnglishMix: "high"
+    });
+    await generateDiaryDraft({
+      activitySummary: createActivitySummary(),
+      storyFormatPlan: createStoryFormatPlan({ suggestedSlideCount: 4 }),
+      provider: lowMix,
+      persona: "wry coworker",
+      roastLevel: 2,
+      koreanEnglishMix: "low"
+    });
+
+    const highInstructions = highMix.requests[0]?.instructions ?? "";
+    const lowInstructions = lowMix.requests[0]?.instructions ?? "";
+
+    expect(highInstructions).toContain('Korean-English mix setting is "high"');
+    expect(lowInstructions).toContain('Korean-English mix setting is "low"');
+    expect(highInstructions).not.toBe(lowInstructions);
+  });
+
+  it("still rejects quiet-day fabrication dressed up as universal framing (UNC-251)", async () => {
+    await expect(
+      generateDiaryDraft({
+        activitySummary: createActivitySummary({
+          activityLevel: "none",
+          dominantTheme: "quiet",
+          projects: [],
+          commitSignals: {
+            totalCommits: 0,
+            filesChanged: 0,
+            insertions: 0,
+            deletions: 0,
+            subjects: [],
+            themes: []
+          },
+          smallWins: [],
+          unfinishedThreads: []
+        }),
+        storyFormatPlan: createStoryFormatPlan({ suggestedSlideCount: 3 }),
+        provider: new MockAiProvider({
+          response: createProviderDraft({
+            slides: [
+              {
+                index: 1,
+                title: "좋은 협업 팁 ①",
+                body: "누구나 아는 그 순간이 왔습니다. 오늘도 조용히 3 commits 를 밀어 넣는 하루.",
+                visualMood: "still terminal"
+              },
+              {
+                index: 2,
+                title: "보편적인 오후",
+                body: "모두가 겪는 일입니다. 아무 말 없이 버그가 fixed 되어 있는 오후 말입니다.",
+                visualMood: "waiting cursor"
+              },
+              {
+                index: 3,
+                title: "마무리",
+                body: "내일의 기록을 기다리는 쪽으로 닫았다.",
+                visualMood: "small note"
+              }
+            ]
+          })
+        }),
+        persona: "wry coworker",
+        roastLevel: 2
+      })
+    ).rejects.toMatchObject({
+      code: "malformed-response",
+      message: "AI provider fabricated quiet-day activity."
+    });
+  });
+
+  it("accepts a quiet day framed universally when no work is claimed (UNC-251)", async () => {
+    const draft = await generateDiaryDraft({
+      activitySummary: createActivitySummary({
+        activityLevel: "none",
+        dominantTheme: "quiet",
+        projects: [],
+        commitSignals: {
+          totalCommits: 0,
+          filesChanged: 0,
+          insertions: 0,
+          deletions: 0,
+          subjects: [],
+          themes: []
+        },
+        smallWins: [],
+        unfinishedThreads: []
+      }),
+      storyFormatPlan: createStoryFormatPlan({ suggestedSlideCount: 3 }),
+      provider: new MockAiProvider({
+        response: createProviderDraft({
+          slides: [
+            {
+              index: 1,
+              title: "좋은 생산성 팁 ①",
+              body: "아무것도 기록되지 않은 날을 가지세요. 기록할 게 없다는 것도 하루의 모양입니다.",
+              visualMood: "still terminal"
+            },
+            {
+              index: 2,
+              title: "기다림",
+              body: "누구에게나 있는 그 하루. 커서만 깜빡이고 아무 일도 일어나지 않았습니다.",
+              visualMood: "waiting cursor"
+            },
+            {
+              index: 3,
+              title: "마무리",
+              body: "내일의 기록을 기다리는 쪽으로 닫았습니다.",
+              visualMood: "small note"
+            }
+          ]
+        })
+      }),
+      persona: "wry coworker",
+      roastLevel: 2
+    });
+
+    expect(draft.metadata.activityLevel).toBe("none");
+    expect(draft.slides).toHaveLength(3);
+  });
+
+  it("rejects quiet-day fabrication written entirely in Korean (UNC-251)", async () => {
+    await expect(
+      generateDiaryDraft({
+        activitySummary: createActivitySummary({
+          activityLevel: "none",
+          dominantTheme: "quiet",
+          projects: [],
+          commitSignals: {
+            totalCommits: 0,
+            filesChanged: 0,
+            insertions: 0,
+            deletions: 0,
+            subjects: [],
+            themes: []
+          },
+          smallWins: [],
+          unfinishedThreads: []
+        }),
+        storyFormatPlan: createStoryFormatPlan({ suggestedSlideCount: 3 }),
+        provider: new MockAiProvider({
+          response: createProviderDraft({
+            slides: [
+              {
+                index: 1,
+                title: "좋은 협업 팁 ①",
+                body: "누구나 아는 그 순간이 왔습니다. 오늘도 조용히 커밋 세 개를 올렸습니다.",
+                visualMood: "still terminal"
+              },
+              {
+                index: 2,
+                title: "보편적인 오후",
+                body: "모두가 겪는 일입니다. 아무 말 없이 버그를 고쳤습니다.",
+                visualMood: "waiting cursor"
+              },
+              {
+                index: 3,
+                title: "마무리",
+                body: "내일의 기록을 기다리는 쪽으로 닫았다.",
+                visualMood: "small note"
+              }
+            ]
+          })
+        }),
+        persona: "wry coworker",
+        roastLevel: 2
+      })
+    ).rejects.toMatchObject({
+      code: "malformed-response",
+      message: "AI provider fabricated quiet-day activity."
+    });
+  });
+
+  it("rejects ordinary Korean work claims beyond the fixed-verb examples (UNC-251)", async () => {
+    const claims = [
+      "누구나 아는 그 순간입니다. 오늘도 조용히 기능을 추가했습니다.",
+      "모두가 겪는 오후입니다. 테스트를 작성했습니다.",
+      "그리고 아무 말 없이 PR을 올렸습니다."
+    ];
+
+    for (const claim of claims) {
+      await expect(
+        generateDiaryDraft({
+          activitySummary: createQuietActivitySummary(),
+          storyFormatPlan: createStoryFormatPlan({ suggestedSlideCount: 3 }),
+          provider: new MockAiProvider({
+            response: createProviderDraft({
+              slides: [
+                {
+                  index: 1,
+                  title: "좋은 협업 팁 ①",
+                  body: claim,
+                  visualMood: "still terminal"
+                },
+                {
+                  index: 2,
+                  title: "기다림",
+                  body: "커서만 깜빡이는 오후였습니다.",
+                  visualMood: "waiting cursor"
+                },
+                {
+                  index: 3,
+                  title: "마무리",
+                  body: "내일의 기록을 기다리는 쪽으로 닫았다.",
+                  visualMood: "small note"
+                }
+              ]
+            })
+          }),
+          persona: "wry coworker",
+          roastLevel: 2
+        })
+      ).rejects.toMatchObject({
+        code: "malformed-response",
+        message: "AI provider fabricated quiet-day activity."
+      });
+    }
+  });
+
+  it("accepts a quiet day that denies work using Korean completion stems (UNC-251)", async () => {
+    const draft = await generateDiaryDraft({
+      activitySummary: createQuietActivitySummary(),
+      storyFormatPlan: createStoryFormatPlan({ suggestedSlideCount: 3 }),
+      provider: new MockAiProvider({
+        response: createProviderDraft({
+          slides: [
+            {
+              index: 1,
+              title: "좋은 생산성 팁 ①",
+              body: "고쳤다고 할 것도 없었습니다. 그런 하루도 하루의 모양입니다.",
+              visualMood: "still terminal"
+            },
+            {
+              index: 2,
+              title: "기다림",
+              body: "아무것도 해결했다고 말할 수 없습니다.",
+              visualMood: "waiting cursor"
+            },
+            {
+              index: 3,
+              title: "마무리",
+              body: "무언가를 추가했다고 우길 생각은 없습니다.",
+              visualMood: "small note"
+            }
+          ]
+        })
+      }),
+      persona: "wry coworker",
+      roastLevel: 2
+    });
+
+    expect(draft.slides).toHaveLength(3);
+  });
+
+  it("rejects a claimed completion even when a later clause denies other work (UNC-251)", async () => {
+    await expect(
+      generateDiaryDraft({
+        activitySummary: createQuietActivitySummary(),
+        storyFormatPlan: createStoryFormatPlan({ suggestedSlideCount: 3 }),
+        provider: new MockAiProvider({
+          response: createProviderDraft({
+            slides: [
+              {
+                index: 1,
+                title: "좋은 협업 팁 ①",
+                body: "기능을 추가했지만 테스트는 완료하지 못했습니다.",
+                visualMood: "still terminal"
+              },
+              {
+                index: 2,
+                title: "기다림",
+                body: "커서만 깜빡이는 오후였습니다.",
+                visualMood: "waiting cursor"
+              },
+              {
+                index: 3,
+                title: "마무리",
+                body: "내일의 기록을 기다리는 쪽으로 닫았다.",
+                visualMood: "small note"
+              }
+            ]
+          })
+        }),
+        persona: "wry coworker",
+        roastLevel: 2
+      })
+    ).rejects.toMatchObject({
+      code: "malformed-response",
+      message: "AI provider fabricated quiet-day activity."
+    });
+  });
+
+  it("separates finishing the day from finishing work (UNC-251)", async () => {
+    const closeTheDay = await generateDiaryDraft({
+      activitySummary: createQuietActivitySummary(),
+      storyFormatPlan: createStoryFormatPlan({ suggestedSlideCount: 3 }),
+      provider: new MockAiProvider({
+        response: createProviderDraft({
+          slides: [
+            {
+              index: 1,
+              title: "좋은 생산성 팁 ①",
+              body: "오늘은 조용히 하루를 마쳤습니다.",
+              visualMood: "still terminal"
+            },
+            {
+              index: 2,
+              title: "기다림",
+              body: "커서만 깜빡이는 오후였습니다.",
+              visualMood: "waiting cursor"
+            },
+            {
+              index: 3,
+              title: "마무리",
+              body: "내일의 기록을 기다리는 쪽으로 닫았다.",
+              visualMood: "small note"
+            }
+          ]
+        })
+      }),
+      persona: "wry coworker",
+      roastLevel: 2
+    });
+
+    expect(closeTheDay.slides).toHaveLength(3);
+
+    await expect(
+      generateDiaryDraft({
+        activitySummary: createQuietActivitySummary(),
+        storyFormatPlan: createStoryFormatPlan({ suggestedSlideCount: 3 }),
+        provider: new MockAiProvider({
+          response: createProviderDraft({
+            slides: [
+              {
+                index: 1,
+                title: "좋은 생산성 팁 ①",
+                body: "오늘은 조용히 작업을 마쳤습니다.",
+                visualMood: "still terminal"
+              },
+              {
+                index: 2,
+                title: "기다림",
+                body: "커서만 깜빡이는 오후였습니다.",
+                visualMood: "waiting cursor"
+              },
+              {
+                index: 3,
+                title: "마무리",
+                body: "내일의 기록을 기다리는 쪽으로 닫았다.",
+                visualMood: "small note"
+              }
+            ]
+          })
+        }),
+        persona: "wry coworker",
+        roastLevel: 2
+      })
+    ).rejects.toMatchObject({
+      code: "malformed-response",
+      message: "AI provider fabricated quiet-day activity."
+    });
+  });
+
+  it("does not scan past 으며 into an unrelated denial (UNC-251)", async () => {
+    await expect(
+      generateDiaryDraft({
+        activitySummary: createQuietActivitySummary(),
+        storyFormatPlan: createStoryFormatPlan({ suggestedSlideCount: 3 }),
+        provider: new MockAiProvider({
+          response: createProviderDraft({
+            slides: [
+              {
+                index: 1,
+                title: "좋은 협업 팁 ①",
+                body: "기능을 추가했으며 테스트는 완료하지 못했습니다.",
+                visualMood: "still terminal"
+              },
+              {
+                index: 2,
+                title: "기다림",
+                body: "커서만 깜빡이는 오후였습니다.",
+                visualMood: "waiting cursor"
+              },
+              {
+                index: 3,
+                title: "마무리",
+                body: "내일의 기록을 기다리는 쪽으로 닫았다.",
+                visualMood: "small note"
+              }
+            ]
+          })
+        }),
+        persona: "wry coworker",
+        roastLevel: 2
+      })
+    ).rejects.toMatchObject({
+      code: "malformed-response",
+      message: "AI provider fabricated quiet-day activity."
+    });
+  });
+
+  it("accepts pre-verbal negation such as 안/못 before a completion stem (UNC-251)", async () => {
+    const draft = await generateDiaryDraft({
+      activitySummary: createQuietActivitySummary(),
+      storyFormatPlan: createStoryFormatPlan({ suggestedSlideCount: 3 }),
+      provider: new MockAiProvider({
+        response: createProviderDraft({
+          slides: [
+            {
+              index: 1,
+              title: "좋은 생산성 팁 ①",
+              body: "오늘은 코드를 안 만들었습니다.",
+              visualMood: "still terminal"
+            },
+            {
+              index: 2,
+              title: "기다림",
+              body: "버그는 못 고쳤습니다. 볼 버그가 없었으니까요.",
+              visualMood: "waiting cursor"
+            },
+            {
+              index: 3,
+              title: "마무리",
+              body: "내일의 기록을 기다리는 쪽으로 닫았다.",
+              visualMood: "small note"
+            }
+          ]
+        })
+      }),
+      persona: "wry coworker",
+      roastLevel: 2
+    });
+
+    expect(draft.slides).toHaveLength(3);
+  });
+
+  it("keeps a claim when a later clause denies different work, whatever the connective (UNC-251)", async () => {
+    for (const claim of [
+      "기능을 추가했기에 테스트까지는 못했습니다.",
+      "기능을 추가했으므로 테스트는 하지 못했습니다.",
+      "기능을 추가했는데 테스트는 못 했습니다."
+    ]) {
+      await expect(
+        generateDiaryDraft({
+          activitySummary: createQuietActivitySummary(),
+          storyFormatPlan: createStoryFormatPlan({ suggestedSlideCount: 3 }),
+          provider: new MockAiProvider({
+            response: createProviderDraft({
+              slides: [
+                {
+                  index: 1,
+                  title: "좋은 협업 팁 ①",
+                  body: claim,
+                  visualMood: "still terminal"
+                },
+                {
+                  index: 2,
+                  title: "기다림",
+                  body: "커서만 깜빡이는 오후였습니다.",
+                  visualMood: "waiting cursor"
+                },
+                {
+                  index: 3,
+                  title: "마무리",
+                  body: "내일의 기록을 기다리는 쪽으로 닫았다.",
+                  visualMood: "small note"
+                }
+              ]
+            })
+          }),
+          persona: "wry coworker",
+          roastLevel: 2
+        })
+      ).rejects.toMatchObject({
+        code: "malformed-response",
+        message: "AI provider fabricated quiet-day activity."
+      });
+    }
+  });
+
+  it("exempts negation only when it governs the completion stem itself (UNC-251)", async () => {
+    // `안`이 앞 동사(보고)를 부정할 뿐 `짰`을 부정하지 않으므로 주장 그대로다.
+    await expect(
+      generateDiaryDraft({
+        activitySummary: createQuietActivitySummary(),
+        storyFormatPlan: createStoryFormatPlan({ suggestedSlideCount: 3 }),
+        provider: new MockAiProvider({
+          response: createProviderDraft({
+            slides: [
+              {
+                index: 1,
+                title: "좋은 협업 팁 ①",
+                body: "코드 안 보고 짰습니다.",
+                visualMood: "still terminal"
+              },
+              {
+                index: 2,
+                title: "기다림",
+                body: "커서만 깜빡이는 오후였습니다.",
+                visualMood: "waiting cursor"
+              },
+              {
+                index: 3,
+                title: "마무리",
+                body: "내일의 기록을 기다리는 쪽으로 닫았다.",
+                visualMood: "small note"
+              }
+            ]
+          })
+        }),
+        persona: "wry coworker",
+        roastLevel: 2
+      })
+    ).rejects.toMatchObject({
+      code: "malformed-response",
+      message: "AI provider fabricated quiet-day activity."
+    });
+
+    const denied = await generateDiaryDraft({
+      activitySummary: createQuietActivitySummary(),
+      storyFormatPlan: createStoryFormatPlan({ suggestedSlideCount: 3 }),
+      provider: new MockAiProvider({
+        response: createProviderDraft({
+          slides: [
+            {
+              index: 1,
+              title: "좋은 생산성 팁 ①",
+              body: "커밋 세 개도 안 올렸습니다.",
+              visualMood: "still terminal"
+            },
+            {
+              index: 2,
+              title: "기다림",
+              body: "고쳤을 리가 없습니다. 볼 버그가 없었으니까요.",
+              visualMood: "waiting cursor"
+            },
+            {
+              index: 3,
+              title: "마무리",
+              body: "내일의 기록을 기다리는 쪽으로 닫았다.",
+              visualMood: "small note"
+            }
+          ]
+        })
+      }),
+      persona: "wry coworker",
+      roastLevel: 2
+    });
+
+    expect(denied.slides).toHaveLength(3);
+  });
+
+  it("rejects commit-count claims completed with 하다 (UNC-251)", async () => {
+    for (const claim of [
+      "커밋 세 개를 했습니다.",
+      "커밋을 세 개 했습니다.",
+      "세 개의 커밋을 했습니다."
+    ]) {
+      await expect(
+        generateDiaryDraft({
+          activitySummary: createQuietActivitySummary(),
+          storyFormatPlan: createStoryFormatPlan({ suggestedSlideCount: 3 }),
+          provider: new MockAiProvider({
+            response: createProviderDraft({
+              slides: [
+                {
+                  index: 1,
+                  title: "좋은 협업 팁 ①",
+                  body: claim,
+                  visualMood: "still terminal"
+                },
+                {
+                  index: 2,
+                  title: "기다림",
+                  body: "커서만 깜빡이는 오후였습니다.",
+                  visualMood: "waiting cursor"
+                },
+                {
+                  index: 3,
+                  title: "마무리",
+                  body: "내일의 기록을 기다리는 쪽으로 닫았다.",
+                  visualMood: "small note"
+                }
+              ]
+            })
+          }),
+          persona: "wry coworker",
+          roastLevel: 2
+        })
+      ).rejects.toMatchObject({
+        code: "malformed-response",
+        message: "AI provider fabricated quiet-day activity."
+      });
+    }
+  });
+
+  it("exempts a reported claim only when the denial governs it (UNC-251)", async () => {
+    // 인용된 주장을 실제로 기록했다고 단언하므로, 뒤 절의 부정은 다른 일에 걸린다.
+    await expect(
+      generateDiaryDraft({
+        activitySummary: createQuietActivitySummary(),
+        storyFormatPlan: createStoryFormatPlan({ suggestedSlideCount: 3 }),
+        provider: new MockAiProvider({
+          response: createProviderDraft({
+            slides: [
+              {
+                index: 1,
+                title: "좋은 협업 팁 ①",
+                body: "기능을 추가했다고 기록했지만 테스트는 못했습니다.",
+                visualMood: "still terminal"
+              },
+              {
+                index: 2,
+                title: "기다림",
+                body: "커서만 깜빡이는 오후였습니다.",
+                visualMood: "waiting cursor"
+              },
+              {
+                index: 3,
+                title: "마무리",
+                body: "내일의 기록을 기다리는 쪽으로 닫았다.",
+                visualMood: "small note"
+              }
+            ]
+          })
+        }),
+        persona: "wry coworker",
+        roastLevel: 2
+      })
+    ).rejects.toMatchObject({
+      code: "malformed-response",
+      message: "AI provider fabricated quiet-day activity."
+    });
+  });
+
+  it("accepts pre-verbal negation written without a space (UNC-251)", async () => {
+    for (const denial of [
+      "오늘은 커밋 세 개를 안했습니다.",
+      "작업을 안마쳤습니다.",
+      "버그는 못고쳤습니다."
+    ]) {
+      const draft = await generateDiaryDraft({
+        activitySummary: createQuietActivitySummary(),
+        storyFormatPlan: createStoryFormatPlan({ suggestedSlideCount: 3 }),
+        provider: new MockAiProvider({
+          response: createProviderDraft({
+            slides: [
+              {
+                index: 1,
+                title: "좋은 생산성 팁 ①",
+                body: denial,
+                visualMood: "still terminal"
+              },
+              {
+                index: 2,
+                title: "기다림",
+                body: "커서만 깜빡이는 오후였습니다.",
+                visualMood: "waiting cursor"
+              },
+              {
+                index: 3,
+                title: "마무리",
+                body: "내일의 기록을 기다리는 쪽으로 닫았다.",
+                visualMood: "small note"
+              }
+            ]
+          })
+        }),
+        persona: "wry coworker",
+        roastLevel: 2
+      });
+
+      expect(draft.slides).toHaveLength(3);
+    }
+  });
+
+  it("accepts recalling work finished on an earlier day (UNC-251)", async () => {
+    for (const recall of [
+      "지난주에 완료했던 기능이 문득 떠올랐습니다.",
+      "예전에 고쳤던 버그가 떠올랐습니다.",
+      "지난달에 코드를 만들었던 기억만 남아 있었습니다."
+    ]) {
+      const draft = await generateDiaryDraft({
+        activitySummary: createQuietActivitySummary(),
+        storyFormatPlan: createStoryFormatPlan({ suggestedSlideCount: 3 }),
+        provider: new MockAiProvider({
+          response: createProviderDraft({
+            slides: [
+              {
+                index: 1,
+                title: "좋은 생산성 팁 ①",
+                body: recall,
+                visualMood: "still terminal"
+              },
+              {
+                index: 2,
+                title: "기다림",
+                body: "커서만 깜빡이는 오후였습니다.",
+                visualMood: "waiting cursor"
+              },
+              {
+                index: 3,
+                title: "마무리",
+                body: "내일의 기록을 기다리는 쪽으로 닫았다.",
+                visualMood: "small note"
+              }
+            ]
+          })
+        }),
+        persona: "wry coworker",
+        roastLevel: 2
+      });
+
+      expect(draft.slides).toHaveLength(3);
+    }
+  });
+
+  it("accepts an honest zero count on a quiet day (UNC-251)", async () => {
+    for (const zero of [
+      "오늘 기록은 0 commits였습니다.",
+      "커밋 0개를 남겼습니다."
+    ]) {
+      const draft = await generateDiaryDraft({
+        activitySummary: createQuietActivitySummary(),
+        storyFormatPlan: createStoryFormatPlan({ suggestedSlideCount: 3 }),
+        provider: new MockAiProvider({
+          response: createProviderDraft({
+            slides: [
+              {
+                index: 1,
+                title: "좋은 생산성 팁 ①",
+                body: zero,
+                visualMood: "still terminal"
+              },
+              {
+                index: 2,
+                title: "기다림",
+                body: "커서만 깜빡이는 오후였습니다.",
+                visualMood: "waiting cursor"
+              },
+              {
+                index: 3,
+                title: "마무리",
+                body: "내일의 기록을 기다리는 쪽으로 닫았다.",
+                visualMood: "small note"
+              }
+            ]
+          })
+        }),
+        persona: "wry coworker",
+        roastLevel: 2
+      });
+
+      expect(draft.slides).toHaveLength(3);
+    }
+  });
+
+  it("keeps rejecting the claims the recall and zero-count exceptions sit next to (UNC-251)", async () => {
+    // 회상형(던)·0 수량 예외가 주장 자체까지 풀어주지 않는지 지킨다.
+    for (const claim of [
+      "지난주에 완료했습니다.",
+      "예전에 고쳤습니다.",
+      "커밋 10개를 남겼습니다.",
+      "커밋 세 개를 했습니다."
+    ]) {
+      await expect(
+        generateDiaryDraft({
+          activitySummary: createQuietActivitySummary(),
+          storyFormatPlan: createStoryFormatPlan({ suggestedSlideCount: 3 }),
+          provider: new MockAiProvider({
+            response: createProviderDraft({
+              slides: [
+                {
+                  index: 1,
+                  title: "좋은 생산성 팁 ①",
+                  body: claim,
+                  visualMood: "still terminal"
+                },
+                {
+                  index: 2,
+                  title: "기다림",
+                  body: "커서만 깜빡이는 오후였습니다.",
+                  visualMood: "waiting cursor"
+                },
+                {
+                  index: 3,
+                  title: "마무리",
+                  body: "내일의 기록을 기다리는 쪽으로 닫았다.",
+                  visualMood: "small note"
+                }
+              ]
+            })
+          }),
+          persona: "wry coworker",
+          roastLevel: 2
+        })
+      ).rejects.toMatchObject({
+        code: "malformed-response",
+        message: "AI provider fabricated quiet-day activity."
+      });
+    }
+  });
+
   it("generates a quiet-day request without fabricating activity", async () => {
     const provider = new MockAiProvider({
       response: createProviderDraft({
@@ -689,6 +1576,227 @@ describe("caption generator", () => {
     expect(instructions).toContain("조용한 날");
   });
 
+  it("buildCaptionInstructions carries the altitude rule with its no-fabrication boundary (UNC-248)", () => {
+    const instructions = buildCaptionInstructions({
+      quiet: false,
+      persona: captionTestPersona,
+      moodPlan: captionTestMoodPlan
+    });
+
+    expect(instructions).toContain("Altitude rule: raise the framing, never the facts");
+    expect(instructions).toContain(
+      "instead of naming the specific ticket, screen, module, or file"
+    );
+    // 보편화가 지어내기로 번지지 않도록 같은 자리에 경계를 명시한다
+    expect(instructions).toContain("Raising altitude means rewording the same event");
+    expect(instructions).toContain(
+      "do not invent work, drama, stakes, or consequences the activity summary does not support"
+    );
+  });
+
+  it("buildCaptionInstructions carries the deadpan frame without weakening the human boundary (UNC-249)", () => {
+    const instructions = buildCaptionInstructions({
+      quiet: false,
+      persona: captionTestPersona,
+      moodPlan: captionTestMoodPlan
+    });
+
+    expect(instructions).toContain(
+      "When the humor lands as irony, deliver it straight-faced, as if stating sincere advice or an obvious truth"
+    );
+    expect(instructions).toContain("Never signal that you are joking");
+    expect(instructions).toContain(
+      "It never becomes irony aimed at the user's identity, ability, appearance, mental health, personal value, or real life"
+    );
+    // 기존 로스트 경계가 그대로 남아 있어야 한다
+    expect(instructions).toContain(
+      "Never insult ability, worth, personality, identity, mental health, or real life"
+    );
+  });
+
+  it("buildCaptionInstructions widens English suppression and carries the internal-identifier policy (UNC-250)", () => {
+    const instructions = buildCaptionInstructions({
+      quiet: false,
+      persona: captionTestPersona,
+      moodPlan: captionTestMoodPlan
+    });
+
+    // 일반 영어 명사구 억제로 확대
+    expect(instructions).toContain(
+      "Write the reader-facing surface — story title, slide titles, slide bodies, altText, and caption — in Korean"
+    );
+    expect(instructions).toContain("English noun phrase that has a natural Korean equivalent");
+    expect(instructions).toContain("working tree");
+    expect(instructions).toContain("fire-and-forget");
+
+    // 해시태그·통용 약어 예외 명시
+    expect(instructions).toContain("hashtag tokens (anything starting with #) may stay in English");
+    expect(instructions).toContain("CI, PR, API, UI, AI, JSON, URL");
+
+    // 내부 식별자 전면 마스킹 정책 (UNC-247 결정)
+    expect(instructions).toContain("Internal identifiers must never appear");
+    expect(instructions).toContain("ticket keys such as UNC-123");
+    expect(instructions).toContain("FeedbackModal");
+
+    // 기존 좁은 규칙이 넓혀진 형태로 남아 있다
+    expect(instructions).toContain(
+      "Translate developer jargon and any project-internal English noun phrase"
+    );
+    expect(instructions).toContain(
+      "Do not leave raw jargon or untranslated English noun phrases"
+    );
+  });
+
+  it("keeps the altitude, deadpan, and Korean-surface rule blocks in sync across both prompts (UNC-234)", async () => {
+    const captionInstructions = buildCaptionInstructions({
+      quiet: false,
+      persona: captionTestPersona,
+      moodPlan: captionTestMoodPlan
+    });
+
+    const provider = new MockAiProvider({
+      response: createProviderDraft()
+    });
+
+    await generateDiaryDraft({
+      activitySummary: createActivitySummary(),
+      storyFormatPlan: createStoryFormatPlan({ suggestedSlideCount: 4 }),
+      provider,
+      persona: "wry coworker",
+      roastLevel: 2
+    });
+
+    const diaryInstructions = provider.requests[0]?.instructions ?? "";
+
+    const sharedRuleLines = [
+      // ALTITUDE_RULE_LINES
+      "Altitude rule: raise the framing, never the facts. Describe the work you were given as a situation any developer would recognize, instead of naming the specific ticket, screen, module, or file it happened in.",
+      "Raising altitude means rewording the same event. It never means adding one: do not invent work, drama, stakes, or consequences the activity summary does not support. Universal does not mean vague: the framing must still be specific enough that only today's work fits it. If the line could be published unchanged on any other day, it is too high.",
+      // DEADPAN_FRAME_LINES
+      "When the humor lands as irony, deliver it straight-faced, as if stating sincere advice or an obvious truth. The humor comes from the gap between the calm delivery and the actual situation.",
+      "Never signal that you are joking: no winking and no explaining the bit.",
+      "The deadpan frame targets situations, tools, and workflows only. It never becomes irony aimed at the user's identity, ability, appearance, mental health, personal value, or real life.",
+      // KOREAN_SURFACE_LINES
+      "Write the reader-facing surface — story title, slide titles, slide bodies, altText, and caption — in Korean. Any English noun phrase that has a natural Korean equivalent must be written in Korean instead — for example \"working tree\", \"fire-and-forget\", \"boundary tape\", \"release-shaped moment\" should be expressed as Korean, not printed in English.",
+      "Exceptions: hashtag tokens (anything starting with #) may stay in English, and widely used abbreviations may stay as-is: CI, PR, API, UI, AI, JSON, URL — the abbreviation only, never a specific number or key attached to it. Public tool, language, and platform names such as Git, TypeScript, or Instagram are also allowed. The persona's Korean-English mix setting governs how freely these allowed English tokens appear; it never licenses untranslated internal or translatable noun phrases.",
+      "Internal identifiers must never appear: ticket keys such as UNC-123, internal screen, module, class, or file names such as FeedbackModal or diary-generator.ts, and proper nouns that appear only in internal branch names or PR titles. Reframe them as the universal situation they describe instead of masking them with placeholder text."
+    ];
+
+    for (const line of sharedRuleLines) {
+      expect(captionInstructions).toContain(line);
+      expect(diaryInstructions).toContain(line);
+    }
+  });
+
+  it("still rejects a quiet-day caption that hides fabrication behind universal framing (UNC-251)", async () => {
+    const quietSummary = createActivitySummary({
+      activityLevel: "none",
+      dominantTheme: "quiet",
+      projects: [],
+      commitSignals: {
+        totalCommits: 0,
+        filesChanged: 0,
+        insertions: 0,
+        deletions: 0,
+        subjects: [],
+        themes: []
+      },
+      smallWins: [],
+      unfinishedThreads: []
+    });
+
+    await expect(
+      generateCaption({
+        activitySummary: quietSummary,
+        provider: new MockAiProvider({
+          response: {
+            caption:
+              "좋은 하루 관리 팁 ①\n\n누구나 겪는 그 오후에\n버그 하나를 조용히 fixed 해두세요.\n\n아무도 모르게요.",
+            hashtags: ["#Uncommitted", "#개발일기"]
+          }
+        }),
+        persona: captionTestPersona,
+        roastLevel: 2,
+        moodPlan: captionTestMoodPlan
+      })
+    ).rejects.toMatchObject({
+      code: "malformed-response",
+      message: "AI provider fabricated quiet-day activity in caption."
+    });
+  });
+
+  it("accepts a quiet-day caption that stays universal without claiming work (UNC-251)", async () => {
+    const quietSummary = createActivitySummary({
+      activityLevel: "none",
+      dominantTheme: "quiet",
+      projects: [],
+      commitSignals: {
+        totalCommits: 0,
+        filesChanged: 0,
+        insertions: 0,
+        deletions: 0,
+        subjects: [],
+        themes: []
+      },
+      smallWins: [],
+      unfinishedThreads: []
+    });
+
+    const result = await generateCaption({
+      activitySummary: quietSummary,
+      provider: new MockAiProvider({
+        response: {
+          caption:
+            "좋은 생산성 팁 ①\n\n오늘은 아무것도 남기지 마세요.\n기록이 없는 날도 하루의 모양입니다.\n\n저는 옆에서 커서만 봤습니다.",
+          hashtags: ["#Uncommitted", "#개발일기"]
+        }
+      }),
+      persona: captionTestPersona,
+      roastLevel: 2,
+      moodPlan: captionTestMoodPlan
+    });
+
+    expect(result.caption).toContain("기록이 없는 날");
+    expect(result.hashtags).toHaveLength(2);
+  });
+
+  it("rejects a quiet-day caption whose fabrication is written entirely in Korean (UNC-251)", async () => {
+    const quietSummary = createActivitySummary({
+      activityLevel: "none",
+      dominantTheme: "quiet",
+      projects: [],
+      commitSignals: {
+        totalCommits: 0,
+        filesChanged: 0,
+        insertions: 0,
+        deletions: 0,
+        subjects: [],
+        themes: []
+      },
+      smallWins: [],
+      unfinishedThreads: []
+    });
+
+    await expect(
+      generateCaption({
+        activitySummary: quietSummary,
+        provider: new MockAiProvider({
+          response: {
+            caption:
+              "좋은 하루 관리 팁 ①\n\n누구나 겪는 그 오후에\n버그 하나를 조용히 고쳤습니다.\n\n아무도 모르게요.",
+            hashtags: ["#Uncommitted", "#개발일기"]
+          }
+        }),
+        persona: captionTestPersona,
+        roastLevel: 2,
+        moodPlan: captionTestMoodPlan
+      })
+    ).rejects.toMatchObject({
+      code: "malformed-response",
+      message: "AI provider fabricated quiet-day activity in caption."
+    });
+  });
+
   it("buildCaptionInstructions derives identity/voice/humor from the persona and changes across presets", () => {
     const personaA = PERSONA_PRESETS["까칠한 시니어"].persona;
     const personaB = PERSONA_PRESETS["텐션 높은 주니어"].persona;
@@ -816,7 +1924,7 @@ describe("caption generator", () => {
     expect(instructions).toContain("뒤로가기 버튼을 못 믿는 하루");
     expect(instructions).toContain("human stakes");
     expect(instructions).toContain(
-      "Do not leave raw jargon such as PR numbers, version tags, or module/file names"
+      "Do not leave raw jargon or untranslated English noun phrases such as PR numbers, version tags, module/file names, or internal screen names"
     );
   });
 
@@ -1232,6 +2340,25 @@ function createStoryFormatPlan(
     captionStyle: plan.captionStyle,
     doNotMention: plan.doNotMention
   };
+}
+
+/** 조용한 날 정직성 가드를 켜는 최소 요약 (UNC-251). */
+function createQuietActivitySummary(): ActivitySummary {
+  return createActivitySummary({
+    activityLevel: "none",
+    dominantTheme: "quiet",
+    projects: [],
+    commitSignals: {
+      totalCommits: 0,
+      filesChanged: 0,
+      insertions: 0,
+      deletions: 0,
+      subjects: [],
+      themes: []
+    },
+    smallWins: [],
+    unfinishedThreads: []
+  });
 }
 
 function createActivitySummary(
