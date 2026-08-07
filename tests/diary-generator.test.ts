@@ -454,6 +454,87 @@ describe("diary generator", () => {
     });
   });
 
+  it("rejects ordinary Korean work claims beyond the fixed-verb examples (UNC-251)", async () => {
+    const claims = [
+      "누구나 아는 그 순간입니다. 오늘도 조용히 기능을 추가했습니다.",
+      "모두가 겪는 오후입니다. 테스트를 작성했습니다.",
+      "그리고 아무 말 없이 PR을 올렸습니다."
+    ];
+
+    for (const claim of claims) {
+      await expect(
+        generateDiaryDraft({
+          activitySummary: createQuietActivitySummary(),
+          storyFormatPlan: createStoryFormatPlan({ suggestedSlideCount: 3 }),
+          provider: new MockAiProvider({
+            response: createProviderDraft({
+              slides: [
+                {
+                  index: 1,
+                  title: "좋은 협업 팁 ①",
+                  body: claim,
+                  visualMood: "still terminal"
+                },
+                {
+                  index: 2,
+                  title: "기다림",
+                  body: "커서만 깜빡이는 오후였습니다.",
+                  visualMood: "waiting cursor"
+                },
+                {
+                  index: 3,
+                  title: "마무리",
+                  body: "내일의 기록을 기다리는 쪽으로 닫았다.",
+                  visualMood: "small note"
+                }
+              ]
+            })
+          }),
+          persona: "wry coworker",
+          roastLevel: 2
+        })
+      ).rejects.toMatchObject({
+        code: "malformed-response",
+        message: "AI provider fabricated quiet-day activity."
+      });
+    }
+  });
+
+  it("accepts a quiet day that denies work using Korean completion stems (UNC-251)", async () => {
+    const draft = await generateDiaryDraft({
+      activitySummary: createQuietActivitySummary(),
+      storyFormatPlan: createStoryFormatPlan({ suggestedSlideCount: 3 }),
+      provider: new MockAiProvider({
+        response: createProviderDraft({
+          slides: [
+            {
+              index: 1,
+              title: "좋은 생산성 팁 ①",
+              body: "고쳤다고 할 것도 없었습니다. 그런 하루도 하루의 모양입니다.",
+              visualMood: "still terminal"
+            },
+            {
+              index: 2,
+              title: "기다림",
+              body: "아무것도 해결했다고 말할 수 없습니다.",
+              visualMood: "waiting cursor"
+            },
+            {
+              index: 3,
+              title: "마무리",
+              body: "무언가를 추가했다고 우길 생각은 없습니다.",
+              visualMood: "small note"
+            }
+          ]
+        })
+      }),
+      persona: "wry coworker",
+      roastLevel: 2
+    });
+
+    expect(draft.slides).toHaveLength(3);
+  });
+
   it("generates a quiet-day request without fabricating activity", async () => {
     const provider = new MockAiProvider({
       response: createProviderDraft({
@@ -1710,6 +1791,25 @@ function createStoryFormatPlan(
     captionStyle: plan.captionStyle,
     doNotMention: plan.doNotMention
   };
+}
+
+/** 조용한 날 정직성 가드를 켜는 최소 요약 (UNC-251). */
+function createQuietActivitySummary(): ActivitySummary {
+  return createActivitySummary({
+    activityLevel: "none",
+    dominantTheme: "quiet",
+    projects: [],
+    commitSignals: {
+      totalCommits: 0,
+      filesChanged: 0,
+      insertions: 0,
+      deletions: 0,
+      subjects: [],
+      themes: []
+    },
+    smallWins: [],
+    unfinishedThreads: []
+  });
 }
 
 function createActivitySummary(

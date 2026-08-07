@@ -761,18 +761,106 @@ function assertSlideCount(draft: DiaryDraft): void {
   }
 }
 
+/** 영어 표면에 남은 작업 주장. 기존 탐지 범위를 그대로 유지한다. */
+const englishWorkClaimPattern =
+  /\b(?:\d+\s+commits?|fixed|implemented|shipped|built|released|merged|debugged)\b/i;
+
 /**
- * 조용한 날 조작 탐지 패턴 (UNC-251). 스토리 가드와 캡션 가드가 같은 패턴을
- * 쓰도록 한 곳에서만 정의한다.
+ * 작업 완료를 단언하는 한자어 동작명사 (UNC-251). 아래 어미와 결합해
+ * 능동("배포했다")·피동("배포됐다")·문어체("배포하였다")를 한 번에 덮으므로,
+ * 개별 활용형을 일일이 나열하지 않아도 흔한 작업 주장이 걸린다.
  *
- * 한국어 절이 필요한 이유: `KOREAN_SURFACE_LINES`가 독자용 표면을 한국어로
- * 강제하므로, 영어 동사만 보는 탐지기는 "버그를 고쳤습니다" 같은 조작을
- * 그대로 통과시킨다. 한글에는 `\b` 단어 경계가 잡히지 않으므로 영어 절에만
- * `\b`를 두고, 한국어는 "이미 해냈다"를 단언하는 완료형 어간으로만 좁게
- * 매칭한다 — 부정형("고치지 않았다")과 미완형은 어간이 달라 걸리지 않는다.
+ * 조용한 날에도 정직하게 쓸 수 있는 동사(정리하다, 확인하다, 생각하다 등)는
+ * 일부러 넣지 않았다 — 이 가드는 실패 시 생성을 중단시키므로 오탐 비용이 크다.
  */
-const quietDayFabricationPattern =
-  /\b(?:\d+\s+commits?|fixed|implemented|shipped|built|released|merged|debugged)\b|커밋\s*(?:\d+|한|두|세|네|다섯|여섯|일곱|여덟|아홉|열)\s*개|(?:\d+|한|두|세|네|다섯|여섯|일곱|여덟|아홉|열)\s*개의?\s*커밋|고쳤|수정했|구현했|배포했|출시했|머지했|병합했|커밋했|디버깅했|해결했/i;
+const koreanWorkClaimNouns = [
+  "추가",
+  "작성",
+  "수정",
+  "구현",
+  "배포",
+  "출시",
+  "해결",
+  "처리",
+  "완료",
+  "완성",
+  "개선",
+  "삭제",
+  "제거",
+  "도입",
+  "적용",
+  "반영",
+  "테스트",
+  "디버깅",
+  "리팩터링",
+  "리팩토링",
+  "머지",
+  "병합",
+  "커밋",
+  "푸시",
+  "릴리스",
+  "마이그레이션",
+  "검증"
+] as const;
+
+/** 한자어 동작명사와 결합하지 않는 고유어 완료형. */
+const koreanNativeWorkClaimStems = [
+  "고쳐졌",
+  "고쳤",
+  "만들어졌",
+  "만들었",
+  "올렸",
+  "끝냈",
+  "마쳤",
+  "짰"
+] as const;
+
+const koreanCountWord = "\\d+|한|두|세|네|다섯|여섯|일곱|여덟|아홉|열";
+
+/**
+ * 조용한 날 한국어 작업 주장 (UNC-251). `KOREAN_SURFACE_LINES`가 독자용
+ * 표면을 한국어로 강제하므로, 영어 동사만 보는 탐지기로는 "버그를 고쳤습니다"
+ * 같은 조작이 그대로 통과한다. 한글에는 `\b` 단어 경계가 잡히지 않아 어간과
+ * 어미 결합으로 범위를 잡는다.
+ */
+const koreanWorkClaimPattern = new RegExp(
+  [
+    `(?:${koreanWorkClaimNouns.join("|")})(?:했|됐|되었|하였)`,
+    koreanNativeWorkClaimStems.join("|"),
+    `커밋\\s*(?:${koreanCountWord})\\s*개`,
+    `(?:${koreanCountWord})\\s*개의?\\s*커밋`
+  ].join("|"),
+  "g"
+);
+
+/**
+ * 완료 어간 뒤에 오는 부정·인용 꼬리표. "고쳤다고 할 것도 없었습니다",
+ * "아무것도 해결했다고 말할 수 없습니다"처럼 **작업이 없었음을 인정하는**
+ * 자연스러운 한국어를 조작으로 오인하지 않기 위해 필요하다.
+ *
+ * 같은 문장 안에서 어간 **뒤**에 부정 표지가 오면 주장으로 보지 않는다.
+ * 어간 앞의 부정("없는 버그를 고쳤습니다")은 주장 그대로 남는다. 한 문장
+ * 안에서 주장과 부정이 섞이는 경우("고쳤고 더는 문제가 없었다")는 통과하는데,
+ * 생성을 중단시키는 가드인 만큼 오탐보다 미탐 쪽으로 기울인 선택이다.
+ */
+const koreanClaimNegationPattern = /없|않|못|아니/;
+
+function claimsQuietDayWork(text: string): boolean {
+  if (englishWorkClaimPattern.test(text)) {
+    return true;
+  }
+
+  return text
+    .split(/[.!?\n]+/)
+    .some((sentence) =>
+      [...sentence.matchAll(koreanWorkClaimPattern)].some(
+        (match) =>
+          !koreanClaimNegationPattern.test(
+            sentence.slice(match.index + match[0].length)
+          )
+      )
+    );
+}
 
 function assertQuietDayHonesty(
   draft: DiaryDraft,
@@ -782,9 +870,7 @@ function assertQuietDayHonesty(
     return;
   }
 
-  const text = collectDraftText(draft).join("\n");
-
-  if (quietDayFabricationPattern.test(text)) {
+  if (claimsQuietDayWork(collectDraftText(draft).join("\n"))) {
     throw new AiGenerationError(
       "AI provider fabricated quiet-day activity.",
       "malformed-response"
@@ -800,7 +886,7 @@ function assertCaptionQuietDayHonesty(
     return;
   }
 
-  if (quietDayFabricationPattern.test(caption)) {
+  if (claimsQuietDayWork(caption)) {
     throw new AiGenerationError(
       "AI provider fabricated quiet-day activity in caption.",
       "malformed-response"
