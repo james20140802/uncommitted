@@ -916,6 +916,174 @@ describe("diary generator", () => {
     });
   });
 
+  it("accepts pre-verbal negation written without a space (UNC-251)", async () => {
+    for (const denial of [
+      "오늘은 커밋 세 개를 안했습니다.",
+      "작업을 안마쳤습니다.",
+      "버그는 못고쳤습니다."
+    ]) {
+      const draft = await generateDiaryDraft({
+        activitySummary: createQuietActivitySummary(),
+        storyFormatPlan: createStoryFormatPlan({ suggestedSlideCount: 3 }),
+        provider: new MockAiProvider({
+          response: createProviderDraft({
+            slides: [
+              {
+                index: 1,
+                title: "좋은 생산성 팁 ①",
+                body: denial,
+                visualMood: "still terminal"
+              },
+              {
+                index: 2,
+                title: "기다림",
+                body: "커서만 깜빡이는 오후였습니다.",
+                visualMood: "waiting cursor"
+              },
+              {
+                index: 3,
+                title: "마무리",
+                body: "내일의 기록을 기다리는 쪽으로 닫았다.",
+                visualMood: "small note"
+              }
+            ]
+          })
+        }),
+        persona: "wry coworker",
+        roastLevel: 2
+      });
+
+      expect(draft.slides).toHaveLength(3);
+    }
+  });
+
+  it("accepts recalling work finished on an earlier day (UNC-251)", async () => {
+    for (const recall of [
+      "지난주에 완료했던 기능이 문득 떠올랐습니다.",
+      "예전에 고쳤던 버그가 떠올랐습니다.",
+      "지난달에 코드를 만들었던 기억만 남아 있었습니다."
+    ]) {
+      const draft = await generateDiaryDraft({
+        activitySummary: createQuietActivitySummary(),
+        storyFormatPlan: createStoryFormatPlan({ suggestedSlideCount: 3 }),
+        provider: new MockAiProvider({
+          response: createProviderDraft({
+            slides: [
+              {
+                index: 1,
+                title: "좋은 생산성 팁 ①",
+                body: recall,
+                visualMood: "still terminal"
+              },
+              {
+                index: 2,
+                title: "기다림",
+                body: "커서만 깜빡이는 오후였습니다.",
+                visualMood: "waiting cursor"
+              },
+              {
+                index: 3,
+                title: "마무리",
+                body: "내일의 기록을 기다리는 쪽으로 닫았다.",
+                visualMood: "small note"
+              }
+            ]
+          })
+        }),
+        persona: "wry coworker",
+        roastLevel: 2
+      });
+
+      expect(draft.slides).toHaveLength(3);
+    }
+  });
+
+  it("accepts an honest zero count on a quiet day (UNC-251)", async () => {
+    for (const zero of [
+      "오늘 기록은 0 commits였습니다.",
+      "커밋 0개를 남겼습니다."
+    ]) {
+      const draft = await generateDiaryDraft({
+        activitySummary: createQuietActivitySummary(),
+        storyFormatPlan: createStoryFormatPlan({ suggestedSlideCount: 3 }),
+        provider: new MockAiProvider({
+          response: createProviderDraft({
+            slides: [
+              {
+                index: 1,
+                title: "좋은 생산성 팁 ①",
+                body: zero,
+                visualMood: "still terminal"
+              },
+              {
+                index: 2,
+                title: "기다림",
+                body: "커서만 깜빡이는 오후였습니다.",
+                visualMood: "waiting cursor"
+              },
+              {
+                index: 3,
+                title: "마무리",
+                body: "내일의 기록을 기다리는 쪽으로 닫았다.",
+                visualMood: "small note"
+              }
+            ]
+          })
+        }),
+        persona: "wry coworker",
+        roastLevel: 2
+      });
+
+      expect(draft.slides).toHaveLength(3);
+    }
+  });
+
+  it("keeps rejecting the claims the recall and zero-count exceptions sit next to (UNC-251)", async () => {
+    // 회상형(던)·0 수량 예외가 주장 자체까지 풀어주지 않는지 지킨다.
+    for (const claim of [
+      "지난주에 완료했습니다.",
+      "예전에 고쳤습니다.",
+      "커밋 10개를 남겼습니다.",
+      "커밋 세 개를 했습니다."
+    ]) {
+      await expect(
+        generateDiaryDraft({
+          activitySummary: createQuietActivitySummary(),
+          storyFormatPlan: createStoryFormatPlan({ suggestedSlideCount: 3 }),
+          provider: new MockAiProvider({
+            response: createProviderDraft({
+              slides: [
+                {
+                  index: 1,
+                  title: "좋은 생산성 팁 ①",
+                  body: claim,
+                  visualMood: "still terminal"
+                },
+                {
+                  index: 2,
+                  title: "기다림",
+                  body: "커서만 깜빡이는 오후였습니다.",
+                  visualMood: "waiting cursor"
+                },
+                {
+                  index: 3,
+                  title: "마무리",
+                  body: "내일의 기록을 기다리는 쪽으로 닫았다.",
+                  visualMood: "small note"
+                }
+              ]
+            })
+          }),
+          persona: "wry coworker",
+          roastLevel: 2
+        })
+      ).rejects.toMatchObject({
+        code: "malformed-response",
+        message: "AI provider fabricated quiet-day activity."
+      });
+    }
+  });
+
   it("generates a quiet-day request without fabricating activity", async () => {
     const provider = new MockAiProvider({
       response: createProviderDraft({

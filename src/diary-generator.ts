@@ -761,9 +761,12 @@ function assertSlideCount(draft: DiaryDraft): void {
   }
 }
 
-/** 영어 표면에 남은 작업 주장. 기존 탐지 범위를 그대로 유지한다. */
+/**
+ * 영어 표면에 남은 작업 주장. 개수는 1 이상만 주장으로 본다 — "0 commits"는
+ * 활동이 실제로 0인 날의 정확한 서술이지 조작이 아니다.
+ */
 const englishWorkClaimPattern =
-  /\b(?:\d+\s+commits?|fixed|implemented|shipped|built|released|merged|debugged)\b/i;
+  /\b(?:[1-9]\d*\s+commits?|fixed|implemented|shipped|built|released|merged|debugged)\b/i;
 
 /**
  * 작업 완료를 단언하는 한자어 동작명사 (UNC-251). 아래 어미와 결합해
@@ -868,15 +871,35 @@ const koreanCommitCountObjects = [
  */
 const koreanCountBoundClaimStems = [...koreanObjectBoundClaimStems, "했"];
 
+/** 한자어 동작명사에 붙어 완료를 단언하는 어미. */
+const koreanSinoClaimEndings = ["했", "됐", "되었", "하였"] as const;
+
+/**
+ * 완료 어간 뒤에 붙으면 **오늘의 주장이 아니라 지난 일의 회상**이 되는 관형형
+ * 어미. "지난주에 완료했던 기능이 떠올랐습니다"는 조용한 날 프롬프트가 오히려
+ * 권하는 정직한 문장이므로, 어간 직후에 이 어미가 오면 주장으로 세지 않는다.
+ */
+const koreanRecalledClaimSuffix = "(?!(?:었)?던)";
+
 const koreanWorkClaimPattern = new RegExp(
   [
-    `(?:${koreanWorkClaimNouns.join("|")})(?:했|됐|되었|하였)`,
-    koreanNativeWorkClaimStems.join("|"),
-    `(?:${koreanWorkObjects.join("|")})[^.!?\\n]{0,6}?(?:${koreanObjectBoundClaimStems.join("|")})`,
-    `(?:${koreanCommitCountObjects.join("|")})[^.!?\\n]{0,6}?(?:${koreanCountBoundClaimStems.join("|")})`
+    `(?:${koreanWorkClaimNouns.join("|")})(?:${koreanSinoClaimEndings.join("|")})${koreanRecalledClaimSuffix}`,
+    `(?:${koreanNativeWorkClaimStems.join("|")})${koreanRecalledClaimSuffix}`,
+    `(?:${koreanWorkObjects.join("|")})[^.!?\\n]{0,6}?(?:${koreanObjectBoundClaimStems.join("|")})${koreanRecalledClaimSuffix}`,
+    `(?:${koreanCommitCountObjects.join("|")})[^.!?\\n]{0,6}?(?:${koreanCountBoundClaimStems.join("|")})${koreanRecalledClaimSuffix}`
   ].join("|"),
   "g"
 );
+
+/**
+ * 모든 완료 어간. 어느 분기로 걸리든 매칭은 반드시 이 중 하나로 끝나므로,
+ * 어간 위치를 접미사로 되찾을 수 있다.
+ */
+const koreanClaimStems = [
+  ...koreanSinoClaimEndings,
+  ...koreanNativeWorkClaimStems,
+  ...koreanCountBoundClaimStems
+];
 
 /**
  * 부정을 예외로 인정하는 유일한 뒤쪽 형태: **주장을 인용해 곧바로 부인하는**
@@ -900,18 +923,39 @@ const koreanQuotedDenialPattern =
  * 어간에 직접 붙을 때만 센다. "코드 안 보고 짰습니다"의 `안`은 앞 동사(보고)를
  * 부정할 뿐 `짰`을 부정하지 않으므로 주장 그대로 남는다.
  */
-const koreanPreVerbalNegationPattern = /(?:^|\s)(?:안|못)\s+$/;
+const koreanPreVerbalNegationPattern = /(?:^|\s)(?:안|못)\s*$/;
 
 /**
- * 매칭 구간에서 완료 어간이 시작하는 위치. 어간은 언제나 매칭의 마지막
- * 공백 뒤 토큰이다 — 목적어 결합 분기의 목적어·조사·수량 표현은 그 앞에 있다.
+ * 0으로 센 수량. "커밋 0개를 남겼습니다"는 활동이 실제로 0인 날의 정확한
+ * 서술이지 조작이 아니다. 개수 분기든 일반 목적어 분기든 매칭 안에 0 수량이
+ * 있으면 주장으로 세지 않는다 — 영어 쪽 `0 commits`를 빼는 것과 같은 이유다.
+ */
+const koreanZeroQuantityPattern = /(?:^|\D)0+\s*(?:개|건|줄|번|회)/;
+
+/**
+ * 매칭 구간에서 완료 어간이 시작하는 위치. 어간은 언제나 매칭의 접미사이므로,
+ * 가장 긴 어간 접미사를 찾아 되짚는다. 공백을 기준으로 잡으면 "커밋 세 개를
+ * 안했습니다"처럼 부정 부사가 어간에 붙어 쓰인 문장에서 어간보다 앞을 가리켜,
+ * 바로 앞 부정을 놓친다.
  */
 function stemStartIndex(match: RegExpExecArray): number {
-  return match.index + match[0].lastIndexOf(" ") + 1;
+  const stem = koreanClaimStems.reduce(
+    (longest, candidate) =>
+      match[0].endsWith(candidate) && candidate.length > longest.length
+        ? candidate
+        : longest,
+    ""
+  );
+
+  return match.index + match[0].length - stem.length;
 }
 
 /** 이 매칭이 실제 작업 주장인지 — 어간을 지배하는 부정이 없는지 본다. */
 function isUndeniedClaim(sentence: string, match: RegExpExecArray): boolean {
+  if (koreanZeroQuantityPattern.test(match[0])) {
+    return false;
+  }
+
   const stemStart = stemStartIndex(match);
   const leadIn = sentence.slice(Math.max(0, stemStart - 4), stemStart);
 
