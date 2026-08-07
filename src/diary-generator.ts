@@ -803,16 +803,48 @@ const koreanWorkClaimNouns = [
   "검증"
 ] as const;
 
-/** 한자어 동작명사와 결합하지 않는 고유어 완료형. */
-const koreanNativeWorkClaimStems = [
-  "고쳐졌",
-  "고쳤",
+/** 목적어 없이도 작업 주장이 되는 고유어 완료형. */
+const koreanNativeWorkClaimStems = ["고쳐졌", "고쳤"] as const;
+
+/**
+ * 목적어가 뜻을 가르는 고유어 완료형. "하루를 마쳤습니다"는 조용한 날
+ * 프롬프트가 오히려 권하는 정직한 마무리이고, "작업을 마쳤습니다"만 주장이다.
+ * 그래서 이 어간들은 바로 앞에 작업 목적어가 있을 때만 주장으로 본다.
+ */
+const koreanObjectBoundClaimStems = [
   "만들어졌",
   "만들었",
   "올렸",
   "끝냈",
   "마쳤",
   "짰"
+] as const;
+
+/** 위 어간이 주장이 되려면 앞에 와야 하는 작업 목적어. */
+const koreanWorkObjects = [
+  "버그",
+  "기능",
+  "코드",
+  "테스트",
+  "이슈",
+  "티켓",
+  "커밋",
+  "PR",
+  "브랜치",
+  "작업",
+  "스크립트",
+  "함수",
+  "모듈",
+  "타입",
+  "로직",
+  "문서",
+  "화면",
+  "페이지",
+  "컴포넌트",
+  "API",
+  "쿼리",
+  "설정",
+  "파일"
 ] as const;
 
 const koreanCountWord = "\\d+|한|두|세|네|다섯|여섯|일곱|여덟|아홉|열";
@@ -827,6 +859,7 @@ const koreanWorkClaimPattern = new RegExp(
   [
     `(?:${koreanWorkClaimNouns.join("|")})(?:했|됐|되었|하였)`,
     koreanNativeWorkClaimStems.join("|"),
+    `(?:${koreanWorkObjects.join("|")})[^.!?\\n]{0,6}?(?:${koreanObjectBoundClaimStems.join("|")})`,
     `커밋\\s*(?:${koreanCountWord})\\s*개`,
     `(?:${koreanCountWord})\\s*개의?\\s*커밋`
   ].join("|"),
@@ -834,16 +867,27 @@ const koreanWorkClaimPattern = new RegExp(
 );
 
 /**
+ * 부정 예외가 **매칭된 주장 자신**에만 걸리도록 자르는 절 경계.
+ * "기능을 추가했지만 테스트는 완료하지 못했습니다"에서 뒤의 `못`은 다른 일을
+ * 부정할 뿐 `추가했`을 취소하지 않는다. 그래서 부정은 어간이 속한 절 안에서만
+ * 찾는다.
+ */
+const koreanClauseBoundaryPattern = /지만|는데|은데|으나|면서|,|^고\s/;
+
+/**
  * 완료 어간 뒤에 오는 부정·인용 꼬리표. "고쳤다고 할 것도 없었습니다",
  * "아무것도 해결했다고 말할 수 없습니다"처럼 **작업이 없었음을 인정하는**
  * 자연스러운 한국어를 조작으로 오인하지 않기 위해 필요하다.
  *
- * 같은 문장 안에서 어간 **뒤**에 부정 표지가 오면 주장으로 보지 않는다.
- * 어간 앞의 부정("없는 버그를 고쳤습니다")은 주장 그대로 남는다. 한 문장
- * 안에서 주장과 부정이 섞이는 경우("고쳤고 더는 문제가 없었다")는 통과하는데,
- * 생성을 중단시키는 가드인 만큼 오탐보다 미탐 쪽으로 기울인 선택이다.
+ * 어간 앞의 부정("없는 버그를 고쳤습니다")은 주장 그대로 남는다.
  */
 const koreanClaimNegationPattern = /없|않|못|아니/;
+
+/** 매칭된 주장을 지배하는 절만 남긴다 (다음 절 경계까지). */
+function governingClause(tail: string): string {
+  const boundary = koreanClauseBoundaryPattern.exec(tail);
+  return boundary ? tail.slice(0, boundary.index) : tail;
+}
 
 function claimsQuietDayWork(text: string): boolean {
   if (englishWorkClaimPattern.test(text)) {
@@ -856,7 +900,7 @@ function claimsQuietDayWork(text: string): boolean {
       [...sentence.matchAll(koreanWorkClaimPattern)].some(
         (match) =>
           !koreanClaimNegationPattern.test(
-            sentence.slice(match.index + match[0].length)
+            governingClause(sentence.slice(match.index + match[0].length))
           )
       )
     );

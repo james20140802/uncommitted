@@ -535,6 +535,115 @@ describe("diary generator", () => {
     expect(draft.slides).toHaveLength(3);
   });
 
+  it("rejects a claimed completion even when a later clause denies other work (UNC-251)", async () => {
+    await expect(
+      generateDiaryDraft({
+        activitySummary: createQuietActivitySummary(),
+        storyFormatPlan: createStoryFormatPlan({ suggestedSlideCount: 3 }),
+        provider: new MockAiProvider({
+          response: createProviderDraft({
+            slides: [
+              {
+                index: 1,
+                title: "좋은 협업 팁 ①",
+                body: "기능을 추가했지만 테스트는 완료하지 못했습니다.",
+                visualMood: "still terminal"
+              },
+              {
+                index: 2,
+                title: "기다림",
+                body: "커서만 깜빡이는 오후였습니다.",
+                visualMood: "waiting cursor"
+              },
+              {
+                index: 3,
+                title: "마무리",
+                body: "내일의 기록을 기다리는 쪽으로 닫았다.",
+                visualMood: "small note"
+              }
+            ]
+          })
+        }),
+        persona: "wry coworker",
+        roastLevel: 2
+      })
+    ).rejects.toMatchObject({
+      code: "malformed-response",
+      message: "AI provider fabricated quiet-day activity."
+    });
+  });
+
+  it("separates finishing the day from finishing work (UNC-251)", async () => {
+    const closeTheDay = await generateDiaryDraft({
+      activitySummary: createQuietActivitySummary(),
+      storyFormatPlan: createStoryFormatPlan({ suggestedSlideCount: 3 }),
+      provider: new MockAiProvider({
+        response: createProviderDraft({
+          slides: [
+            {
+              index: 1,
+              title: "좋은 생산성 팁 ①",
+              body: "오늘은 조용히 하루를 마쳤습니다.",
+              visualMood: "still terminal"
+            },
+            {
+              index: 2,
+              title: "기다림",
+              body: "커서만 깜빡이는 오후였습니다.",
+              visualMood: "waiting cursor"
+            },
+            {
+              index: 3,
+              title: "마무리",
+              body: "내일의 기록을 기다리는 쪽으로 닫았다.",
+              visualMood: "small note"
+            }
+          ]
+        })
+      }),
+      persona: "wry coworker",
+      roastLevel: 2
+    });
+
+    expect(closeTheDay.slides).toHaveLength(3);
+
+    await expect(
+      generateDiaryDraft({
+        activitySummary: createQuietActivitySummary(),
+        storyFormatPlan: createStoryFormatPlan({ suggestedSlideCount: 3 }),
+        provider: new MockAiProvider({
+          response: createProviderDraft({
+            slides: [
+              {
+                index: 1,
+                title: "좋은 생산성 팁 ①",
+                body: "오늘은 조용히 작업을 마쳤습니다.",
+                visualMood: "still terminal"
+              },
+              {
+                index: 2,
+                title: "기다림",
+                body: "커서만 깜빡이는 오후였습니다.",
+                visualMood: "waiting cursor"
+              },
+              {
+                index: 3,
+                title: "마무리",
+                body: "내일의 기록을 기다리는 쪽으로 닫았다.",
+                visualMood: "small note"
+              }
+            ]
+          })
+        }),
+        persona: "wry coworker",
+        roastLevel: 2
+      })
+    ).rejects.toMatchObject({
+      code: "malformed-response",
+      message: "AI provider fabricated quiet-day activity."
+    });
+  });
+
   it("generates a quiet-day request without fabricating activity", async () => {
     const provider = new MockAiProvider({
       response: createProviderDraft({
