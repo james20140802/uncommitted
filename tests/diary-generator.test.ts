@@ -717,6 +717,122 @@ describe("diary generator", () => {
     expect(draft.slides).toHaveLength(3);
   });
 
+  it("keeps a claim when a later clause denies different work, whatever the connective (UNC-251)", async () => {
+    for (const claim of [
+      "기능을 추가했기에 테스트까지는 못했습니다.",
+      "기능을 추가했으므로 테스트는 하지 못했습니다.",
+      "기능을 추가했는데 테스트는 못 했습니다."
+    ]) {
+      await expect(
+        generateDiaryDraft({
+          activitySummary: createQuietActivitySummary(),
+          storyFormatPlan: createStoryFormatPlan({ suggestedSlideCount: 3 }),
+          provider: new MockAiProvider({
+            response: createProviderDraft({
+              slides: [
+                {
+                  index: 1,
+                  title: "좋은 협업 팁 ①",
+                  body: claim,
+                  visualMood: "still terminal"
+                },
+                {
+                  index: 2,
+                  title: "기다림",
+                  body: "커서만 깜빡이는 오후였습니다.",
+                  visualMood: "waiting cursor"
+                },
+                {
+                  index: 3,
+                  title: "마무리",
+                  body: "내일의 기록을 기다리는 쪽으로 닫았다.",
+                  visualMood: "small note"
+                }
+              ]
+            })
+          }),
+          persona: "wry coworker",
+          roastLevel: 2
+        })
+      ).rejects.toMatchObject({
+        code: "malformed-response",
+        message: "AI provider fabricated quiet-day activity."
+      });
+    }
+  });
+
+  it("exempts negation only when it governs the completion stem itself (UNC-251)", async () => {
+    // `안`이 앞 동사(보고)를 부정할 뿐 `짰`을 부정하지 않으므로 주장 그대로다.
+    await expect(
+      generateDiaryDraft({
+        activitySummary: createQuietActivitySummary(),
+        storyFormatPlan: createStoryFormatPlan({ suggestedSlideCount: 3 }),
+        provider: new MockAiProvider({
+          response: createProviderDraft({
+            slides: [
+              {
+                index: 1,
+                title: "좋은 협업 팁 ①",
+                body: "코드 안 보고 짰습니다.",
+                visualMood: "still terminal"
+              },
+              {
+                index: 2,
+                title: "기다림",
+                body: "커서만 깜빡이는 오후였습니다.",
+                visualMood: "waiting cursor"
+              },
+              {
+                index: 3,
+                title: "마무리",
+                body: "내일의 기록을 기다리는 쪽으로 닫았다.",
+                visualMood: "small note"
+              }
+            ]
+          })
+        }),
+        persona: "wry coworker",
+        roastLevel: 2
+      })
+    ).rejects.toMatchObject({
+      code: "malformed-response",
+      message: "AI provider fabricated quiet-day activity."
+    });
+
+    const denied = await generateDiaryDraft({
+      activitySummary: createQuietActivitySummary(),
+      storyFormatPlan: createStoryFormatPlan({ suggestedSlideCount: 3 }),
+      provider: new MockAiProvider({
+        response: createProviderDraft({
+          slides: [
+            {
+              index: 1,
+              title: "좋은 생산성 팁 ①",
+              body: "커밋 세 개도 안 올렸습니다.",
+              visualMood: "still terminal"
+            },
+            {
+              index: 2,
+              title: "기다림",
+              body: "고쳤을 리가 없습니다. 볼 버그가 없었으니까요.",
+              visualMood: "waiting cursor"
+            },
+            {
+              index: 3,
+              title: "마무리",
+              body: "내일의 기록을 기다리는 쪽으로 닫았다.",
+              visualMood: "small note"
+            }
+          ]
+        })
+      }),
+      persona: "wry coworker",
+      roastLevel: 2
+    });
+
+    expect(denied.slides).toHaveLength(3);
+  });
+
   it("generates a quiet-day request without fabricating activity", async () => {
     const provider = new MockAiProvider({
       response: createProviderDraft({

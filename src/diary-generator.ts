@@ -815,6 +815,7 @@ const koreanObjectBoundClaimStems = [
   "만들어졌",
   "만들었",
   "올렸",
+  "남겼",
   "끝냈",
   "마쳤",
   "짰"
@@ -855,51 +856,67 @@ const koreanCountWord = "\\d+|한|두|세|네|다섯|여섯|일곱|여덟|아홉
  * 같은 조작이 그대로 통과한다. 한글에는 `\b` 단어 경계가 잡히지 않아 어간과
  * 어미 결합으로 범위를 잡는다.
  */
+/** 커밋 개수 표현. 위 목적어들과 같은 자리에 서서 완료 동사를 이끈다. */
+const koreanCommitCountObjects = [
+  `커밋\\s*(?:${koreanCountWord})\\s*개`,
+  `(?:${koreanCountWord})\\s*개의?\\s*커밋`
+];
+
 const koreanWorkClaimPattern = new RegExp(
   [
     `(?:${koreanWorkClaimNouns.join("|")})(?:했|됐|되었|하였)`,
     koreanNativeWorkClaimStems.join("|"),
-    `(?:${koreanWorkObjects.join("|")})[^.!?\\n]{0,6}?(?:${koreanObjectBoundClaimStems.join("|")})`,
-    `커밋\\s*(?:${koreanCountWord})\\s*개`,
-    `(?:${koreanCountWord})\\s*개의?\\s*커밋`
+    `(?:${[...koreanWorkObjects, ...koreanCommitCountObjects].join("|")})[^.!?\\n]{0,6}?(?:${koreanObjectBoundClaimStems.join("|")})`
   ].join("|"),
   "g"
 );
 
 /**
- * 부정 예외가 **매칭된 주장 자신**에만 걸리도록 자르는 절 경계.
- * "기능을 추가했지만 테스트는 완료하지 못했습니다"에서 뒤의 `못`은 다른 일을
- * 부정할 뿐 `추가했`을 취소하지 않는다. 그래서 부정은 어간이 속한 절 안에서만
- * 찾는다.
- */
-const koreanClauseBoundaryPattern = /지만|는데|은데|으나|으며|며\s|면서|,|^고\s/;
-
-/**
- * 완료 어간 뒤에 오는 부정·인용 꼬리표. "고쳤다고 할 것도 없었습니다",
- * "아무것도 해결했다고 말할 수 없습니다"처럼 **작업이 없었음을 인정하는**
- * 자연스러운 한국어를 조작으로 오인하지 않기 위해 필요하다.
+ * 부정을 예외로 인정하는 유일한 뒤쪽 형태: **주장을 인용해 부인하는** 표지.
+ * "고쳤다고 할 것도 없었습니다", "고쳤을 리가 없습니다"가 그것이다.
  *
- * 어간 앞의 부정("없는 버그를 고쳤습니다")은 주장 그대로 남는다.
+ * 연결어미(지만·으며·기에·으므로·-고…)를 열거해 절을 자르는 방식은 끝이
+ * 없어서 버렸다. 대신 예외 쪽을 좁혔다 — 뒤 절이 **다른** 일을 부정해도
+ * ("기능을 추가했기에 테스트까지는 못했습니다") 앞의 주장은 그대로 남는다.
  */
+const koreanReportedClaimPattern =
+  /^(?:다고|다곤|다는|단\s|을\s*리|ㄹ\s*리|을\s*것도)/;
+
+/** 인용된 주장을 부인하는 표지. */
 const koreanClaimNegationPattern = /없|않|못|아니/;
 
 /**
- * 동사 **앞**에 놓이는 부정 부사. "오늘은 코드를 안 만들었습니다",
- * "버그는 못 고쳤습니다"는 작업이 없었음을 말하는 정직한 문장인데, 어간 뒤만
- * 보는 검사로는 이 부정이 매칭 구간 안에 삼켜져 보이지 않는다. 낱말로 선
- * `안`/`못`만 세도록 앞뒤 공백을 요구한다 — "제안"의 `안`은 세지 않는다.
+ * 동사 **바로 앞**에 서는 부정 부사. "오늘은 코드를 안 만들었습니다",
+ * "버그는 못 고쳤습니다"는 작업이 없었음을 말하는 정직한 문장이다.
+ *
+ * 어간에 직접 붙을 때만 센다. "코드 안 보고 짰습니다"의 `안`은 앞 동사(보고)를
+ * 부정할 뿐 `짰`을 부정하지 않으므로 주장 그대로 남는다.
  */
-const koreanPreVerbalNegationPattern = /(?:^|[\s(])(?:안|못)\s/;
+const koreanPreVerbalNegationPattern = /(?:^|\s)(?:안|못)\s+$/;
 
-/** 매칭된 주장을 지배하는 절만 남긴다 (다음 절 경계까지). */
-function governingClause(tail: string): string {
-  const boundary = koreanClauseBoundaryPattern.exec(tail);
-  return boundary ? tail.slice(0, boundary.index) : tail;
+/**
+ * 매칭 구간에서 완료 어간이 시작하는 위치. 어간은 언제나 매칭의 마지막
+ * 공백 뒤 토큰이다 — 목적어 결합 분기의 목적어·조사·수량 표현은 그 앞에 있다.
+ */
+function stemStartIndex(match: RegExpExecArray): number {
+  return match.index + match[0].lastIndexOf(" ") + 1;
 }
 
-/** 매칭 구간과 그 바로 앞을 합쳐 동사 앞 부정을 볼 수 있게 한다. */
-function claimWithLeadIn(sentence: string, match: RegExpExecArray): string {
-  return sentence.slice(Math.max(0, match.index - 4), match.index) + match[0];
+/** 이 매칭이 실제 작업 주장인지 — 어간을 지배하는 부정이 없는지 본다. */
+function isUndeniedClaim(sentence: string, match: RegExpExecArray): boolean {
+  const stemStart = stemStartIndex(match);
+  const leadIn = sentence.slice(Math.max(0, stemStart - 4), stemStart);
+
+  if (koreanPreVerbalNegationPattern.test(leadIn)) {
+    return false;
+  }
+
+  const tail = sentence.slice(match.index + match[0].length);
+
+  return !(
+    koreanReportedClaimPattern.test(tail) &&
+    koreanClaimNegationPattern.test(tail)
+  );
 }
 
 function claimsQuietDayWork(text: string): boolean {
@@ -910,14 +927,8 @@ function claimsQuietDayWork(text: string): boolean {
   return text
     .split(/[.!?\n]+/)
     .some((sentence) =>
-      [...sentence.matchAll(koreanWorkClaimPattern)].some(
-        (match) =>
-          !koreanPreVerbalNegationPattern.test(
-            claimWithLeadIn(sentence, match)
-          ) &&
-          !koreanClaimNegationPattern.test(
-            governingClause(sentence.slice(match.index + match[0].length))
-          )
+      [...sentence.matchAll(koreanWorkClaimPattern)].some((match) =>
+        isUndeniedClaim(sentence, match)
       )
     );
 }
