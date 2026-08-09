@@ -13,6 +13,7 @@ export type ExportCommandErrorCode =
   | "missing-draft"
   | "missing-carousel"
   | "safety-blocked"
+  | "incomplete-draft"
   | "export-failed";
 
 export class ExportCommandError extends Error {
@@ -78,8 +79,14 @@ const USAGE = "Usage: uncommitted export instagram";
  *  - warning: export proceeds; result.warningMessage contains the reason.
  *  - blocked: throws ExportCommandError("safety-blocked") before any folder is created.
  *
- * Ordering: safety is enforced BEFORE creating the export folder so that a
- * blocked draft never leaves behind a partial export directory.
+ * Completeness policy (UNC-256 / T5):
+ *  - a draft whose metadata.json has status "incomplete" (left behind when
+ *    the caption stage failed, see UNC-253) throws
+ *    ExportCommandError("incomplete-draft") before any folder is created.
+ *
+ * Ordering: safety and completeness are enforced BEFORE creating the export
+ * folder so that a blocked or incomplete draft never leaves behind a
+ * partial export directory.
  */
 export async function runExportCommand(
   args: string[],
@@ -98,6 +105,10 @@ export async function runExportCommand(
 
   // 3. Read safety report (status + reason)
   const safetyInfo = await readSafetyInfo(sourceDraftPath);
+
+  // 3.5 UNC-256 / T5: 반쪽 드래프트는 export 대상이 아니다.
+  // 안전 검사와 마찬가지로 export 폴더를 만들기 전에 막는다.
+  await assertDraftIsComplete(sourceDraftPath);
 
   // 4. Enforce safety policy BEFORE touching the export folder
   const policyResult = checkSafetyPolicy(safetyInfo.status, safetyInfo.reason);
@@ -174,6 +185,38 @@ export function checkSafetyPolicy(
   }
 
   return {};
+}
+
+/**
+ * UNC-256 / T5: UNC-253이 metadata.json에 남긴 미완성 표시를 존중한다.
+ * metadata.json이 없거나 읽을 수 없으면 여기서 판단하지 않는다 —
+ * 뒤따르는 캡션·PNG 수집 단계가 자기 방식으로 실패한다.
+ */
+async function assertDraftIsComplete(sourceDraftPath: string): Promise<void> {
+  let metadata: Record<string, unknown>;
+
+  try {
+    metadata = JSON.parse(
+      await readFile(join(sourceDraftPath, "metadata.json"), "utf8")
+    ) as Record<string, unknown>;
+  } catch {
+    return;
+  }
+
+  if (!isRecord(metadata) || metadata.status !== "incomplete") {
+    return;
+  }
+
+  const incomplete = metadata.incomplete;
+  const stage =
+    typeof incomplete === "object" && incomplete !== null
+      ? String((incomplete as Record<string, unknown>).stage ?? "unknown")
+      : "unknown";
+
+  throw new ExportCommandError(
+    `Export blocked: draft is incomplete (failed at the ${stage} stage). Regenerate before exporting.`,
+    "incomplete-draft"
+  );
 }
 
 // ---------------------------------------------------------------------------

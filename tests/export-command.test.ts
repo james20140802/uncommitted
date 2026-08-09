@@ -481,6 +481,137 @@ describe("export-command (UNC-95: error handling)", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// UNC-256 / T5: export must respect the incomplete-draft marker left by
+// UNC-253 (a caption-stage failure) instead of publishing a half draft.
+// ---------------------------------------------------------------------------
+
+describe("export-command (UNC-256 / T5: incomplete draft guard)", () => {
+  it("refuses to export a draft marked incomplete", async () => {
+    const draftRoot = await createTempDir();
+    const { outputDir } = await scaffoldDraft(draftRoot);
+
+    await writeFile(
+      join(outputDir, "metadata.json"),
+      JSON.stringify(
+        {
+          schemaVersion: 1,
+          status: "incomplete",
+          incomplete: {
+            stage: "caption",
+            reason: "AI provider returned invalid caption.",
+            failedAt: "2026-08-10T14:30:00.000Z"
+          }
+        },
+        null,
+        2
+      ) + "\n",
+      "utf8"
+    );
+
+    await expect(
+      runExportCommand(["instagram"], { draftRoot })
+    ).rejects.toThrow(/incomplete/i);
+  });
+
+  it("reports the incomplete draft with an incomplete-draft code and mentions the failed stage", async () => {
+    const draftRoot = await createTempDir();
+    const { outputDir } = await scaffoldDraft(draftRoot);
+
+    await writeFile(
+      join(outputDir, "metadata.json"),
+      JSON.stringify(
+        {
+          schemaVersion: 1,
+          status: "incomplete",
+          incomplete: {
+            stage: "caption",
+            reason: "AI provider returned invalid caption.",
+            failedAt: "2026-08-10T14:30:00.000Z"
+          }
+        },
+        null,
+        2
+      ) + "\n",
+      "utf8"
+    );
+
+    try {
+      await runExportCommand(["instagram"], { draftRoot });
+      expect.fail("should have thrown");
+    } catch (err) {
+      expect(err).toBeInstanceOf(ExportCommandError);
+      expect((err as ExportCommandError).code).toBe("incomplete-draft");
+      expect((err as ExportCommandError).message).toContain("caption");
+    }
+  });
+
+  it("does not create an export folder for an incomplete draft", async () => {
+    const uncommittedRoot = await createTempDir();
+    const draftRoot = join(uncommittedRoot, "drafts");
+    await mkdir(draftRoot, { recursive: true });
+    const { outputDir } = await scaffoldDraft(draftRoot);
+
+    await writeFile(
+      join(outputDir, "metadata.json"),
+      JSON.stringify(
+        {
+          schemaVersion: 1,
+          status: "incomplete",
+          incomplete: {
+            stage: "caption",
+            reason: "AI provider returned invalid caption.",
+            failedAt: "2026-08-10T14:30:00.000Z"
+          }
+        },
+        null,
+        2
+      ) + "\n",
+      "utf8"
+    );
+
+    try {
+      await runExportCommand(["instagram"], { draftRoot });
+    } catch {
+      // expected
+    }
+
+    const exportBase = join(uncommittedRoot, "exports", "instagram");
+    await expect(readdir(exportBase)).rejects.toThrow();
+  });
+
+  it("does not leak the raw incomplete.reason into the export error message", async () => {
+    const draftRoot = await createTempDir();
+    const { outputDir } = await scaffoldDraft(draftRoot);
+    const secretReason = "provider key sk-SECRET-abc123 rejected the request";
+
+    await writeFile(
+      join(outputDir, "metadata.json"),
+      JSON.stringify(
+        {
+          schemaVersion: 1,
+          status: "incomplete",
+          incomplete: {
+            stage: "caption",
+            reason: secretReason,
+            failedAt: "2026-08-10T14:30:00.000Z"
+          }
+        },
+        null,
+        2
+      ) + "\n",
+      "utf8"
+    );
+
+    try {
+      await runExportCommand(["instagram"], { draftRoot });
+      expect.fail("should have thrown");
+    } catch (err) {
+      expect((err as ExportCommandError).message).not.toContain(secretReason);
+    }
+  });
+});
+
 describe("export-command (UNC-94: safety policy)", () => {
   it("safe draft exports with no warning and safetyStatus 'safe' in metadata", async () => {
     const draftRoot = await createTempDir();
