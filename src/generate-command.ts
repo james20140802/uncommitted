@@ -403,6 +403,9 @@ export async function runGenerateCommand(
     // UNC-253 / T2: 실패 종료 경로가 돌기 전에 미완성 표시를 남긴다.
     // UNC-257 / T6: 재시도가 소진된 형식 위반이면 진단 정보도 함께 남긴다.
     // 마커·진단 기록 자체가 실패하더라도 원래 캡션 에러를 가리지 않는다.
+    // 리뷰 후속: 두 기록은 독립된 try/catch에 둔다 — 마커 기록이 (디스크
+    // 가득 참, 권한 등으로) 실패해도 진단 기록 시도를 막아서는 안 된다.
+    // 포렌식이 가장 필요한 순간이 바로 그런 실패 상황이다.
     try {
       await writeIncompleteDraftMarker(draftRevision, {
         stage: "caption",
@@ -410,7 +413,11 @@ export async function runGenerateCommand(
         failedAt: generatedAt,
         targetDate
       });
+    } catch {
+      // 마커 기록 실패는 무시한다 — 원래 실패 원인을 보존하는 쪽이 중요하다.
+    }
 
+    try {
       if (error instanceof AiGenerationError && error.details !== undefined) {
         await writeCaptionFailureDiagnostics(draftRevision, {
           failedAt: generatedAt,
@@ -421,7 +428,7 @@ export async function runGenerateCommand(
         });
       }
     } catch {
-      // 진단·마커 기록 실패는 무시한다 — 원래 실패 원인을 보존하는 쪽이 중요하다.
+      // 진단 기록 실패는 무시한다 — 원래 실패 원인을 보존하는 쪽이 중요하다.
     }
 
     throw error;

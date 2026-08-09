@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type {
   AiProvider,
   AiProviderRawResponse,
@@ -11,8 +11,32 @@ import type {
 } from "../src/ai-provider.js";
 import { runCli } from "../src/cli.js";
 import type { GitActivityEvent } from "../src/collect-git-command.js";
+import { writeIncompleteDraftMarker } from "../src/draft-storage.js";
 import type { CaptionResult, DiaryDraft } from "../src/diary-generator.js";
 import type { MemoryThread } from "../src/memory-store.js";
+
+/**
+ * UNC-237 review follow-up: `writeIncompleteDraftMarker` and
+ * `writeCaptionFailureDiagnostics` in generate-command.ts must each run
+ * independently of the other's success — see the "still writes caption
+ * failure diagnostics when the incomplete-marker write fails" test below.
+ * Injecting a real marker-write failure through the filesystem alone isn't
+ * possible here: any directory pre-created to collide with the CLI's own
+ * output path would itself be picked up by `allocateNextRevision`'s
+ * `readdir` scan and shift which revision number the CLI allocates,
+ * chasing the collision away. Wrapping the real implementation in
+ * `vi.fn(...)` keeps every other test's behavior byte-identical (calls
+ * fall through to the real function) while letting exactly one test force
+ * one call to fail with `mockRejectedValueOnce`.
+ */
+vi.mock("../src/draft-storage.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/draft-storage.js")>();
+
+  return {
+    ...actual,
+    writeIncompleteDraftMarker: vi.fn(actual.writeIncompleteDraftMarker)
+  };
+});
 import { PERSONA_PRESETS, type Persona } from "../src/persona.js";
 import { addProject, type ProjectRecord } from "../src/project-add.js";
 import type { Mood, MoodPlan, StoryFormatPlan } from "../src/story-format-plan.js";
@@ -1086,6 +1110,50 @@ describe("generate command", () => {
     expect(Array.isArray(diagnostics.violations)).toBe(true);
     expect((diagnostics.violations as string[]).length).toBeGreaterThan(0);
     expect(typeof diagnostics.rawResponse).toBe("string");
+  });
+
+  it("still writes caption failure diagnostics when the incomplete-marker write fails (UNC-237)", async () => {
+    const { io, stderr } = createIo();
+    const fixture = await createRegisteredProjectFixture();
+    const exhaustingProvider = new TaskAwareProvider({ captionMalformed: true });
+
+    await writeGitEvent(fixture.project, "2026-05-12");
+
+    // Force exactly one writeIncompleteDraftMarker call to fail, simulating
+    // a disk-full/permission failure on the marker write. See the vi.mock
+    // block near the top of this file for why a filesystem-only injection
+    // isn't viable here (it would defeat allocateNextRevision's own
+    // directory scan).
+    vi.mocked(writeIncompleteDraftMarker).mockRejectedValueOnce(
+      new Error("simulated disk-full failure")
+    );
+
+    const exitCode = await runCli(["generate", "today"], io, {
+      homeDir: fixture.homeDir,
+      now: () => "2026-05-12T23:30:00.000Z",
+      aiProvider: exhaustingProvider
+    });
+
+    // The original caption error must still surface unmodified, with its
+    // exit code, even though the marker write underneath it failed.
+    expect(exitCode).toBe(4);
+    expect(stderr).toEqual(["AI provider returned invalid caption."]);
+
+    // The diagnostics write must have run anyway.
+    const outputDir = join(fixture.draftRoot, "2026-05-12", "rev-001");
+    const diagnostics = (await readJson(
+      join(outputDir, "caption-failure.json")
+    )) as Record<string, unknown>;
+
+    expect(diagnostics.stage).toBe("caption");
+    expect(Array.isArray(diagnostics.violations)).toBe(true);
+    expect((diagnostics.violations as string[]).length).toBeGreaterThan(0);
+
+    // And metadata.json (the marker) was never written, since its one
+    // write attempt was made to fail.
+    await expect(readFile(join(outputDir, "metadata.json"), "utf8")).rejects.toMatchObject(
+      { code: "ENOENT" }
+    );
   });
 
   it("returns a visual-generation error while preserving text draft artifacts", async () => {
