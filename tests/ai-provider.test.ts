@@ -99,7 +99,11 @@ describe("AI provider abstraction", () => {
       data: {
         title: "Provider boundary day",
         beats: ["Configured", "Mocked", "Validated"]
-      }
+      },
+      rawResponseJson: JSON.stringify({
+        title: "Provider boundary day",
+        beats: ["Configured", "Mocked", "Validated"]
+      })
     });
     expect(provider.requests).toEqual([request]);
   });
@@ -140,7 +144,11 @@ describe("AI provider abstraction", () => {
       data: {
         title: "OpenAI provider day",
         beats: ["Configured", "Generated"]
-      }
+      },
+      rawResponseJson: JSON.stringify({
+        title: "OpenAI provider day",
+        beats: ["Configured", "Generated"]
+      })
     });
 
     expect(calls).toHaveLength(1);
@@ -367,7 +375,11 @@ describe("AI provider abstraction", () => {
     await expect(generateStructured(provider, request)).resolves.toEqual({
       schemaVersion: 1,
       provider: "anthropic",
-      data: { title: "Anthropic provider day", beats: ["Configured", "Generated"] }
+      data: { title: "Anthropic provider day", beats: ["Configured", "Generated"] },
+      rawResponseJson: JSON.stringify({
+        title: "Anthropic provider day",
+        beats: ["Configured", "Generated"]
+      })
     });
 
     expect(calls).toHaveLength(1);
@@ -1010,6 +1022,25 @@ describe("AI provider abstraction", () => {
         }
       })
     ).toThrow(AiGenerationError);
+  });
+
+  it("carries structured details when provided", () => {
+    const error = new AiGenerationError("bad", "malformed-response", {
+      violations: ["caption-empty"],
+      rawResponseJson: '{"caption":""}'
+    });
+
+    expect(error.exitCode).toBe(4);
+    expect(error.code).toBe("malformed-response");
+    expect(error.details?.violations).toEqual(["caption-empty"]);
+    expect(error.details?.rawResponseJson).toBe('{"caption":""}');
+  });
+
+  it("leaves details undefined when omitted", () => {
+    const error = new AiGenerationError("bad", "provider-failed");
+
+    expect(error.details).toBeUndefined();
+    expect(error.exitCode).toBe(4);
   });
 });
 

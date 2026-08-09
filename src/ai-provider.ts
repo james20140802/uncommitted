@@ -71,6 +71,8 @@ export type AiStructuredGenerationResponse<
   schemaVersion: 1;
   provider: AiProviderName;
   data: TData;
+  /** UNC-252 / T1: 형식 위반 진단을 위해 원본 응답 본문을 보존한다. */
+  rawResponseJson: string;
 };
 
 export interface AiProvider {
@@ -138,12 +140,25 @@ export type AiGenerationErrorCode =
   | "provider-unavailable"
   | "unsafe-request";
 
+/**
+ * UNC-252 / T1: 형식 위반을 조건 단위로 실어 나르기 위한 선택적 페이로드.
+ * 재시도(T3)와 진단 기록(T6)이 "무엇이 걸렸는지"를 알아야 하므로,
+ * 뭉뚱그린 message 한 줄 대신 위반 조건 목록과 원본 응답을 함께 전달한다.
+ * 기존 호출자는 details를 넘기지 않으므로 계약이 깨지지 않는다.
+ */
+export type AiGenerationErrorDetails = {
+  violations: string[];
+  rawResponseJson?: string;
+  retryFeedback?: string;
+};
+
 export class AiGenerationError extends Error {
   public readonly exitCode = 4;
 
   constructor(
     message: string,
-    public readonly code: AiGenerationErrorCode
+    public readonly code: AiGenerationErrorCode,
+    public readonly details?: AiGenerationErrorDetails
   ) {
     super(message);
     this.name = "AiGenerationError";
@@ -363,7 +378,8 @@ export async function generateStructured<
   return {
     schemaVersion: 1,
     provider: provider.name,
-    data
+    data,
+    rawResponseJson: rawResponse.responseJson
   };
 }
 

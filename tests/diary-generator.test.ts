@@ -3,6 +3,7 @@ import { AiGenerationError, MockAiProvider } from "../src/ai-provider.js";
 import type { ActivitySummary } from "../src/activity-summary.js";
 import {
   buildCaptionInstructions,
+  CAPTION_FORMAT_VIOLATIONS,
   deriveCaptionText,
   generateCaption,
   generateDiaryDraft,
@@ -2104,6 +2105,46 @@ describe("caption generator", () => {
         moodPlan: captionTestMoodPlan
       })
     ).rejects.toBeInstanceOf(AiGenerationError);
+  });
+
+  it("reports each violated caption format condition separately", async () => {
+    const provider = new MockAiProvider({
+      response: { caption: "   ", hashtags: "not-an-array" }
+    });
+
+    const error = await generateCaption({
+      activitySummary: createActivitySummary(),
+      moodPlan: captionTestMoodPlan,
+      provider,
+      persona: captionTestPersona,
+      roastLevel: 2
+    }).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(AiGenerationError);
+    const details = (error as AiGenerationError).details;
+    expect(details?.violations).toContain(CAPTION_FORMAT_VIOLATIONS.captionEmpty);
+    expect(details?.violations).toContain(
+      CAPTION_FORMAT_VIOLATIONS.hashtagsNotArray
+    );
+  });
+
+  it("preserves the raw provider response on a caption format violation", async () => {
+    const responseJson = '{"caption":123,"hashtags":["#a","#b"]}';
+    const provider = new MockAiProvider({ responseJson });
+
+    const error = await generateCaption({
+      activitySummary: createActivitySummary(),
+      moodPlan: captionTestMoodPlan,
+      provider,
+      persona: captionTestPersona,
+      roastLevel: 2
+    }).catch((caught: unknown) => caught);
+
+    const details = (error as AiGenerationError).details;
+    expect(details?.violations).toEqual([
+      CAPTION_FORMAT_VIOLATIONS.captionNotString
+    ]);
+    expect(details?.rawResponseJson).toBe(responseJson);
   });
 
   it("generateCaption rejects quiet-day caption that fabricates work", async () => {

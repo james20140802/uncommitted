@@ -601,29 +601,67 @@ export async function generateCaption(
     request
   );
 
-  const result = parseCaptionResult(response.data);
+  const result = parseCaptionResult(response.data, response.rawResponseJson);
   assertCaptionQuietDayHonesty(result.caption, options.activitySummary);
   return result;
 }
 
-function parseCaptionResult(data: CaptionProviderData): CaptionResult {
+/**
+ * UNC-252 / T1: 캡션 형식 조건을 개별 검사로 분리한다.
+ * 조건 개수를 어디에도 하드코딩하지 않기 위해 검사 목록으로 표현한다
+ * (T4가 해시태그 개수 조건을 추가해도 이 구조가 그대로 확장된다).
+ */
+export const CAPTION_FORMAT_VIOLATIONS = {
+  captionNotString: "caption-not-string",
+  captionEmpty: "caption-empty",
+  hashtagsNotArray: "hashtags-not-array",
+  hashtagsInvalidToken: "hashtags-invalid-token"
+} as const;
+
+export type CaptionFormatViolation =
+  (typeof CAPTION_FORMAT_VIOLATIONS)[keyof typeof CAPTION_FORMAT_VIOLATIONS];
+
+function collectCaptionFormatViolations(
+  data: CaptionProviderData
+): CaptionFormatViolation[] {
+  const violations: CaptionFormatViolation[] = [];
+
+  if (typeof data.caption !== "string") {
+    violations.push(CAPTION_FORMAT_VIOLATIONS.captionNotString);
+  } else if (data.caption.trim().length === 0) {
+    violations.push(CAPTION_FORMAT_VIOLATIONS.captionEmpty);
+  }
+
+  if (!Array.isArray(data.hashtags)) {
+    violations.push(CAPTION_FORMAT_VIOLATIONS.hashtagsNotArray);
+  } else if (!data.hashtags.every(isHashtag)) {
+    violations.push(CAPTION_FORMAT_VIOLATIONS.hashtagsInvalidToken);
+  }
+
+  return violations;
+}
+
+function parseCaptionResult(
+  data: CaptionProviderData,
+  rawResponseJson?: string
+): CaptionResult {
+  // 안전 위반은 형식 위반과 성격이 다르다. 재시도·진단 경로에 들어가지
+  // 않도록 구조화 검사보다 먼저, 별도 에러로 던진다.
   assertSafeProviderData(data);
 
-  if (
-    typeof data.caption !== "string" ||
-    data.caption.trim().length === 0 ||
-    !Array.isArray(data.hashtags) ||
-    !data.hashtags.every(isHashtag)
-  ) {
+  const violations = collectCaptionFormatViolations(data);
+
+  if (violations.length > 0) {
     throw new AiGenerationError(
       "AI provider returned invalid caption.",
-      "malformed-response"
+      "malformed-response",
+      { violations, rawResponseJson }
     );
   }
 
   return {
-    caption: data.caption.trim(),
-    hashtags: data.hashtags.map((h) => (h as string).trim())
+    caption: (data.caption as string).trim(),
+    hashtags: (data.hashtags as string[]).map((h) => h.trim())
   };
 }
 
