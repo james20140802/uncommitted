@@ -1019,6 +1019,46 @@ describe("generate command", () => {
     });
   });
 
+  it("keeps exit code 4 and leaves the next run unblocked after caption retries are exhausted (UNC-254)", async () => {
+    const { io, stderr } = createIo();
+    const fixture = await createRegisteredProjectFixture();
+    const exhaustingProvider = new TaskAwareProvider({ captionMalformed: true });
+
+    await writeGitEvent(fixture.project, "2026-05-12");
+
+    const firstExitCode = await runCli(["generate", "today"], io, {
+      homeDir: fixture.homeDir,
+      now: () => "2026-05-12T23:30:00.000Z",
+      aiProvider: exhaustingProvider
+    });
+
+    expect(firstExitCode).toBe(4);
+    expect(stderr).toEqual(["AI provider returned invalid caption."]);
+    // Both attempts hit the provider: the retry fed the rejection reason
+    // back, and the second (also malformed) response exhausted the limit.
+    const captionRequests = exhaustingProvider.requests.filter(
+      (request) => request.task === "caption"
+    );
+    expect(captionRequests).toHaveLength(2);
+
+    // A failed run must not block the next scheduled run: retry with a
+    // provider that returns a valid caption and confirm it succeeds.
+    const recoveredProvider = new TaskAwareProvider();
+    const secondExitCode = await runCli(["generate", "today"], io, {
+      homeDir: fixture.homeDir,
+      now: () => "2026-05-12T23:45:00.000Z",
+      aiProvider: recoveredProvider
+    });
+    const dateDir = join(fixture.draftRoot, "2026-05-12");
+    const latest = await readJson(join(dateDir, "latest.json"));
+
+    expect(secondExitCode).toBe(0);
+    expect(latest).toMatchObject({
+      revision: "rev-002",
+      path: join(dateDir, "rev-002")
+    });
+  });
+
   it("returns a visual-generation error while preserving text draft artifacts", async () => {
     const { io, stdout, stderr } = createIo();
     const fixture = await createRegisteredProjectFixture();
@@ -1150,6 +1190,12 @@ class TaskAwareProvider implements AiProvider {
       caption?: CaptionResult;
       failDraft?: boolean;
       failCaption?: boolean;
+      /**
+       * UNC-254 / T3: unlike `failCaption` (a raw provider error, not
+       * retried), this returns a caption format violation on every call —
+       * exercising the caption retry loop through to exhaustion.
+       */
+      captionMalformed?: boolean;
       model?: string;
     } = {}
   ) {
@@ -1180,6 +1226,10 @@ class TaskAwareProvider implements AiProvider {
     if (request.task === "caption") {
       if (this.options.failCaption) {
         throw new Error("provider unavailable");
+      }
+
+      if (this.options.captionMalformed) {
+        return { responseJson: JSON.stringify({ caption: "", hashtags: [] }) };
       }
 
       return {

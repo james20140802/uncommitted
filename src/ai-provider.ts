@@ -383,6 +383,64 @@ export async function generateStructured<
   };
 }
 
+export type StructuredRetryOptions<TData extends JsonObject, TResult> = {
+  maxAttempts: number;
+  validate: (data: TData, rawResponseJson: string) => TResult;
+  isRetryable: (error: unknown) => boolean;
+  buildRetryInstructions: (
+    previousInstructions: string,
+    error: AiGenerationError
+  ) => string;
+};
+
+/**
+ * UNC-254 / T3: 호출과 검증을 한 루프에 묶어, 검증 실패 사유를 다음 요청
+ * 지시문에 되먹인 뒤 프로바이더를 다시 부를 수 있게 한다. generateStructured는
+ * 다른 호출자들이 그대로 쓰므로 시그니처를 바꾸지 않고 형제 함수로 둔다.
+ * 재시도 여부는 호출자가 넘긴 isRetryable이 결정한다 — 안전 위반이나
+ * 정직성 위반을 재시도하지 않기 위해 판단을 도메인 쪽에 남긴다.
+ */
+export async function generateStructuredWithRetry<
+  TData extends JsonObject,
+  TResult
+>(
+  provider: AiProvider,
+  request: AiStructuredGenerationRequest,
+  options: StructuredRetryOptions<TData, TResult>
+): Promise<TResult> {
+  let currentRequest = request;
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= options.maxAttempts; attempt += 1) {
+    const response = await generateStructured<TData>(provider, currentRequest);
+
+    try {
+      return options.validate(response.data, response.rawResponseJson);
+    } catch (error) {
+      lastError = error;
+
+      if (
+        attempt === options.maxAttempts ||
+        !options.isRetryable(error) ||
+        !(error instanceof AiGenerationError)
+      ) {
+        throw error;
+      }
+
+      currentRequest = createAiGenerationRequest({
+        task: currentRequest.task,
+        instructions: options.buildRetryInstructions(
+          currentRequest.instructions,
+          error
+        ),
+        summary: currentRequest.input
+      });
+    }
+  }
+
+  throw lastError;
+}
+
 export class MockAiProvider implements AiProvider {
   public readonly name = "mock";
   public readonly requests: AiStructuredGenerationRequest[] = [];

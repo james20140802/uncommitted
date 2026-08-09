@@ -1,9 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { AiGenerationError, MockAiProvider } from "../src/ai-provider.js";
+import type {
+  AiProvider,
+  AiProviderRawResponse,
+  AiStructuredGenerationRequest,
+  JsonObject
+} from "../src/ai-provider.js";
 import type { ActivitySummary } from "../src/activity-summary.js";
 import {
   buildCaptionInstructions,
   CAPTION_FORMAT_VIOLATIONS,
+  CAPTION_MAX_ATTEMPTS,
   deriveCaptionText,
   generateCaption,
   generateDiaryDraft,
@@ -2147,6 +2154,80 @@ describe("caption generator", () => {
     expect(details?.rawResponseJson).toBe(responseJson);
   });
 
+  it("retries a caption format violation and succeeds on the second attempt", async () => {
+    const provider = new SequencedAiProvider([
+      { caption: "", hashtags: ["#a", "#b"] },
+      { caption: "오늘은 조용했다", hashtags: ["#개발", "#일기"] }
+    ]);
+
+    const result = await generateCaption({
+      activitySummary: createActivitySummary(),
+      moodPlan: captionTestMoodPlan,
+      provider,
+      persona: captionTestPersona,
+      roastLevel: 2
+    });
+
+    expect(result.caption).toBe("오늘은 조용했다");
+    expect(provider.requests).toHaveLength(2);
+  });
+
+  it("includes the previous rejection reason in the retry request", async () => {
+    const provider = new SequencedAiProvider([
+      { caption: "", hashtags: ["#a", "#b"] },
+      { caption: "다시 씀", hashtags: ["#개발", "#일기"] }
+    ]);
+
+    await generateCaption({
+      activitySummary: createActivitySummary(),
+      moodPlan: captionTestMoodPlan,
+      provider,
+      persona: captionTestPersona,
+      roastLevel: 2
+    });
+
+    const retryInstructions = provider.requests[1].instructions;
+    expect(retryInstructions).toContain(CAPTION_FORMAT_VIOLATIONS.captionEmpty);
+    expect(retryInstructions).not.toBe(provider.requests[0].instructions);
+  });
+
+  it("stops after the attempt limit and throws the last violation", async () => {
+    const provider = new SequencedAiProvider([
+      { caption: "", hashtags: ["#a", "#b"] }
+    ]);
+
+    const error = await generateCaption({
+      activitySummary: createActivitySummary(),
+      moodPlan: captionTestMoodPlan,
+      provider,
+      persona: captionTestPersona,
+      roastLevel: 2
+    }).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(AiGenerationError);
+    expect((error as AiGenerationError).exitCode).toBe(4);
+    expect(provider.requests).toHaveLength(CAPTION_MAX_ATTEMPTS);
+  });
+
+  it("never retries a quiet-day honesty violation", async () => {
+    // 조용한 날인데 작업을 지어낸 캡션 — 형식은 멀쩡하다.
+    const provider = new SequencedAiProvider([
+      { caption: "오늘 커밋 5개를 했다", hashtags: ["#개발", "#일기"] }
+    ]);
+
+    await expect(
+      generateCaption({
+        activitySummary: createQuietActivitySummary(),
+        moodPlan: captionTestMoodPlan,
+        provider,
+        persona: captionTestPersona,
+        roastLevel: 2
+      })
+    ).rejects.toThrow();
+
+    expect(provider.requests).toHaveLength(1);
+  });
+
   it("generateCaption rejects quiet-day caption that fabricates work", async () => {
     const quietSummary = createActivitySummary({
       activityLevel: "none",
@@ -2381,6 +2462,28 @@ function createStoryFormatPlan(
     captionStyle: plan.captionStyle,
     doNotMention: plan.doNotMention
   };
+}
+
+/**
+ * UNC-254 / T3: `MockAiProvider`는 매 호출마다 같은 응답을 주므로 재시도
+ * 시퀀스를 표현할 수 없다. 이 스텁은 호출 순서대로 다른 응답을 준다
+ * (마지막 응답은 이후 모든 호출에 반복된다).
+ */
+class SequencedAiProvider implements AiProvider {
+  public readonly name = "mock" as const;
+  public readonly requests: AiStructuredGenerationRequest[] = [];
+
+  constructor(private readonly responses: JsonObject[]) {}
+
+  async generateStructured(
+    request: AiStructuredGenerationRequest
+  ): Promise<AiProviderRawResponse> {
+    this.requests.push(request);
+    const next =
+      this.responses[Math.min(this.requests.length - 1, this.responses.length - 1)];
+
+    return { responseJson: JSON.stringify(next) };
+  }
 }
 
 /** 조용한 날 정직성 가드를 켜는 최소 요약 (UNC-251). */

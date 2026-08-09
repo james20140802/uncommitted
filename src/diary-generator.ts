@@ -2,7 +2,8 @@ import type { ActivityLevel, ActivitySummary } from "./activity-summary.js";
 import {
   AiGenerationError,
   createAiGenerationRequest,
-  generateStructured
+  generateStructured,
+  generateStructuredWithRetry
 } from "./ai-provider.js";
 import type {
   AiProvider,
@@ -577,6 +578,41 @@ type CaptionProviderData = JsonObject & {
   hashtags?: JsonValue;
 };
 
+/**
+ * UNC-254 / T3: 총 2회 시도(최초 1 + 재시도 1).
+ * 형식 위반은 프로바이더가 지시문을 다시 읽으면 대개 한 번에 고쳐지는
+ * 종류(필드 모양·개수)라 1회면 충분하고, 스케줄 실행이 프로바이더 지연에
+ * 오래 묶이지 않게 상한을 낮게 둔다. 재시도해도 안 고쳐지는 실패는
+ * 진단 파일(UNC-257)로 원인을 남기는 쪽이 낫다.
+ */
+export const CAPTION_MAX_ATTEMPTS = 2;
+
+function isRetryableCaptionFailure(error: unknown): boolean {
+  // 형식 위반만 재시도한다. 안전 위반(assertSafeProviderData)과
+  // 조용한 날 정직성 위반(assertCaptionQuietDayHonesty)은 프롬프트를
+  // 다시 던진다고 고쳐질 성격이 아니며, 재시도가 오히려 위반을
+  // 반복 시도하는 꼴이 된다.
+  return (
+    error instanceof AiGenerationError &&
+    error.code === "malformed-response" &&
+    (error.details?.violations?.length ?? 0) > 0
+  );
+}
+
+function buildCaptionRetryInstructions(
+  previousInstructions: string,
+  error: AiGenerationError
+): string {
+  const violations = error.details?.violations ?? [];
+
+  return [
+    previousInstructions,
+    "",
+    `The previous response was rejected. Violated conditions: ${violations.join(", ")}.`,
+    "Return corrected JSON that satisfies every condition above. Keep the same content intent; fix only the format."
+  ].join("\n");
+}
+
 export async function generateCaption(
   options: GenerateCaptionOptions
 ): Promise<CaptionResult> {
@@ -596,14 +632,23 @@ export async function generateCaption(
     })
   });
 
-  const response = await generateStructured<CaptionProviderData>(
+  return generateStructuredWithRetry<CaptionProviderData, CaptionResult>(
     options.provider,
-    request
-  );
+    request,
+    {
+      maxAttempts: CAPTION_MAX_ATTEMPTS,
+      isRetryable: isRetryableCaptionFailure,
+      buildRetryInstructions: buildCaptionRetryInstructions,
+      validate: (data, rawResponseJson) => {
+        const result = parseCaptionResult(data, rawResponseJson);
+        // 정직성 검사는 검증 안에서 돌되 재시도 대상이 아니다
+        // (isRetryableCaptionFailure가 걸러낸다).
+        assertCaptionQuietDayHonesty(result.caption, options.activitySummary);
 
-  const result = parseCaptionResult(response.data, response.rawResponseJson);
-  assertCaptionQuietDayHonesty(result.caption, options.activitySummary);
-  return result;
+        return result;
+      }
+    }
+  );
 }
 
 /**
