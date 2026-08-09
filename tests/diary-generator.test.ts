@@ -2192,8 +2192,17 @@ describe("caption generator", () => {
   });
 
   it("stops after the attempt limit and throws the last violation", async () => {
+    // Distinct violations per attempt so the assertions below can only pass
+    // if the thrown error is the *second* attempt's error — a regression
+    // that rethrows a cached first-attempt error (or a re-wrapped generic
+    // error) would fail this test.
+    const secondRawResponseJson = JSON.stringify({
+      caption: "다시 씀",
+      hashtags: "not-an-array"
+    });
     const provider = new SequencedAiProvider([
-      { caption: "", hashtags: ["#a", "#b"] }
+      { caption: "", hashtags: ["#a", "#b"] },
+      { caption: "다시 씀", hashtags: "not-an-array" }
     ]);
 
     const error = await generateCaption({
@@ -2207,6 +2216,15 @@ describe("caption generator", () => {
     expect(error).toBeInstanceOf(AiGenerationError);
     expect((error as AiGenerationError).exitCode).toBe(4);
     expect(provider.requests).toHaveLength(CAPTION_MAX_ATTEMPTS);
+
+    const details = (error as AiGenerationError).details;
+    expect(details?.violations).toEqual([
+      CAPTION_FORMAT_VIOLATIONS.hashtagsNotArray
+    ]);
+    expect(details?.violations).not.toContain(
+      CAPTION_FORMAT_VIOLATIONS.captionEmpty
+    );
+    expect(details?.rawResponseJson).toBe(secondRawResponseJson);
   });
 
   it("never retries a quiet-day honesty violation", async () => {
