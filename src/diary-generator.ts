@@ -592,11 +592,26 @@ function isRetryableCaptionFailure(error: unknown): boolean {
   // 조용한 날 정직성 위반(assertCaptionQuietDayHonesty)은 프롬프트를
   // 다시 던진다고 고쳐질 성격이 아니며, 재시도가 오히려 위반을
   // 반복 시도하는 꼴이 된다.
-  return (
-    error instanceof AiGenerationError &&
-    error.code === "malformed-response" &&
-    (error.details?.violations?.length ?? 0) > 0
-  );
+  //
+  // UNC-237 review follow-up: 오늘은 안전/정직성 위반이 details를 싣지
+  // 않는다는 우연한 사실 하나로 재시도 대상에서 제외되고 있었다. "안전·
+  // 정직성 위반은 절대 재시도하지 않는다"는 제품 규칙을 그 우연에 기대지
+  // 않도록, violations의 각 원소가 알려진 형식 위반 집합
+  // (CAPTION_FORMAT_VIOLATIONS)에 속하는지로 구조적으로 판단한다 — details를
+  // 다른 이유로 싣게 될 미래의 에러가 우연히 재시도 대상이 되는 일을 막는다.
+  if (!(error instanceof AiGenerationError) || error.code !== "malformed-response") {
+    return false;
+  }
+
+  const violations = error.details?.violations;
+
+  if (violations === undefined || violations.length === 0) {
+    return false;
+  }
+
+  const knownFormatViolations = new Set<string>(Object.values(CAPTION_FORMAT_VIOLATIONS));
+
+  return violations.every((violation) => knownFormatViolations.has(violation));
 }
 
 function buildCaptionRetryInstructions(

@@ -1733,6 +1733,60 @@ describe("caption generator", () => {
     });
   });
 
+  it("never retries a quiet-day caption honesty violation, even though it carries no details (UNC-237)", async () => {
+    // Structural guarantee check: the second, distinct response below is a
+    // valid caption that would satisfy the honesty guard. If a regression
+    // reintroduced retry-by-accident (e.g. treating any code === "malformed-response"
+    // error as retryable), this test would observe a second provider call
+    // and the wrong (successful) outcome instead of catching the guard.
+    const provider = new SequencedAiProvider([
+      {
+        caption:
+          "좋은 하루 관리 팁 ①\n\n누구나 겪는 그 오후에\n버그 하나를 조용히 fixed 해두세요.\n\n아무도 모르게요.",
+        hashtags: ["#Uncommitted", "#개발일기"]
+      },
+      { caption: "오늘은 조용했다", hashtags: ["#개발", "#일기"] }
+    ]);
+
+    const error = await generateCaption({
+      activitySummary: createQuietActivitySummary(),
+      moodPlan: captionTestMoodPlan,
+      provider,
+      persona: captionTestPersona,
+      roastLevel: 2
+    }).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(AiGenerationError);
+    expect((error as AiGenerationError).message).toBe(
+      "AI provider fabricated quiet-day activity in caption."
+    );
+    expect(provider.requests).toHaveLength(1);
+  });
+
+  it("never retries an unsafe-diary-draft caption violation, even though it carries no details (UNC-237)", async () => {
+    // Same structural guarantee, exercised through assertSafeProviderData
+    // instead of the honesty guard. The second response is a clean caption
+    // that would succeed if a retry were (incorrectly) attempted.
+    const provider = new SequencedAiProvider([
+      { caption: "token: sk-abcdefghijklmnop", hashtags: ["#a", "#b"] },
+      { caption: "오늘은 조용했다", hashtags: ["#개발", "#일기"] }
+    ]);
+
+    const error = await generateCaption({
+      activitySummary: createActivitySummary(),
+      moodPlan: captionTestMoodPlan,
+      provider,
+      persona: captionTestPersona,
+      roastLevel: 2
+    }).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(AiGenerationError);
+    expect((error as AiGenerationError).message).toBe(
+      "AI provider returned unsafe diary draft."
+    );
+    expect(provider.requests).toHaveLength(1);
+  });
+
   it("accepts a quiet-day caption that stays universal without claiming work (UNC-251)", async () => {
     const quietSummary = createActivitySummary({
       activityLevel: "none",
