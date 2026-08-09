@@ -249,6 +249,23 @@ export async function writeCaptionFailureDiagnostics(
   });
 }
 
+/**
+ * UNC-257 / T6 review follow-up: coverage here is bounded by whatever the
+ * three composed detectors catch, not by a purpose-built diagnostics
+ * redactor. Known gap — `detectSecrets` (credential-detector.ts) only
+ * redacts a secret/token when it is either a recognized vendor signature,
+ * assigned with an immediate `key:`/`key=` delimiter, or a bare run of
+ * >=32 high-entropy characters. A secret leaked in prose with none of those
+ * shapes (e.g. "here's the token sk-...") passes through unredacted. This
+ * is deliberately NOT closed by widening `ASSIGNMENT_PATTERN` in
+ * credential-detector.ts — that detector is shared with the
+ * safety-report/export-blocking pipeline, and matching "keyword +
+ * whitespace" would redact the next word after every ordinary use of
+ * "secret"/"token"/"auth" in prose ("secret sauce", "token bucket"),
+ * a product-wide false-positive regression. See the skipped case in
+ * tests/draft-storage.test.ts ("[known gap] does not yet redact an
+ * undelimited token in prose") for a reproduction.
+ */
 function redactDiagnosticText(value: string): string {
   const afterSanitize = sanitizeText(value).value;
   const afterArchitecture = redactArchitectureDisclosure(afterSanitize).value;
