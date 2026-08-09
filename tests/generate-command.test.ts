@@ -991,6 +991,34 @@ describe("generate command", () => {
     });
   });
 
+  it("marks the revision incomplete when the caption stage fails", async () => {
+    const { io, stdout, stderr } = createIo();
+    const fixture = await createRegisteredProjectFixture();
+    const provider = new TaskAwareProvider({ failCaption: true });
+
+    await writeGitEvent(fixture.project, "2026-05-12");
+
+    const exitCode = await runCli(["generate", "today"], io, {
+      homeDir: fixture.homeDir,
+      now: () => "2026-05-12T23:30:00.000Z",
+      aiProvider: provider
+    });
+    const outputDir = join(fixture.draftRoot, "2026-05-12", "rev-001");
+    const metadata = (await readJson(join(outputDir, "metadata.json"))) as Record<
+      string,
+      unknown
+    >;
+
+    expect(exitCode).toBe(4);
+    expect(stdout).toEqual([]);
+    expect(stderr).toEqual(["AI provider failed. Check provider configuration."]);
+    expect(metadata.status).toBe("incomplete");
+    expect((metadata.incomplete as Record<string, unknown>).stage).toBe("caption");
+    await expect(readFile(join(fixture.draftRoot, "latest.json"), "utf8")).rejects.toMatchObject({
+      code: "ENOENT"
+    });
+  });
+
   it("returns a visual-generation error while preserving text draft artifacts", async () => {
     const { io, stdout, stderr } = createIo();
     const fixture = await createRegisteredProjectFixture();
@@ -1121,6 +1149,7 @@ class TaskAwareProvider implements AiProvider {
       draft?: ReturnType<typeof createProviderDraft>;
       caption?: CaptionResult;
       failDraft?: boolean;
+      failCaption?: boolean;
       model?: string;
     } = {}
   ) {
@@ -1149,6 +1178,10 @@ class TaskAwareProvider implements AiProvider {
     }
 
     if (request.task === "caption") {
+      if (this.options.failCaption) {
+        throw new Error("provider unavailable");
+      }
+
       return {
         responseJson: JSON.stringify(this.options.caption ?? createProviderCaption())
       };

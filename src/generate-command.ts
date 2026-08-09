@@ -43,6 +43,7 @@ import {
   DraftStorageError,
   writeDraftArtifactJson,
   writeDraftArtifactText,
+  writeIncompleteDraftMarker,
   writeLatestDraftPointer
 } from "./draft-storage.js";
 import type { ManualNoteEvent } from "./note-command.js";
@@ -384,14 +385,33 @@ export async function runGenerateCommand(
     koreanEnglishMix: config.persona.voice.koreanEnglishMix,
     rawNarrativeProjection
   });
-  const captionResult = await generateCaption({
-    activitySummary,
-    moodPlan: storyFormatPlan,
-    provider,
-    persona: config.persona,
-    roastLevel: config.roastLevel,
-    rawNarrativeProjection
-  });
+  let captionResult;
+
+  try {
+    captionResult = await generateCaption({
+      activitySummary,
+      moodPlan: storyFormatPlan,
+      provider,
+      persona: config.persona,
+      roastLevel: config.roastLevel,
+      rawNarrativeProjection
+    });
+  } catch (error) {
+    // UNC-253 / T2: 실패 종료 경로가 돌기 전에 미완성 표시를 남긴다.
+    // 마커 기록 자체가 실패하더라도 원래 캡션 에러를 가리지 않는다.
+    try {
+      await writeIncompleteDraftMarker(draftRevision, {
+        stage: "caption",
+        reason: error instanceof Error ? error.message : "Caption generation failed.",
+        failedAt: generatedAt,
+        targetDate
+      });
+    } catch {
+      // 마커 기록 실패는 무시한다 — 원래 실패 원인을 보존하는 쪽이 중요하다.
+    }
+
+    throw error;
+  }
   // UNC-206 / T2: redact admin/route-guard/auth-checkpoint/server-side-
   // authorization architecture-disclosure detail in place before the draft
   // and caption reach any written artifact (story.json, caption.txt).

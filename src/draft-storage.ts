@@ -156,6 +156,43 @@ export async function writeDraftArtifactBinary(
   }
 }
 
+/**
+ * UNC-253 / T2: 캡션 단계에서 실패해 산출물이 반쪽만 남은 리비전을
+ * 완성본과 구별되게 표시한다. 별도 마커 파일 대신 metadata.json 필드로
+ * 남기는 이유는 소비자(render/export)가 이미 metadata.json을 게이팅
+ * 지점으로 쓰고 있고, 드래프트 파일 목록을 늘리지 않기 때문이다.
+ * latest.json 포인터는 의도적으로 건드리지 않는다 — 깨진 드래프트를
+ * 가리키면 안 된다.
+ */
+export type IncompleteDraftStage = "caption";
+
+export type IncompleteDraftMarkerInput = {
+  stage: IncompleteDraftStage;
+  reason: string;
+  failedAt: string;
+  targetDate: string;
+};
+
+export async function writeIncompleteDraftMarker(
+  revision: DraftRevision,
+  input: IncompleteDraftMarkerInput
+): Promise<void> {
+  await writeDraftArtifactJson(revision, "metadata.json", {
+    schemaVersion: 1,
+    targetDate: input.targetDate,
+    date: input.targetDate,
+    revision: revision.revision,
+    status: "incomplete",
+    exported: false,
+    published: false,
+    incomplete: {
+      stage: input.stage,
+      reason: input.reason,
+      failedAt: input.failedAt
+    }
+  });
+}
+
 export async function writeLatestDraftPointer(
   revision: DraftRevision,
   updatedAt: string

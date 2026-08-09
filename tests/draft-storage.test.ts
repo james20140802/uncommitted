@@ -9,6 +9,7 @@ import {
   readLatestDraftPointer,
   writeDraftArtifactJson,
   writeDraftArtifactText,
+  writeIncompleteDraftMarker,
   writeLatestDraftPointer,
   writeTextDraftRevision
 } from "../src/draft-storage.js";
@@ -195,6 +196,33 @@ describe("draft storage", () => {
       code: "invalid-json",
       message: "Draft artifact JSON is invalid."
     });
+  });
+
+  it("marks a revision incomplete without touching the latest pointer", async () => {
+    const draftRoot = await createDraftRoot();
+    const revision = await createDraftRevision({
+      draftRoot,
+      targetDate: "2026-08-10"
+    });
+
+    await writeIncompleteDraftMarker(revision, {
+      stage: "caption",
+      reason: "AI provider returned invalid caption.",
+      failedAt: "2026-08-10T14:30:00.000Z",
+      targetDate: "2026-08-10"
+    });
+
+    const metadata = JSON.parse(
+      await readFile(join(revision.outputDir, "metadata.json"), "utf8")
+    ) as Record<string, unknown>;
+
+    expect(metadata.status).toBe("incomplete");
+    expect(metadata.incomplete).toMatchObject({
+      stage: "caption",
+      reason: "AI provider returned invalid caption.",
+      failedAt: "2026-08-10T14:30:00.000Z"
+    });
+    await expect(readFile(join(draftRoot, "latest.json"), "utf8")).rejects.toThrow();
   });
 
   it("returns a short error for unusable draft roots", async () => {
