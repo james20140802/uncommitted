@@ -286,45 +286,44 @@ describe("draft storage", () => {
     expect(raw).not.toContain("sk-abcdef1234567890abcdef");
   });
 
-  // [known gap] `detectSecrets`'s ASSIGNMENT_PATTERN (src/credential-detector.ts:38-41)
-  // only fires when the secret keyword is immediately followed by `:` or `=`, and its
-  // high-entropy sweep only fires at >=32 chars. A secret leaked in prose with neither
-  // delimiter nor length ("here's the token sk-...") is NOT redacted today.
+  // `detectSecrets`'s ASSIGNMENT_PATTERN (src/credential-detector.ts:38-41) only fires
+  // when the secret keyword is immediately followed by `:` or `=`, and its high-entropy
+  // sweep only fires at >=32 chars, so a secret leaked in prose with neither delimiter
+  // nor length ("here's the token sk-...") is NOT redacted by detectSecrets alone.
   //
-  // This is intentionally left unfixed by widening credential-detector.ts: that
-  // detector is shared with the safety-report/export-blocking pipeline, and making the
-  // assignment heuristic match "keyword + whitespace" would redact the word after every
-  // ordinary use of "secret"/"token"/"auth" in prose ("secret sauce", "token bucket") —
-  // a product-wide false-positive regression that is out of scope for this fix (see
-  // UNC-257 review). Skipped rather than deleted so the gap stays visible in the suite
-  // instead of silently routed around.
-  it.skip(
-    "[known gap] does not yet redact an undelimited token in prose (credential-detector requires key:/key= or ≥32 chars)",
-    async () => {
-      const draftRoot = await createDraftRoot();
-      const revision = await createDraftRevision({
-        draftRoot,
-        targetDate: "2026-08-10"
-      });
+  // This is deliberately not closed by widening credential-detector.ts: that detector is
+  // shared with the safety-report/export-blocking pipeline, and making the assignment
+  // heuristic match "keyword + whitespace" would redact the word after every ordinary
+  // use of "secret"/"token"/"auth" in prose ("secret sauce", "token bucket") — a
+  // product-wide false-positive regression (see UNC-257 review). Instead,
+  // `redactDiagnosticText` in draft-storage.ts adds a local, prefix-anchored token pass
+  // (matching on a vendor prefix like "sk-" rather than a preceding keyword, so it
+  // cannot produce that false positive) that closes this specific case.
+  it("redacts an undelimited sk- token in prose via the local prefix-anchored pass", async () => {
+    const draftRoot = await createDraftRoot();
+    const revision = await createDraftRevision({
+      draftRoot,
+      targetDate: "2026-08-10"
+    });
 
-      await writeCaptionFailureDiagnostics(revision, {
-        failedAt: "2026-08-10T14:30:00.000Z",
-        reason: "AI provider returned invalid caption.",
-        violations: ["caption-empty", "hashtags-count-out-of-range"],
-        attempts: 2,
-        rawResponseJson:
-          '{"caption":"", "note":"reach me at dev@example.com or /Users/someone/secret, token sk-abcdef1234567890abcdef"}'
-      });
+    await writeCaptionFailureDiagnostics(revision, {
+      failedAt: "2026-08-10T14:30:00.000Z",
+      reason: "AI provider returned invalid caption.",
+      violations: ["caption-empty", "hashtags-count-out-of-range"],
+      attempts: 2,
+      rawResponseJson:
+        '{"caption":"", "note":"reach me at dev@example.com or /Users/someone/secret, token sk-abcdef1234567890abcdef"}'
+    });
 
-      const raw = await readFile(
-        join(revision.outputDir, "caption-failure.json"),
-        "utf8"
-      );
+    const raw = await readFile(
+      join(revision.outputDir, "caption-failure.json"),
+      "utf8"
+    );
 
-      // AC4 as literally worded: no secret/token survives, delimited or not.
-      expect(raw).not.toContain("sk-abcdef1234567890abcdef");
-    }
-  );
+    // AC4 as literally worded: no secret/token survives, delimited or not.
+    expect(raw).not.toContain("sk-abcdef1234567890abcdef");
+    expect(raw).toContain("[redacted-secret]");
+  });
 
   it("returns a short error for unusable draft roots", async () => {
     const directory = await createDraftRoot();

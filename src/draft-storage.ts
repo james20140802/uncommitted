@@ -219,7 +219,9 @@ export async function writeIncompleteDraftMarker(
  * `sanitizeText` and `redactArchitectureDisclosure` alone do not cover the
  * secrets/tokens category, so `detectSecrets` from credential-detector.ts
  * (already used elsewhere in the project for exactly this purpose) is
- * composed in as well.
+ * composed in as well, followed by a local prefix-anchored token pass (see
+ * `redactDiagnosticText` below) that closes a gap `detectSecrets` leaves
+ * open for undelimited tokens in prose.
  */
 export type CaptionFailureDiagnosticsInput = {
   failedAt: string;
@@ -250,27 +252,69 @@ export async function writeCaptionFailureDiagnostics(
 }
 
 /**
- * UNC-257 / T6 review follow-up: coverage here is bounded by whatever the
- * three composed detectors catch, not by a purpose-built diagnostics
- * redactor. Known gap — `detectSecrets` (credential-detector.ts) only
- * redacts a secret/token when it is either a recognized vendor signature,
- * assigned with an immediate `key:`/`key=` delimiter, or a bare run of
- * >=32 high-entropy characters. A secret leaked in prose with none of those
- * shapes (e.g. "here's the token sk-...") passes through unredacted. This
- * is deliberately NOT closed by widening `ASSIGNMENT_PATTERN` in
+ * UNC-257 / T6 review follow-up: `detectSecrets` (credential-detector.ts)
+ * only redacts a secret/token when it is either a recognized vendor
+ * signature, assigned with an immediate `key:`/`key=` delimiter, or a bare
+ * run of >=32 high-entropy characters. A secret leaked in prose with none
+ * of those shapes (e.g. "here's the token sk-abcdef1234567890abcdef")
+ * passed through unredacted — see the (formerly skipped) test in
+ * tests/draft-storage.test.ts.
+ *
+ * This is closed here, not by widening `ASSIGNMENT_PATTERN` in
  * credential-detector.ts — that detector is shared with the
  * safety-report/export-blocking pipeline, and matching "keyword +
  * whitespace" would redact the next word after every ordinary use of
- * "secret"/"token"/"auth" in prose ("secret sauce", "token bucket"),
- * a product-wide false-positive regression. See the skipped case in
- * tests/draft-storage.test.ts ("[known gap] does not yet redact an
- * undelimited token in prose") for a reproduction.
+ * "secret"/"token"/"auth" in prose ("secret sauce", "token bucket"), a
+ * product-wide false-positive regression. Instead, `redactPrefixAnchoredTokens`
+ * below adds a *prefix-anchored* pass (matching on a vendor-specific token
+ * prefix, not on a preceding keyword) that cannot produce that kind of
+ * false positive, and keeps the pattern local to this module so
+ * `credential-detector.ts` — and everything that shares it — is untouched.
+ *
+ * Remaining boundary (still open, honestly): a token with no recognizable
+ * vendor prefix, shorter than 32 characters, and with no `key:`/`key=`
+ * delimiter is still not detectable by any of the four passes below. That
+ * residual gap needs either a vendor-specific signature or a length/
+ * delimiter heuristic to close, and isn't addressed by this change.
  */
 function redactDiagnosticText(value: string): string {
   const afterSanitize = sanitizeText(value).value;
   const afterArchitecture = redactArchitectureDisclosure(afterSanitize).value;
+  const afterSecrets = detectSecrets(afterArchitecture).value;
 
-  return detectSecrets(afterArchitecture).value;
+  return redactPrefixAnchoredTokens(afterSecrets);
+}
+
+/**
+ * UNC-257 / T6 review follow-up: prefix-anchored token redaction, local to
+ * `draft-storage.ts` only — see the comment on `redactDiagnosticText` above
+ * for why this doesn't live in `credential-detector.ts`. Anchoring on a
+ * vendor-specific prefix (rather than a preceding keyword like "token"/
+ * "secret") means these patterns cannot fire on ordinary prose, so they're
+ * safe to keep loose about what follows the prefix.
+ */
+const PREFIX_ANCHORED_TOKEN_PATTERNS: RegExp[] = [
+  // Generic "sk-" secret-key prefix used by OpenAI, Anthropic, and similar
+  // vendors (also matches variants such as "sk-proj-...", "sk-ant-...").
+  // Not covered by VENDOR_PATTERNS in credential-detector.ts, which only
+  // recognizes the underscore-delimited Stripe form (`sk_live_...`).
+  /\bsk-[A-Za-z0-9_-]{16,}\b/g,
+  // Stripe test-mode secret key. VENDOR_PATTERNS in credential-detector.ts
+  // only covers the live-mode `sk_live_` form.
+  /\bsk_test_[0-9a-zA-Z]{16,}\b/g
+];
+
+// Matches the `[redacted-secret]` placeholder convention `detectSecrets`
+// already uses in credential-detector.ts, so diagnostics readers see one
+// consistent marker for "a secret was here" regardless of which pass caught
+// it.
+const PREFIX_ANCHORED_TOKEN_PLACEHOLDER = "[redacted-secret]";
+
+function redactPrefixAnchoredTokens(value: string): string {
+  return PREFIX_ANCHORED_TOKEN_PATTERNS.reduce(
+    (result, pattern) => result.replace(pattern, PREFIX_ANCHORED_TOKEN_PLACEHOLDER),
+    value
+  );
 }
 
 export async function writeLatestDraftPointer(
