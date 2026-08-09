@@ -1,5 +1,8 @@
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { redactArchitectureDisclosure } from "./architecture-disclosure.js";
+import { detectSecrets } from "./credential-detector.js";
+import { sanitizeText } from "./redaction.js";
 
 export type DraftStorageErrorCode =
   | "inspect-failed"
@@ -173,6 +176,13 @@ export type IncompleteDraftMarkerInput = {
   targetDate: string;
 };
 
+/**
+ * UNC-257 / T6: `reason` carries the raw provider/Error message straight
+ * through from `generate-command.ts`'s catch block, and metadata.json is
+ * written to disk unconditionally (including for exports gated later), so
+ * it must go through the same redaction pipeline as the diagnostics file
+ * rather than being persisted verbatim.
+ */
 export async function writeIncompleteDraftMarker(
   revision: DraftRevision,
   input: IncompleteDraftMarkerInput
@@ -187,10 +197,63 @@ export async function writeIncompleteDraftMarker(
     published: false,
     incomplete: {
       stage: input.stage,
-      reason: input.reason,
+      reason: redactDiagnosticText(input.reason),
       failedAt: input.failedAt
     }
   });
+}
+
+/**
+ * UNC-257 / T6: 재시도(UNC-254)가 소진된 캡션 실패의 원인을 사후에
+ * 확인할 수 있게 리비전 디렉토리에 남긴다. 2026-07-26 실패 때는 원본
+ * 응답이 남지 않아 네 조건 중 무엇이 걸렸는지 끝내 확정할 수 없었다.
+ * 타임스탬프를 반드시 포함한다 — schedule.stderr.log에 타임스탬프가
+ * 없어 실행 귀속을 파일 mtime으로 역산해야 했다.
+ *
+ * Redaction reuses the project's existing utilities rather than a new
+ * pattern-matching path: `sanitizeText` (emails / local absolute paths /
+ * private URLs / raw code snippets), `redactArchitectureDisclosure`
+ * (admin-allowlist / route-guard / auth-checkpoint / server-side-
+ * authorization phrasing), and `detectSecrets` (vendor API tokens,
+ * high-entropy tokens, and key:value/key=value assignment secrets) —
+ * `sanitizeText` and `redactArchitectureDisclosure` alone do not cover the
+ * secrets/tokens category, so `detectSecrets` from credential-detector.ts
+ * (already used elsewhere in the project for exactly this purpose) is
+ * composed in as well.
+ */
+export type CaptionFailureDiagnosticsInput = {
+  failedAt: string;
+  reason: string;
+  violations: string[];
+  attempts: number;
+  rawResponseJson?: string;
+};
+
+export async function writeCaptionFailureDiagnostics(
+  revision: DraftRevision,
+  input: CaptionFailureDiagnosticsInput
+): Promise<void> {
+  await writeDraftArtifactJson(revision, "caption-failure.json", {
+    schemaVersion: 1,
+    stage: "caption",
+    failedAt: input.failedAt,
+    targetDate: revision.targetDate,
+    revision: revision.revision,
+    attempts: input.attempts,
+    violations: input.violations,
+    reason: redactDiagnosticText(input.reason),
+    rawResponse:
+      input.rawResponseJson === undefined
+        ? null
+        : redactDiagnosticText(input.rawResponseJson)
+  });
+}
+
+function redactDiagnosticText(value: string): string {
+  const afterSanitize = sanitizeText(value).value;
+  const afterArchitecture = redactArchitectureDisclosure(afterSanitize).value;
+
+  return detectSecrets(afterArchitecture).value;
 }
 
 export async function writeLatestDraftPointer(

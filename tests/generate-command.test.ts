@@ -1059,6 +1059,35 @@ describe("generate command", () => {
     });
   });
 
+  it("preserves caption failure diagnostics after retries are exhausted (UNC-257)", async () => {
+    const { io, stderr } = createIo();
+    const fixture = await createRegisteredProjectFixture();
+    const exhaustingProvider = new TaskAwareProvider({ captionMalformed: true });
+
+    await writeGitEvent(fixture.project, "2026-05-12");
+
+    const exitCode = await runCli(["generate", "today"], io, {
+      homeDir: fixture.homeDir,
+      now: () => "2026-05-12T23:30:00.000Z",
+      aiProvider: exhaustingProvider
+    });
+
+    expect(exitCode).toBe(4);
+    expect(stderr).toEqual(["AI provider returned invalid caption."]);
+
+    const outputDir = join(fixture.draftRoot, "2026-05-12", "rev-001");
+    const diagnostics = (await readJson(
+      join(outputDir, "caption-failure.json")
+    )) as Record<string, unknown>;
+
+    expect(diagnostics.stage).toBe("caption");
+    expect(diagnostics.attempts).toBe(2);
+    expect(diagnostics.failedAt).toBe("2026-05-12T23:30:00.000Z");
+    expect(Array.isArray(diagnostics.violations)).toBe(true);
+    expect((diagnostics.violations as string[]).length).toBeGreaterThan(0);
+    expect(typeof diagnostics.rawResponse).toBe("string");
+  });
+
   it("returns a visual-generation error while preserving text draft artifacts", async () => {
     const { io, stdout, stderr } = createIo();
     const fixture = await createRegisteredProjectFixture();

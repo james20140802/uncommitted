@@ -7,6 +7,7 @@ import { resolveConfigPaths } from "../src/config-paths.js";
 import {
   createDraftRevision,
   readLatestDraftPointer,
+  writeCaptionFailureDiagnostics,
   writeDraftArtifactJson,
   writeDraftArtifactText,
   writeIncompleteDraftMarker,
@@ -223,6 +224,66 @@ describe("draft storage", () => {
       failedAt: "2026-08-10T14:30:00.000Z"
     });
     await expect(readFile(join(draftRoot, "latest.json"), "utf8")).rejects.toThrow();
+  });
+
+  it("redacts secrets, tokens, absolute paths, and emails from the incomplete marker reason", async () => {
+    const draftRoot = await createDraftRoot();
+    const revision = await createDraftRevision({
+      draftRoot,
+      targetDate: "2026-08-10"
+    });
+
+    await writeIncompleteDraftMarker(revision, {
+      stage: "caption",
+      reason:
+        "provider error at /Users/someone/secret, contact dev@example.com, token: sk-abcdef1234567890abcdef",
+      failedAt: "2026-08-10T14:30:00.000Z",
+      targetDate: "2026-08-10"
+    });
+
+    const raw = await readFile(join(revision.outputDir, "metadata.json"), "utf8");
+    const metadata = JSON.parse(raw) as Record<string, unknown>;
+    const reason = (metadata.incomplete as Record<string, unknown>).reason as string;
+
+    expect(reason).not.toContain("dev@example.com");
+    expect(reason).not.toContain("/Users/someone/secret");
+    expect(reason).not.toContain("sk-abcdef1234567890abcdef");
+  });
+
+  it("writes redacted caption failure diagnostics", async () => {
+    const draftRoot = await createDraftRoot();
+    const revision = await createDraftRevision({
+      draftRoot,
+      targetDate: "2026-08-10"
+    });
+
+    await writeCaptionFailureDiagnostics(revision, {
+      failedAt: "2026-08-10T14:30:00.000Z",
+      reason: "AI provider returned invalid caption.",
+      violations: ["caption-empty", "hashtags-count-out-of-range"],
+      attempts: 2,
+      rawResponseJson:
+        '{"caption":"", "note":"reach me at dev@example.com or /Users/someone/secret, token: sk-abcdef1234567890abcdef"}'
+    });
+
+    const raw = await readFile(
+      join(revision.outputDir, "caption-failure.json"),
+      "utf8"
+    );
+    const diagnostics = JSON.parse(raw) as Record<string, unknown>;
+
+    expect(diagnostics.violations).toEqual([
+      "caption-empty",
+      "hashtags-count-out-of-range"
+    ]);
+    expect(diagnostics.failedAt).toBe("2026-08-10T14:30:00.000Z");
+    expect(diagnostics.attempts).toBe(2);
+    expect(diagnostics.stage).toBe("caption");
+
+    // AC4: secret·토큰·로컬 절대경로·이메일이 남지 않는다.
+    expect(raw).not.toContain("dev@example.com");
+    expect(raw).not.toContain("/Users/someone/secret");
+    expect(raw).not.toContain("sk-abcdef1234567890abcdef");
   });
 
   it("returns a short error for unusable draft roots", async () => {

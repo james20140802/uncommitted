@@ -6,6 +6,7 @@ import {
   type ActivitySummary
 } from "./activity-summary.js";
 import {
+  AiGenerationError,
   createAiProvider,
   type AiProvider,
   type AiProviderConfig,
@@ -31,6 +32,7 @@ import {
 import { isPersona, selectPersona, type Persona } from "./persona.js";
 import { isNodeError, isRecord } from "./type-guards.js";
 import {
+  CAPTION_MAX_ATTEMPTS,
   deriveCaptionText,
   generateCaption,
   generateDiaryDraft,
@@ -41,6 +43,7 @@ import {
 import {
   createDraftRevision,
   DraftStorageError,
+  writeCaptionFailureDiagnostics,
   writeDraftArtifactJson,
   writeDraftArtifactText,
   writeIncompleteDraftMarker,
@@ -398,7 +401,8 @@ export async function runGenerateCommand(
     });
   } catch (error) {
     // UNC-253 / T2: 실패 종료 경로가 돌기 전에 미완성 표시를 남긴다.
-    // 마커 기록 자체가 실패하더라도 원래 캡션 에러를 가리지 않는다.
+    // UNC-257 / T6: 재시도가 소진된 형식 위반이면 진단 정보도 함께 남긴다.
+    // 마커·진단 기록 자체가 실패하더라도 원래 캡션 에러를 가리지 않는다.
     try {
       await writeIncompleteDraftMarker(draftRevision, {
         stage: "caption",
@@ -406,8 +410,18 @@ export async function runGenerateCommand(
         failedAt: generatedAt,
         targetDate
       });
+
+      if (error instanceof AiGenerationError && error.details !== undefined) {
+        await writeCaptionFailureDiagnostics(draftRevision, {
+          failedAt: generatedAt,
+          reason: error.message,
+          violations: error.details.violations,
+          attempts: CAPTION_MAX_ATTEMPTS,
+          rawResponseJson: error.details.rawResponseJson
+        });
+      }
     } catch {
-      // 마커 기록 실패는 무시한다 — 원래 실패 원인을 보존하는 쪽이 중요하다.
+      // 진단·마커 기록 실패는 무시한다 — 원래 실패 원인을 보존하는 쪽이 중요하다.
     }
 
     throw error;
