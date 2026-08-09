@@ -2135,6 +2135,61 @@ describe("caption generator", () => {
     );
   });
 
+  it("rejects an empty hashtag array", async () => {
+    const provider = new MockAiProvider({
+      response: { caption: "조용한 하루", hashtags: [] }
+    });
+
+    const error = await generateCaption({
+      activitySummary: createActivitySummary(),
+      moodPlan: captionTestMoodPlan,
+      provider,
+      persona: captionTestPersona,
+      roastLevel: 2
+    }).catch((caught: unknown) => caught);
+
+    expect((error as AiGenerationError).details?.violations).toContain(
+      CAPTION_FORMAT_VIOLATIONS.hashtagsCountOutOfRange
+    );
+  });
+
+  it("rejects more hashtags than the prompt allows", async () => {
+    const provider = new MockAiProvider({
+      response: {
+        caption: "긴 하루",
+        hashtags: ["#a", "#b", "#c", "#d", "#e", "#f"]
+      }
+    });
+
+    const error = await generateCaption({
+      activitySummary: createActivitySummary(),
+      moodPlan: captionTestMoodPlan,
+      provider,
+      persona: captionTestPersona,
+      roastLevel: 2
+    }).catch((caught: unknown) => caught);
+
+    expect((error as AiGenerationError).details?.violations).toContain(
+      CAPTION_FORMAT_VIOLATIONS.hashtagsCountOutOfRange
+    );
+  });
+
+  it("accepts a hashtag count inside the prompt range", async () => {
+    const provider = new MockAiProvider({
+      response: { caption: "괜찮은 하루", hashtags: ["#개발", "#일기"] }
+    });
+
+    const result = await generateCaption({
+      activitySummary: createActivitySummary(),
+      moodPlan: captionTestMoodPlan,
+      provider,
+      persona: captionTestPersona,
+      roastLevel: 2
+    });
+
+    expect(result.hashtags).toEqual(["#개발", "#일기"]);
+  });
+
   it("preserves the raw provider response on a caption format violation", async () => {
     const responseJson = '{"caption":123,"hashtags":["#a","#b"]}';
     const provider = new MockAiProvider({ responseJson });
@@ -2270,7 +2325,7 @@ describe("caption generator", () => {
         provider: new MockAiProvider({
           response: {
             caption: "오늘 인증 기능을 shipped 했습니다",
-            hashtags: ["#Uncommitted"]
+            hashtags: ["#Uncommitted", "#개발일기"]
           }
         }),
         persona: captionTestPersona,
@@ -2288,7 +2343,7 @@ describe("caption generator", () => {
         provider: new MockAiProvider({
           response: {
             caption: "버그를 fixed 하고 배포도 merged 했습니다",
-            hashtags: ["#Uncommitted"]
+            hashtags: ["#Uncommitted", "#개발일기"]
           }
         }),
         persona: captionTestPersona,
@@ -2365,7 +2420,7 @@ describe("caption generator", () => {
     const provider = new MockAiProvider({
       response: {
         caption: "문서 정리하는 하루였습니다",
-        hashtags: ["#Uncommitted"]
+        hashtags: ["#Uncommitted", "#개발일기"]
       }
     });
 

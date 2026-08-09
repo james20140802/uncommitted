@@ -660,11 +660,20 @@ export const CAPTION_FORMAT_VIOLATIONS = {
   captionNotString: "caption-not-string",
   captionEmpty: "caption-empty",
   hashtagsNotArray: "hashtags-not-array",
-  hashtagsInvalidToken: "hashtags-invalid-token"
+  hashtagsInvalidToken: "hashtags-invalid-token",
+  hashtagsCountOutOfRange: "hashtags-count-out-of-range"
 } as const;
 
 export type CaptionFormatViolation =
   (typeof CAPTION_FORMAT_VIOLATIONS)[keyof typeof CAPTION_FORMAT_VIOLATIONS];
+
+/**
+ * UNC-255 / T4: 캡션 프롬프트가 요구하는 해시태그 개수(2~5)를 파서도
+ * 동일하게 강제한다. 프롬프트는 2~5개를 요구하는데 파서는 빈 배열을
+ * 통과시키고 있어 계약이 둘로 갈라져 있었다.
+ */
+export const CAPTION_HASHTAG_MIN = 2;
+export const CAPTION_HASHTAG_MAX = 5;
 
 function collectCaptionFormatViolations(
   data: CaptionProviderData
@@ -679,8 +688,17 @@ function collectCaptionFormatViolations(
 
   if (!Array.isArray(data.hashtags)) {
     violations.push(CAPTION_FORMAT_VIOLATIONS.hashtagsNotArray);
-  } else if (!data.hashtags.every(isHashtag)) {
-    violations.push(CAPTION_FORMAT_VIOLATIONS.hashtagsInvalidToken);
+  } else {
+    if (!data.hashtags.every(isHashtag)) {
+      violations.push(CAPTION_FORMAT_VIOLATIONS.hashtagsInvalidToken);
+    }
+
+    if (
+      data.hashtags.length < CAPTION_HASHTAG_MIN ||
+      data.hashtags.length > CAPTION_HASHTAG_MAX
+    ) {
+      violations.push(CAPTION_FORMAT_VIOLATIONS.hashtagsCountOutOfRange);
+    }
   }
 
   return violations;
