@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import type { ActivitySummary } from "../src/activity-summary.js";
@@ -272,7 +272,7 @@ const materialCases: readonly MaterialCase[] = [
   }
 ];
 
-describe("candidate filter material check (parent AC2)", () => {
+describe("candidate filter material check (UNC-232 AC2)", () => {
   for (const testCase of materialCases) {
     it(`includes ${testCase.kindId} when its material is present`, () => {
       const ids = listStoryCardCandidates(createSummary(testCase.present)).map(
@@ -316,7 +316,7 @@ describe("candidate filter material check (parent AC2)", () => {
   });
 });
 
-describe("candidate filter on a completely quiet day (parent AC3)", () => {
+describe("candidate filter on a completely quiet day (UNC-232 AC3)", () => {
   it("never returns an empty candidate list when activityLevel is none", () => {
     const candidates = listStoryCardCandidates(createSummary({ activityLevel: "none" }));
 
@@ -333,7 +333,7 @@ describe("candidate filter on a completely quiet day (parent AC3)", () => {
   });
 });
 
-describe("candidate filter determinism (parent AC4)", () => {
+describe("candidate filter determinism (UNC-232 AC4)", () => {
   it("returns the same kind ids in the same order for the same summary", () => {
     const summary = createSummary({
       activityLevel: "medium",
@@ -374,29 +374,24 @@ describe("candidate filter determinism (parent AC4)", () => {
   });
 });
 
-describe("candidate filter purity (parent AC1)", () => {
-  const cardSourceFiles = [
-    "story-card-registry.ts",
-    "story-card-slots.ts",
-    "story-card-kind-typo.ts",
-    "story-card-kind-terminal.ts",
-    "story-card-kind-modal.ts",
-    "story-card-kind-checkboard.ts",
-    "story-card-kind-chat.ts",
-    "story-card-kind-diff.ts"
-  ];
+describe("candidate filter purity (UNC-232 AC1)", () => {
+  // 카드 종류가 늘어날 때마다 이 목록을 손으로 갱신하면 언젠가 빠뜨린다 —
+  // src/story-card-* 글롭으로 대상을 도출해 "새 종류 추가 시 다른 코드는
+  // 안 바뀐다"는 레지스트리의 계약을 이 테스트도 그대로 따르게 한다.
+  const srcDir = fileURLToPath(new URL("../src/", import.meta.url));
+  const cardSourceFiles = readdirSync(srcDir).filter((name) => name.startsWith("story-card-"));
 
   for (const fileName of cardSourceFiles) {
     it(`keeps ${fileName} free of any ai-provider import`, () => {
       const path = fileURLToPath(new URL(`../src/${fileName}`, import.meta.url));
       const source = readFileSync(path, "utf8");
 
-      expect(source).not.toContain("ai-provider");
+      expect(source).not.toMatch(/from\s+["'][^"']*ai-provider/);
     });
   }
 
-  it("computes candidates without touching the network or the clock", () => {
-    // requires()가 순수함을 행동으로 확인한다 — 같은 입력, 같은 출력, 부작용 없음.
+  it("keeps requires() referentially transparent across repeated calls", () => {
+    // requires()가 순수함을 행동으로 확인한다 — 같은 입력, 같은 출력.
     const summary = createSummary({ activityLevel: "low" });
 
     for (const kind of storyCardRegistry) {
