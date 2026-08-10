@@ -1112,6 +1112,39 @@ describe("generate command", () => {
     expect(typeof diagnostics.rawResponse).toBe("string");
   });
 
+  it("still writes caption failure diagnostics when the caption retry call itself fails (UNC-237)", async () => {
+    const { io, stderr } = createIo();
+    const fixture = await createRegisteredProjectFixture();
+    const brokenRetryProvider = new TaskAwareProvider({
+      captionMalformedThenProviderFailure: true
+    });
+
+    await writeGitEvent(fixture.project, "2026-05-12");
+
+    const exitCode = await runCli(["generate", "today"], io, {
+      homeDir: fixture.homeDir,
+      now: () => "2026-05-12T23:30:00.000Z",
+      aiProvider: brokenRetryProvider
+    });
+
+    // The surfaced failure is the one that actually ended the run — the
+    // broken retry call, not the first format violation.
+    expect(exitCode).toBe(4);
+    expect(stderr).toEqual(["AI provider failed. Check provider configuration."]);
+
+    // …but the first attempt's violations and raw response, the only record
+    // of why the caption was rejected, must still land on disk.
+    const outputDir = join(fixture.draftRoot, "2026-05-12", "rev-001");
+    const diagnostics = (await readJson(
+      join(outputDir, "caption-failure.json")
+    )) as Record<string, unknown>;
+
+    expect(diagnostics.stage).toBe("caption");
+    expect(Array.isArray(diagnostics.violations)).toBe(true);
+    expect((diagnostics.violations as string[]).length).toBeGreaterThan(0);
+    expect(typeof diagnostics.rawResponse).toBe("string");
+  });
+
   it("still writes caption failure diagnostics when the incomplete-marker write fails (UNC-237)", async () => {
     const { io, stderr } = createIo();
     const fixture = await createRegisteredProjectFixture();
@@ -1293,6 +1326,12 @@ class TaskAwareProvider implements AiProvider {
        * exercising the caption retry loop through to exhaustion.
        */
       captionMalformed?: boolean;
+      /**
+       * UNC-257 review follow-up: returns a format violation on the first
+       * caption call and then fails the call itself (timeout / 429 shape) on
+       * the retry, so the retry-call failure path is exercised end to end.
+       */
+      captionMalformedThenProviderFailure?: boolean;
       model?: string;
     } = {}
   ) {
@@ -1323,6 +1362,18 @@ class TaskAwareProvider implements AiProvider {
     if (request.task === "caption") {
       if (this.options.failCaption) {
         throw new Error("provider unavailable");
+      }
+
+      if (this.options.captionMalformedThenProviderFailure) {
+        const captionCalls = this.requests.filter(
+          (candidate) => candidate.task === "caption"
+        ).length;
+
+        if (captionCalls > 1) {
+          throw new Error("socket hang up");
+        }
+
+        return { responseJson: JSON.stringify({ caption: "", hashtags: [] }) };
       }
 
       if (this.options.captionMalformed) {

@@ -1106,6 +1106,44 @@ describe("generateStructuredWithRetry", () => {
     expect(provider.requests[1].instructions).toContain("[redacted-secret]");
     expect(provider.requests[1].instructions).not.toContain("sk-abcdefgh12345678");
   });
+
+  // UNC-257 review follow-up: the retry *call* failing (timeout / 429 /
+  // unparseable JSON) is a different path from a second validation rejection.
+  // The first attempt already produced the only record of why the caption was
+  // rejected, and `generate-command.ts` gates `caption-failure.json` on
+  // `details !== undefined` — so losing it here silently drops diagnostics at
+  // exactly the moment they are needed.
+  it("keeps the first attempt's diagnostics when the retry call itself fails", async () => {
+    const request = createAiGenerationRequest({
+      task: "caption",
+      instructions: "Write a caption.",
+      summary: createQuietSummary()
+    });
+    const provider = new FailOnRetryProvider({ caption: "" });
+
+    const thrown = await generateStructuredWithRetry(provider, request, {
+      maxAttempts: 2,
+      isRetryable: () => true,
+      buildRetryInstructions: (previous) => `${previous}\nretry`,
+      validate: (data: JsonObject, rawResponseJson: string) => {
+        throw new AiGenerationError("rejected", "malformed-response", {
+          violations: ["caption-empty"],
+          rawResponseJson
+        });
+      }
+    }).catch((error: unknown) => error);
+
+    expect(thrown).toBeInstanceOf(AiGenerationError);
+
+    const error = thrown as AiGenerationError;
+
+    // The surfaced reason stays the failure that actually ended the run…
+    expect(error.code).toBe("provider-failed");
+    // …while the first rejection's diagnostics ride along with it.
+    expect(error.details?.violations).toEqual(["caption-empty"]);
+    expect(error.details?.rawResponseJson).toBe('{"caption":""}');
+    expect(provider.requests).toHaveLength(2);
+  });
 });
 
 /**
@@ -1127,6 +1165,31 @@ class RetrySequenceProvider implements AiProvider {
       this.responses[Math.min(this.requests.length - 1, this.responses.length - 1)];
 
     return { responseJson: JSON.stringify(next) };
+  }
+}
+
+/**
+ * UNC-257 review follow-up: answers the first call and then breaks like a
+ * provider that times out or returns a 429 on the retry, so the retry-call
+ * failure path can be exercised separately from a repeated validation
+ * rejection.
+ */
+class FailOnRetryProvider implements AiProvider {
+  public readonly name = "mock" as const;
+  public readonly requests: AiStructuredGenerationRequest[] = [];
+
+  constructor(private readonly firstResponse: JsonObject) {}
+
+  async generateStructured(
+    request: AiStructuredGenerationRequest
+  ): Promise<AiProviderRawResponse> {
+    this.requests.push(request);
+
+    if (this.requests.length > 1) {
+      throw new Error("socket hang up");
+    }
+
+    return { responseJson: JSON.stringify(this.firstResponse) };
   }
 }
 

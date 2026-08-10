@@ -412,7 +412,13 @@ export async function generateStructuredWithRetry<
   let lastError: unknown;
 
   for (let attempt = 1; attempt <= options.maxAttempts; attempt += 1) {
-    const response = await generateStructured<TData>(provider, currentRequest);
+    let response: AiStructuredGenerationResponse<TData>;
+
+    try {
+      response = await generateStructured<TData>(provider, currentRequest);
+    } catch (error) {
+      throw withPriorDiagnostics(error, lastError);
+    }
 
     try {
       return options.validate(response.data, response.rawResponseJson);
@@ -439,6 +445,32 @@ export async function generateStructuredWithRetry<
   }
 
   throw lastError;
+}
+
+/**
+ * UNC-257 review follow-up: a retry *call* that fails (timeout, 429,
+ * unparseable JSON) throws an error with no `details`, and
+ * `generate-command.ts` gates `caption-failure.json` on `details !== undefined`
+ * — so the first attempt's violated conditions and raw response, the only
+ * record of why the caption was rejected, were dropped exactly when a
+ * post-mortem needs them (the 2026-07-26 failure this issue exists for).
+ *
+ * The later failure keeps its own message and code — it is the reason the run
+ * ended, and the operator-facing error must not claim a format violation when
+ * the provider actually hung up — while the earlier diagnostics ride along on
+ * `details`. Errors that already carry their own `details` are left untouched.
+ */
+function withPriorDiagnostics(error: unknown, priorError: unknown): unknown {
+  if (
+    !(error instanceof AiGenerationError) ||
+    error.details !== undefined ||
+    !(priorError instanceof AiGenerationError) ||
+    priorError.details === undefined
+  ) {
+    return error;
+  }
+
+  return new AiGenerationError(error.message, error.code, priorError.details);
 }
 
 export class MockAiProvider implements AiProvider {
