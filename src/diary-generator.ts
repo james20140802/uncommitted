@@ -2,7 +2,8 @@ import type { ActivityLevel, ActivitySummary } from "./activity-summary.js";
 import {
   AiGenerationError,
   createAiGenerationRequest,
-  generateStructured
+  generateStructured,
+  generateStructuredWithRetry
 } from "./ai-provider.js";
 import type {
   AiProvider,
@@ -577,6 +578,56 @@ type CaptionProviderData = JsonObject & {
   hashtags?: JsonValue;
 };
 
+/**
+ * UNC-254 / T3: 총 2회 시도(최초 1 + 재시도 1).
+ * 형식 위반은 프로바이더가 지시문을 다시 읽으면 대개 한 번에 고쳐지는
+ * 종류(필드 모양·개수)라 1회면 충분하고, 스케줄 실행이 프로바이더 지연에
+ * 오래 묶이지 않게 상한을 낮게 둔다. 재시도해도 안 고쳐지는 실패는
+ * 진단 파일(UNC-257)로 원인을 남기는 쪽이 낫다.
+ */
+export const CAPTION_MAX_ATTEMPTS = 2;
+
+function isRetryableCaptionFailure(error: unknown): boolean {
+  // 형식 위반만 재시도한다. 안전 위반(assertSafeProviderData)과
+  // 조용한 날 정직성 위반(assertCaptionQuietDayHonesty)은 프롬프트를
+  // 다시 던진다고 고쳐질 성격이 아니며, 재시도가 오히려 위반을
+  // 반복 시도하는 꼴이 된다.
+  //
+  // UNC-237 review follow-up: 오늘은 안전/정직성 위반이 details를 싣지
+  // 않는다는 우연한 사실 하나로 재시도 대상에서 제외되고 있었다. "안전·
+  // 정직성 위반은 절대 재시도하지 않는다"는 제품 규칙을 그 우연에 기대지
+  // 않도록, violations의 각 원소가 알려진 형식 위반 집합
+  // (CAPTION_FORMAT_VIOLATIONS)에 속하는지로 구조적으로 판단한다 — details를
+  // 다른 이유로 싣게 될 미래의 에러가 우연히 재시도 대상이 되는 일을 막는다.
+  if (!(error instanceof AiGenerationError) || error.code !== "malformed-response") {
+    return false;
+  }
+
+  const violations = error.details?.violations;
+
+  if (violations === undefined || violations.length === 0) {
+    return false;
+  }
+
+  const knownFormatViolations = new Set<string>(Object.values(CAPTION_FORMAT_VIOLATIONS));
+
+  return violations.every((violation) => knownFormatViolations.has(violation));
+}
+
+function buildCaptionRetryInstructions(
+  previousInstructions: string,
+  error: AiGenerationError
+): string {
+  const violations = error.details?.violations ?? [];
+
+  return [
+    previousInstructions,
+    "",
+    `The previous response was rejected. Violated conditions: ${violations.join(", ")}.`,
+    "Return corrected JSON that satisfies every condition above. Keep the same content intent; fix only the format."
+  ].join("\n");
+}
+
 export async function generateCaption(
   options: GenerateCaptionOptions
 ): Promise<CaptionResult> {
@@ -596,34 +647,99 @@ export async function generateCaption(
     })
   });
 
-  const response = await generateStructured<CaptionProviderData>(
+  return generateStructuredWithRetry<CaptionProviderData, CaptionResult>(
     options.provider,
-    request
-  );
+    request,
+    {
+      maxAttempts: CAPTION_MAX_ATTEMPTS,
+      isRetryable: isRetryableCaptionFailure,
+      buildRetryInstructions: buildCaptionRetryInstructions,
+      validate: (data, rawResponseJson) => {
+        const result = parseCaptionResult(data, rawResponseJson);
+        // 정직성 검사는 검증 안에서 돌되 재시도 대상이 아니다
+        // (isRetryableCaptionFailure가 걸러낸다).
+        assertCaptionQuietDayHonesty(result.caption, options.activitySummary);
 
-  const result = parseCaptionResult(response.data);
-  assertCaptionQuietDayHonesty(result.caption, options.activitySummary);
-  return result;
+        return result;
+      }
+    }
+  );
 }
 
-function parseCaptionResult(data: CaptionProviderData): CaptionResult {
+/**
+ * UNC-252 / T1: 캡션 형식 조건을 개별 검사로 분리한다.
+ * 조건 개수를 어디에도 하드코딩하지 않기 위해 검사 목록으로 표현한다
+ * (T4가 해시태그 개수 조건을 추가해도 이 구조가 그대로 확장된다).
+ */
+export const CAPTION_FORMAT_VIOLATIONS = {
+  captionNotString: "caption-not-string",
+  captionEmpty: "caption-empty",
+  hashtagsNotArray: "hashtags-not-array",
+  hashtagsInvalidToken: "hashtags-invalid-token",
+  hashtagsCountOutOfRange: "hashtags-count-out-of-range"
+} as const;
+
+export type CaptionFormatViolation =
+  (typeof CAPTION_FORMAT_VIOLATIONS)[keyof typeof CAPTION_FORMAT_VIOLATIONS];
+
+/**
+ * UNC-255 / T4: 캡션 프롬프트가 요구하는 해시태그 개수(2~5)를 파서도
+ * 동일하게 강제한다. 프롬프트는 2~5개를 요구하는데 파서는 빈 배열을
+ * 통과시키고 있어 계약이 둘로 갈라져 있었다.
+ */
+export const CAPTION_HASHTAG_MIN = 2;
+export const CAPTION_HASHTAG_MAX = 5;
+
+function collectCaptionFormatViolations(
+  data: CaptionProviderData
+): CaptionFormatViolation[] {
+  const violations: CaptionFormatViolation[] = [];
+
+  if (typeof data.caption !== "string") {
+    violations.push(CAPTION_FORMAT_VIOLATIONS.captionNotString);
+  } else if (data.caption.trim().length === 0) {
+    violations.push(CAPTION_FORMAT_VIOLATIONS.captionEmpty);
+  }
+
+  if (!Array.isArray(data.hashtags)) {
+    violations.push(CAPTION_FORMAT_VIOLATIONS.hashtagsNotArray);
+  } else {
+    if (!data.hashtags.every(isHashtag)) {
+      violations.push(CAPTION_FORMAT_VIOLATIONS.hashtagsInvalidToken);
+    }
+
+    if (
+      data.hashtags.length < CAPTION_HASHTAG_MIN ||
+      data.hashtags.length > CAPTION_HASHTAG_MAX
+    ) {
+      violations.push(CAPTION_FORMAT_VIOLATIONS.hashtagsCountOutOfRange);
+    }
+  }
+
+  return violations;
+}
+
+function parseCaptionResult(
+  data: CaptionProviderData,
+  rawResponseJson?: string
+): CaptionResult {
+  // 안전 위반은 형식 위반과 성격이 다르다. 재시도·진단 경로에 들어가지
+  // 않도록 구조화 검사보다 먼저, 별도 에러로 던진다.
   assertSafeProviderData(data);
 
-  if (
-    typeof data.caption !== "string" ||
-    data.caption.trim().length === 0 ||
-    !Array.isArray(data.hashtags) ||
-    !data.hashtags.every(isHashtag)
-  ) {
+  const violations = collectCaptionFormatViolations(data);
+
+  if (violations.length > 0) {
     throw new AiGenerationError(
       "AI provider returned invalid caption.",
-      "malformed-response"
+      "malformed-response",
+      { violations, rawResponseJson }
     );
   }
 
   return {
-    caption: data.caption.trim(),
-    hashtags: data.hashtags.map((h) => (h as string).trim())
+    caption: (data.caption as string).trim(),
+    hashtags: (data.hashtags as string[]).map((h) => h.trim())
   };
 }
 

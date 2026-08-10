@@ -134,6 +134,7 @@ Drafts are written locally to `~/Uncommitted/drafts/<YYYY-MM-DD>/<rev>/` (for ex
 | `safety-report.json` | The result of the secret/privacy safety scan. |
 | `metadata.json` | Draft metadata (date, revision, source info). |
 | `carousel/01.png` | The rendered 4:5 carousel card image(s). |
+| `caption-failure.json` | Written only when caption generation fails after retries. Records the violated format conditions, attempt count, timestamp, and the redacted provider response. |
 
 `uncommitted export instagram` writes Instagram-ready output to a sibling location:
 

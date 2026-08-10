@@ -71,6 +71,8 @@ export type AiStructuredGenerationResponse<
   schemaVersion: 1;
   provider: AiProviderName;
   data: TData;
+  /** UNC-252 / T1: 형식 위반 진단을 위해 원본 응답 본문을 보존한다. */
+  rawResponseJson: string;
 };
 
 export interface AiProvider {
@@ -138,12 +140,25 @@ export type AiGenerationErrorCode =
   | "provider-unavailable"
   | "unsafe-request";
 
+/**
+ * UNC-252 / T1: 형식 위반을 조건 단위로 실어 나르기 위한 선택적 페이로드.
+ * 재시도(T3)와 진단 기록(T6)이 "무엇이 걸렸는지"를 알아야 하므로,
+ * 뭉뚱그린 message 한 줄 대신 위반 조건 목록과 원본 응답을 함께 전달한다.
+ * 기존 호출자는 details를 넘기지 않으므로 계약이 깨지지 않는다.
+ */
+export type AiGenerationErrorDetails = {
+  violations: string[];
+  rawResponseJson?: string;
+  retryFeedback?: string;
+};
+
 export class AiGenerationError extends Error {
   public readonly exitCode = 4;
 
   constructor(
     message: string,
-    public readonly code: AiGenerationErrorCode
+    public readonly code: AiGenerationErrorCode,
+    public readonly details?: AiGenerationErrorDetails
   ) {
     super(message);
     this.name = "AiGenerationError";
@@ -363,8 +378,99 @@ export async function generateStructured<
   return {
     schemaVersion: 1,
     provider: provider.name,
-    data
+    data,
+    rawResponseJson: rawResponse.responseJson
   };
+}
+
+export type StructuredRetryOptions<TData extends JsonObject, TResult> = {
+  maxAttempts: number;
+  validate: (data: TData, rawResponseJson: string) => TResult;
+  isRetryable: (error: unknown) => boolean;
+  buildRetryInstructions: (
+    previousInstructions: string,
+    error: AiGenerationError
+  ) => string;
+};
+
+/**
+ * UNC-254 / T3: 호출과 검증을 한 루프에 묶어, 검증 실패 사유를 다음 요청
+ * 지시문에 되먹인 뒤 프로바이더를 다시 부를 수 있게 한다. generateStructured는
+ * 다른 호출자들이 그대로 쓰므로 시그니처를 바꾸지 않고 형제 함수로 둔다.
+ * 재시도 여부는 호출자가 넘긴 isRetryable이 결정한다 — 안전 위반이나
+ * 정직성 위반을 재시도하지 않기 위해 판단을 도메인 쪽에 남긴다.
+ */
+export async function generateStructuredWithRetry<
+  TData extends JsonObject,
+  TResult
+>(
+  provider: AiProvider,
+  request: AiStructuredGenerationRequest,
+  options: StructuredRetryOptions<TData, TResult>
+): Promise<TResult> {
+  let currentRequest = request;
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= options.maxAttempts; attempt += 1) {
+    let response: AiStructuredGenerationResponse<TData>;
+
+    try {
+      response = await generateStructured<TData>(provider, currentRequest);
+    } catch (error) {
+      throw withPriorDiagnostics(error, lastError);
+    }
+
+    try {
+      return options.validate(response.data, response.rawResponseJson);
+    } catch (error) {
+      lastError = error;
+
+      if (
+        attempt === options.maxAttempts ||
+        !options.isRetryable(error) ||
+        !(error instanceof AiGenerationError)
+      ) {
+        throw error;
+      }
+
+      currentRequest = createAiGenerationRequest({
+        task: currentRequest.task,
+        instructions: options.buildRetryInstructions(
+          currentRequest.instructions,
+          error
+        ),
+        summary: currentRequest.input
+      });
+    }
+  }
+
+  throw lastError;
+}
+
+/**
+ * UNC-257 review follow-up: a retry *call* that fails (timeout, 429,
+ * unparseable JSON) throws an error with no `details`, and
+ * `generate-command.ts` gates `caption-failure.json` on `details !== undefined`
+ * — so the first attempt's violated conditions and raw response, the only
+ * record of why the caption was rejected, were dropped exactly when a
+ * post-mortem needs them (the 2026-07-26 failure this issue exists for).
+ *
+ * The later failure keeps its own message and code — it is the reason the run
+ * ended, and the operator-facing error must not claim a format violation when
+ * the provider actually hung up — while the earlier diagnostics ride along on
+ * `details`. Errors that already carry their own `details` are left untouched.
+ */
+function withPriorDiagnostics(error: unknown, priorError: unknown): unknown {
+  if (
+    !(error instanceof AiGenerationError) ||
+    error.details !== undefined ||
+    !(priorError instanceof AiGenerationError) ||
+    priorError.details === undefined
+  ) {
+    return error;
+  }
+
+  return new AiGenerationError(error.message, error.code, priorError.details);
 }
 
 export class MockAiProvider implements AiProvider {

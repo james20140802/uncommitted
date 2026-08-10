@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type {
   AiProvider,
   AiProviderRawResponse,
@@ -11,8 +11,32 @@ import type {
 } from "../src/ai-provider.js";
 import { runCli } from "../src/cli.js";
 import type { GitActivityEvent } from "../src/collect-git-command.js";
+import { writeIncompleteDraftMarker } from "../src/draft-storage.js";
 import type { CaptionResult, DiaryDraft } from "../src/diary-generator.js";
 import type { MemoryThread } from "../src/memory-store.js";
+
+/**
+ * UNC-237 review follow-up: `writeIncompleteDraftMarker` and
+ * `writeCaptionFailureDiagnostics` in generate-command.ts must each run
+ * independently of the other's success — see the "still writes caption
+ * failure diagnostics when the incomplete-marker write fails" test below.
+ * Injecting a real marker-write failure through the filesystem alone isn't
+ * possible here: any directory pre-created to collide with the CLI's own
+ * output path would itself be picked up by `allocateNextRevision`'s
+ * `readdir` scan and shift which revision number the CLI allocates,
+ * chasing the collision away. Wrapping the real implementation in
+ * `vi.fn(...)` keeps every other test's behavior byte-identical (calls
+ * fall through to the real function) while letting exactly one test force
+ * one call to fail with `mockRejectedValueOnce`.
+ */
+vi.mock("../src/draft-storage.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/draft-storage.js")>();
+
+  return {
+    ...actual,
+    writeIncompleteDraftMarker: vi.fn(actual.writeIncompleteDraftMarker)
+  };
+});
 import { PERSONA_PRESETS, type Persona } from "../src/persona.js";
 import { addProject, type ProjectRecord } from "../src/project-add.js";
 import type { Mood, MoodPlan, StoryFormatPlan } from "../src/story-format-plan.js";
@@ -991,6 +1015,180 @@ describe("generate command", () => {
     });
   });
 
+  it("marks the revision incomplete when the caption stage fails", async () => {
+    const { io, stdout, stderr } = createIo();
+    const fixture = await createRegisteredProjectFixture();
+    const provider = new TaskAwareProvider({ failCaption: true });
+
+    await writeGitEvent(fixture.project, "2026-05-12");
+
+    const exitCode = await runCli(["generate", "today"], io, {
+      homeDir: fixture.homeDir,
+      now: () => "2026-05-12T23:30:00.000Z",
+      aiProvider: provider
+    });
+    const outputDir = join(fixture.draftRoot, "2026-05-12", "rev-001");
+    const metadata = (await readJson(join(outputDir, "metadata.json"))) as Record<
+      string,
+      unknown
+    >;
+
+    expect(exitCode).toBe(4);
+    expect(stdout).toEqual([]);
+    expect(stderr).toEqual(["AI provider failed. Check provider configuration."]);
+    expect(metadata.status).toBe("incomplete");
+    expect((metadata.incomplete as Record<string, unknown>).stage).toBe("caption");
+    await expect(readFile(join(fixture.draftRoot, "latest.json"), "utf8")).rejects.toMatchObject({
+      code: "ENOENT"
+    });
+  });
+
+  it("keeps exit code 4 and leaves the next run unblocked after caption retries are exhausted (UNC-254)", async () => {
+    const { io, stderr } = createIo();
+    const fixture = await createRegisteredProjectFixture();
+    const exhaustingProvider = new TaskAwareProvider({ captionMalformed: true });
+
+    await writeGitEvent(fixture.project, "2026-05-12");
+
+    const firstExitCode = await runCli(["generate", "today"], io, {
+      homeDir: fixture.homeDir,
+      now: () => "2026-05-12T23:30:00.000Z",
+      aiProvider: exhaustingProvider
+    });
+
+    expect(firstExitCode).toBe(4);
+    expect(stderr).toEqual(["AI provider returned invalid caption."]);
+    // Both attempts hit the provider: the retry fed the rejection reason
+    // back, and the second (also malformed) response exhausted the limit.
+    const captionRequests = exhaustingProvider.requests.filter(
+      (request) => request.task === "caption"
+    );
+    expect(captionRequests).toHaveLength(2);
+
+    // A failed run must not block the next scheduled run: retry with a
+    // provider that returns a valid caption and confirm it succeeds.
+    const recoveredProvider = new TaskAwareProvider();
+    const secondExitCode = await runCli(["generate", "today"], io, {
+      homeDir: fixture.homeDir,
+      now: () => "2026-05-12T23:45:00.000Z",
+      aiProvider: recoveredProvider
+    });
+    const dateDir = join(fixture.draftRoot, "2026-05-12");
+    const latest = await readJson(join(dateDir, "latest.json"));
+
+    expect(secondExitCode).toBe(0);
+    expect(latest).toMatchObject({
+      revision: "rev-002",
+      path: join(dateDir, "rev-002")
+    });
+  });
+
+  it("preserves caption failure diagnostics after retries are exhausted (UNC-257)", async () => {
+    const { io, stderr } = createIo();
+    const fixture = await createRegisteredProjectFixture();
+    const exhaustingProvider = new TaskAwareProvider({ captionMalformed: true });
+
+    await writeGitEvent(fixture.project, "2026-05-12");
+
+    const exitCode = await runCli(["generate", "today"], io, {
+      homeDir: fixture.homeDir,
+      now: () => "2026-05-12T23:30:00.000Z",
+      aiProvider: exhaustingProvider
+    });
+
+    expect(exitCode).toBe(4);
+    expect(stderr).toEqual(["AI provider returned invalid caption."]);
+
+    const outputDir = join(fixture.draftRoot, "2026-05-12", "rev-001");
+    const diagnostics = (await readJson(
+      join(outputDir, "caption-failure.json")
+    )) as Record<string, unknown>;
+
+    expect(diagnostics.stage).toBe("caption");
+    expect(diagnostics.attempts).toBe(2);
+    expect(diagnostics.failedAt).toBe("2026-05-12T23:30:00.000Z");
+    expect(Array.isArray(diagnostics.violations)).toBe(true);
+    expect((diagnostics.violations as string[]).length).toBeGreaterThan(0);
+    expect(typeof diagnostics.rawResponse).toBe("string");
+  });
+
+  it("still writes caption failure diagnostics when the caption retry call itself fails (UNC-237)", async () => {
+    const { io, stderr } = createIo();
+    const fixture = await createRegisteredProjectFixture();
+    const brokenRetryProvider = new TaskAwareProvider({
+      captionMalformedThenProviderFailure: true
+    });
+
+    await writeGitEvent(fixture.project, "2026-05-12");
+
+    const exitCode = await runCli(["generate", "today"], io, {
+      homeDir: fixture.homeDir,
+      now: () => "2026-05-12T23:30:00.000Z",
+      aiProvider: brokenRetryProvider
+    });
+
+    // The surfaced failure is the one that actually ended the run — the
+    // broken retry call, not the first format violation.
+    expect(exitCode).toBe(4);
+    expect(stderr).toEqual(["AI provider failed. Check provider configuration."]);
+
+    // …but the first attempt's violations and raw response, the only record
+    // of why the caption was rejected, must still land on disk.
+    const outputDir = join(fixture.draftRoot, "2026-05-12", "rev-001");
+    const diagnostics = (await readJson(
+      join(outputDir, "caption-failure.json")
+    )) as Record<string, unknown>;
+
+    expect(diagnostics.stage).toBe("caption");
+    expect(Array.isArray(diagnostics.violations)).toBe(true);
+    expect((diagnostics.violations as string[]).length).toBeGreaterThan(0);
+    expect(typeof diagnostics.rawResponse).toBe("string");
+  });
+
+  it("still writes caption failure diagnostics when the incomplete-marker write fails (UNC-237)", async () => {
+    const { io, stderr } = createIo();
+    const fixture = await createRegisteredProjectFixture();
+    const exhaustingProvider = new TaskAwareProvider({ captionMalformed: true });
+
+    await writeGitEvent(fixture.project, "2026-05-12");
+
+    // Force exactly one writeIncompleteDraftMarker call to fail, simulating
+    // a disk-full/permission failure on the marker write. See the vi.mock
+    // block near the top of this file for why a filesystem-only injection
+    // isn't viable here (it would defeat allocateNextRevision's own
+    // directory scan).
+    vi.mocked(writeIncompleteDraftMarker).mockRejectedValueOnce(
+      new Error("simulated disk-full failure")
+    );
+
+    const exitCode = await runCli(["generate", "today"], io, {
+      homeDir: fixture.homeDir,
+      now: () => "2026-05-12T23:30:00.000Z",
+      aiProvider: exhaustingProvider
+    });
+
+    // The original caption error must still surface unmodified, with its
+    // exit code, even though the marker write underneath it failed.
+    expect(exitCode).toBe(4);
+    expect(stderr).toEqual(["AI provider returned invalid caption."]);
+
+    // The diagnostics write must have run anyway.
+    const outputDir = join(fixture.draftRoot, "2026-05-12", "rev-001");
+    const diagnostics = (await readJson(
+      join(outputDir, "caption-failure.json")
+    )) as Record<string, unknown>;
+
+    expect(diagnostics.stage).toBe("caption");
+    expect(Array.isArray(diagnostics.violations)).toBe(true);
+    expect((diagnostics.violations as string[]).length).toBeGreaterThan(0);
+
+    // And metadata.json (the marker) was never written, since its one
+    // write attempt was made to fail.
+    await expect(readFile(join(outputDir, "metadata.json"), "utf8")).rejects.toMatchObject(
+      { code: "ENOENT" }
+    );
+  });
+
   it("returns a visual-generation error while preserving text draft artifacts", async () => {
     const { io, stdout, stderr } = createIo();
     const fixture = await createRegisteredProjectFixture();
@@ -1121,6 +1319,19 @@ class TaskAwareProvider implements AiProvider {
       draft?: ReturnType<typeof createProviderDraft>;
       caption?: CaptionResult;
       failDraft?: boolean;
+      failCaption?: boolean;
+      /**
+       * UNC-254 / T3: unlike `failCaption` (a raw provider error, not
+       * retried), this returns a caption format violation on every call —
+       * exercising the caption retry loop through to exhaustion.
+       */
+      captionMalformed?: boolean;
+      /**
+       * UNC-257 review follow-up: returns a format violation on the first
+       * caption call and then fails the call itself (timeout / 429 shape) on
+       * the retry, so the retry-call failure path is exercised end to end.
+       */
+      captionMalformedThenProviderFailure?: boolean;
       model?: string;
     } = {}
   ) {
@@ -1149,6 +1360,26 @@ class TaskAwareProvider implements AiProvider {
     }
 
     if (request.task === "caption") {
+      if (this.options.failCaption) {
+        throw new Error("provider unavailable");
+      }
+
+      if (this.options.captionMalformedThenProviderFailure) {
+        const captionCalls = this.requests.filter(
+          (candidate) => candidate.task === "caption"
+        ).length;
+
+        if (captionCalls > 1) {
+          throw new Error("socket hang up");
+        }
+
+        return { responseJson: JSON.stringify({ caption: "", hashtags: [] }) };
+      }
+
+      if (this.options.captionMalformed) {
+        return { responseJson: JSON.stringify({ caption: "", hashtags: [] }) };
+      }
+
       return {
         responseJson: JSON.stringify(this.options.caption ?? createProviderCaption())
       };

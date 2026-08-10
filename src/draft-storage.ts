@@ -1,5 +1,8 @@
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { redactArchitectureDisclosure } from "./architecture-disclosure.js";
+import { detectSecrets } from "./credential-detector.js";
+import { sanitizeText } from "./redaction.js";
 
 export type DraftStorageErrorCode =
   | "inspect-failed"
@@ -154,6 +157,211 @@ export async function writeDraftArtifactBinary(
   } catch {
     throw new DraftStorageError("Could not write draft files.", "write-failed");
   }
+}
+
+/**
+ * UNC-253 / T2: 캡션 단계에서 실패해 산출물이 반쪽만 남은 리비전을
+ * 완성본과 구별되게 표시한다. 별도 마커 파일 대신 metadata.json 필드로
+ * 남기는 이유는 소비자(render/export)가 이미 metadata.json을 게이팅
+ * 지점으로 쓰고 있고, 드래프트 파일 목록을 늘리지 않기 때문이다.
+ * latest.json 포인터는 의도적으로 건드리지 않는다 — 깨진 드래프트를
+ * 가리키면 안 된다.
+ */
+export type IncompleteDraftStage = "caption";
+
+export type IncompleteDraftMarkerInput = {
+  stage: IncompleteDraftStage;
+  reason: string;
+  failedAt: string;
+  targetDate: string;
+};
+
+/**
+ * UNC-257 / T6: `reason` carries the raw provider/Error message straight
+ * through from `generate-command.ts`'s catch block, and metadata.json is
+ * written to disk unconditionally (including for exports gated later), so
+ * it must go through the same redaction pipeline as the diagnostics file
+ * rather than being persisted verbatim.
+ */
+export async function writeIncompleteDraftMarker(
+  revision: DraftRevision,
+  input: IncompleteDraftMarkerInput
+): Promise<void> {
+  await writeDraftArtifactJson(revision, "metadata.json", {
+    schemaVersion: 1,
+    targetDate: input.targetDate,
+    date: input.targetDate,
+    revision: revision.revision,
+    status: "incomplete",
+    exported: false,
+    published: false,
+    incomplete: {
+      stage: input.stage,
+      reason: redactDiagnosticText(input.reason),
+      failedAt: input.failedAt
+    }
+  });
+}
+
+/**
+ * UNC-257 / T6: 재시도(UNC-254)가 소진된 캡션 실패의 원인을 사후에
+ * 확인할 수 있게 리비전 디렉토리에 남긴다. 2026-07-26 실패 때는 원본
+ * 응답이 남지 않아 네 조건 중 무엇이 걸렸는지 끝내 확정할 수 없었다.
+ * 타임스탬프를 반드시 포함한다 — schedule.stderr.log에 타임스탬프가
+ * 없어 실행 귀속을 파일 mtime으로 역산해야 했다.
+ *
+ * Redaction reuses the project's existing utilities rather than a new
+ * pattern-matching path: `sanitizeText` (emails / local absolute paths /
+ * private URLs / raw code snippets), `redactArchitectureDisclosure`
+ * (admin-allowlist / route-guard / auth-checkpoint / server-side-
+ * authorization phrasing), and `detectSecrets` (vendor API tokens,
+ * high-entropy tokens, and key:value/key=value assignment secrets) —
+ * `sanitizeText` and `redactArchitectureDisclosure` alone do not cover the
+ * secrets/tokens category, so `detectSecrets` from credential-detector.ts
+ * (already used elsewhere in the project for exactly this purpose) is
+ * composed in as well, followed by a local prefix-anchored token pass (see
+ * `redactDiagnosticText` below) that closes a gap `detectSecrets` leaves
+ * open for undelimited tokens in prose.
+ */
+export type CaptionFailureDiagnosticsInput = {
+  failedAt: string;
+  reason: string;
+  violations: string[];
+  attempts: number;
+  rawResponseJson?: string;
+};
+
+export async function writeCaptionFailureDiagnostics(
+  revision: DraftRevision,
+  input: CaptionFailureDiagnosticsInput
+): Promise<void> {
+  await writeDraftArtifactJson(revision, "caption-failure.json", {
+    schemaVersion: 1,
+    stage: "caption",
+    failedAt: input.failedAt,
+    targetDate: revision.targetDate,
+    revision: revision.revision,
+    attempts: input.attempts,
+    violations: input.violations,
+    reason: redactDiagnosticText(input.reason),
+    rawResponse:
+      input.rawResponseJson === undefined
+        ? null
+        : redactDiagnosticText(input.rawResponseJson)
+  });
+}
+
+/**
+ * UNC-257 / T6 review follow-up: `detectSecrets` (credential-detector.ts)
+ * only redacts a secret/token when it is either a recognized vendor
+ * signature, assigned with an immediate `key:`/`key=` delimiter, or a bare
+ * run of >=32 high-entropy characters. A secret leaked in prose with none
+ * of those shapes (e.g. "here's the token sk-abcdef1234567890abcdef")
+ * passed through unredacted — see the (formerly skipped) test in
+ * tests/draft-storage.test.ts.
+ *
+ * This is closed here, not by widening `ASSIGNMENT_PATTERN` in
+ * credential-detector.ts — that detector is shared with the
+ * safety-report/export-blocking pipeline, and matching "keyword +
+ * whitespace" would redact the next word after every ordinary use of
+ * "secret"/"token"/"auth" in prose ("secret sauce", "token bucket"), a
+ * product-wide false-positive regression. Instead, `redactPrefixAnchoredTokens`
+ * below adds a *prefix-anchored* pass (matching on a vendor-specific token
+ * prefix, not on a preceding keyword) that cannot produce that kind of
+ * false positive, and keeps the pattern local to this module so
+ * `credential-detector.ts` — and everything that shares it — is untouched.
+ *
+ * A token with no recognizable vendor prefix, shorter than 32 characters, and
+ * with no `key:`/`key=` delimiter is caught by a further keyword-anchored pass
+ * (`redactKeywordAnchoredTokens` below), which is fail-closed by shape rather
+ * than by vocabulary and stays local to diagnostics for the same reason.
+ *
+ * Remaining boundary (still open, honestly): a token that appears with no
+ * vendor prefix, no delimiter, under 32 characters, *and* no nearby credential
+ * keyword — a bare string in free prose — remains undetectable without a
+ * heuristic that would redact ordinary words. That residual gap is not closed
+ * here.
+ */
+function redactDiagnosticText(value: string): string {
+  const afterSanitize = sanitizeText(value).value;
+  const afterArchitecture = redactArchitectureDisclosure(afterSanitize).value;
+  const afterSecrets = detectSecrets(afterArchitecture).value;
+  const afterPrefixTokens = redactPrefixAnchoredTokens(afterSecrets);
+
+  return redactKeywordAnchoredTokens(afterPrefixTokens);
+}
+
+/**
+ * UNC-257 / T6 review follow-up: prefix-anchored token redaction, local to
+ * `draft-storage.ts` only — see the comment on `redactDiagnosticText` above
+ * for why this doesn't live in `credential-detector.ts`. Anchoring on a
+ * vendor-specific prefix (rather than a preceding keyword like "token"/
+ * "secret") means these patterns cannot fire on ordinary prose, so they're
+ * safe to keep loose about what follows the prefix.
+ */
+const PREFIX_ANCHORED_TOKEN_PATTERNS: RegExp[] = [
+  // Generic "sk-" secret-key prefix used by OpenAI, Anthropic, and similar
+  // vendors (also matches variants such as "sk-proj-...", "sk-ant-...").
+  // Not covered by VENDOR_PATTERNS in credential-detector.ts, which only
+  // recognizes the underscore-delimited Stripe form (`sk_live_...`).
+  /\bsk-[A-Za-z0-9_-]{16,}\b/g,
+  // Stripe test-mode secret key. VENDOR_PATTERNS in credential-detector.ts
+  // only covers the live-mode `sk_live_` form.
+  /\bsk_test_[0-9a-zA-Z]{16,}\b/g
+];
+
+// Matches the `[redacted-secret]` placeholder convention `detectSecrets`
+// already uses in credential-detector.ts, so diagnostics readers see one
+// consistent marker for "a secret was here" regardless of which pass caught
+// it.
+const PREFIX_ANCHORED_TOKEN_PLACEHOLDER = "[redacted-secret]";
+
+function redactPrefixAnchoredTokens(value: string): string {
+  return PREFIX_ANCHORED_TOKEN_PATTERNS.reduce(
+    (result, pattern) => result.replace(pattern, PREFIX_ANCHORED_TOKEN_PLACEHOLDER),
+    value
+  );
+}
+
+/**
+ * UNC-257 review follow-up #2: closes the residual gap the passes above leave
+ * open — a token with no recognized vendor prefix, shorter than the 32-char
+ * high-entropy sweep, and with no `key:`/`key=` delimiter ("token
+ * abc123def456ghi789") reached caption-failure.json verbatim.
+ *
+ * This still does not widen `credential-detector.ts`: that detector gates
+ * export/safety-report decisions product-wide, where redacting the word after
+ * every "token"/"secret" in prose would be a real regression. Here the blast
+ * radius is one local diagnostics file that nothing publishes, so diagnostics
+ * redaction is deliberately fail-closed — an over-redacted word costs a reader
+ * one word of context, an under-redacted one persists a credential to disk.
+ *
+ * The false positive that matters ("token bucket", "secret sauce") is avoided
+ * by shape rather than by vocabulary: only candidates that look like tokens —
+ * at least 12 characters and either containing a digit or mixing letter case —
+ * are redacted, so ordinary lowercase English words after a keyword survive.
+ */
+const KEYWORD_ANCHORED_TOKEN_PATTERN =
+  /\b(?:api[_-]?keys?|keys?|tokens?|secrets?|passwords?|passphrases?|credentials?|auth|bearer)\b[ \t]+(?:is[ \t]+|was[ \t]+)?([A-Za-z0-9_\-./+=]{12,})/gi;
+
+function redactKeywordAnchoredTokens(value: string): string {
+  return value.replace(
+    KEYWORD_ANCHORED_TOKEN_PATTERN,
+    (match, candidate: string) => {
+      if (!isTokenShaped(candidate)) {
+        return match;
+      }
+
+      return match.replace(candidate, PREFIX_ANCHORED_TOKEN_PLACEHOLDER);
+    }
+  );
+}
+
+function isTokenShaped(candidate: string): boolean {
+  const hasDigit = /\d/.test(candidate);
+  const hasMixedCase = /[a-z]/.test(candidate) && /[A-Z]/.test(candidate);
+
+  return hasDigit || hasMixedCase;
 }
 
 export async function writeLatestDraftPointer(

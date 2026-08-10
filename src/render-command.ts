@@ -78,13 +78,15 @@ export async function runRenderCommand(
     latestPointerPath: join(draftRoot, "latest.json"),
     dateLatestPointerPath: join(draftRoot, pointer.targetDate, "latest.json")
   };
+  const metadata = await readMetadata(revision.outputDir);
+
+  assertDraftIsComplete(metadata);
+  assertDraftIsRenderable(metadata);
+
   const story = await readJsonArtifact(
     join(revision.outputDir, "story.json"),
     "Draft story is not renderable. Regenerate the draft."
   );
-  const metadata = await readMetadata(revision.outputDir);
-
-  assertDraftIsRenderable(metadata);
 
   const cards = createCardsWithStyle(story, readCarouselVisualStyle(metadata));
   const visualAssets = readVisualAssets(metadata);
@@ -191,6 +193,25 @@ async function readMetadata(outputDir: string): Promise<Record<string, unknown>>
   }
 
   return metadata;
+}
+
+/**
+ * UNC-256 / T5: 캡션 단계에서 실패해 산출물이 반쪽만 남은 리비전
+ * (UNC-253이 남긴 status=incomplete)을 완성본처럼 렌더하지 않는다.
+ */
+function assertDraftIsComplete(metadata: Record<string, unknown>): void {
+  if (metadata.status !== "incomplete") {
+    return;
+  }
+
+  const stage = isRecord(metadata.incomplete)
+    ? String(metadata.incomplete.stage ?? "unknown")
+    : "unknown";
+
+  throw new RenderCommandError(
+    `Draft is incomplete (failed at the ${stage} stage). Regenerate before rendering.`,
+    "render-failed"
+  );
 }
 
 function assertDraftIsRenderable(metadata: Record<string, unknown>): void {

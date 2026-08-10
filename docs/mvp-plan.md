@@ -16,6 +16,7 @@ draft artifacts only:
 - `safety-report.json`
 - `metadata.json`
 - 4:5 Instagram carousel PNGs
+- `caption-failure.json` (캡션 생성이 재시도 후에도 실패한 경우에만 생성)
 
 The MVP must support quiet days without inventing work. It must preserve privacy
 by default, redact sensitive data before public output, and never post to

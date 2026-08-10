@@ -8,12 +8,17 @@ import {
   createAiProvider,
   createMoodPlanSchema,
   generateStructured,
+  generateStructuredWithRetry,
   loadAiProviderConfig,
   MockAiProvider
 } from "../src/ai-provider.js";
 import type {
+  AiProvider,
   AiProviderHttpRequest,
   AiProviderHttpResponse,
+  AiProviderRawResponse,
+  AiStructuredGenerationRequest,
+  JsonObject,
   SafeActivitySummary
 } from "../src/ai-provider.js";
 import { PERSONA_PRESETS } from "../src/persona.js";
@@ -99,7 +104,11 @@ describe("AI provider abstraction", () => {
       data: {
         title: "Provider boundary day",
         beats: ["Configured", "Mocked", "Validated"]
-      }
+      },
+      rawResponseJson: JSON.stringify({
+        title: "Provider boundary day",
+        beats: ["Configured", "Mocked", "Validated"]
+      })
     });
     expect(provider.requests).toEqual([request]);
   });
@@ -140,7 +149,11 @@ describe("AI provider abstraction", () => {
       data: {
         title: "OpenAI provider day",
         beats: ["Configured", "Generated"]
-      }
+      },
+      rawResponseJson: JSON.stringify({
+        title: "OpenAI provider day",
+        beats: ["Configured", "Generated"]
+      })
     });
 
     expect(calls).toHaveLength(1);
@@ -367,7 +380,11 @@ describe("AI provider abstraction", () => {
     await expect(generateStructured(provider, request)).resolves.toEqual({
       schemaVersion: 1,
       provider: "anthropic",
-      data: { title: "Anthropic provider day", beats: ["Configured", "Generated"] }
+      data: { title: "Anthropic provider day", beats: ["Configured", "Generated"] },
+      rawResponseJson: JSON.stringify({
+        title: "Anthropic provider day",
+        beats: ["Configured", "Generated"]
+      })
     });
 
     expect(calls).toHaveLength(1);
@@ -1011,7 +1028,170 @@ describe("AI provider abstraction", () => {
       })
     ).toThrow(AiGenerationError);
   });
+
+  it("carries structured details when provided", () => {
+    const error = new AiGenerationError("bad", "malformed-response", {
+      violations: ["caption-empty"],
+      rawResponseJson: '{"caption":""}'
+    });
+
+    expect(error.exitCode).toBe(4);
+    expect(error.code).toBe("malformed-response");
+    expect(error.details?.violations).toEqual(["caption-empty"]);
+    expect(error.details?.rawResponseJson).toBe('{"caption":""}');
+  });
+
+  it("leaves details undefined when omitted", () => {
+    const error = new AiGenerationError("bad", "provider-failed");
+
+    expect(error.details).toBeUndefined();
+    expect(error.exitCode).toBe(4);
+  });
 });
+
+describe("generateStructuredWithRetry", () => {
+  it("stops after one call when isRetryable rejects the error", async () => {
+    const request = createAiGenerationRequest({
+      task: "caption",
+      instructions: "Write a caption.",
+      summary: createQuietSummary()
+    });
+    const provider = new RetrySequenceProvider([{ caption: "" }]);
+
+    await expect(
+      generateStructuredWithRetry(provider, request, {
+        maxAttempts: 2,
+        isRetryable: () => false,
+        buildRetryInstructions: (previous) => `${previous}\nretry`,
+        validate: () => {
+          throw new AiGenerationError("rejected", "malformed-response", {
+            violations: ["caption-empty"]
+          });
+        }
+      })
+    ).rejects.toMatchObject({ code: "malformed-response" });
+
+    expect(provider.requests).toHaveLength(1);
+  });
+
+  it("redacts sensitive text in retry instructions before the retry request is sent", async () => {
+    const request = createAiGenerationRequest({
+      task: "caption",
+      instructions: "Write a caption.",
+      summary: createQuietSummary()
+    });
+    const provider = new RetrySequenceProvider([
+      { caption: "" },
+      { caption: "fixed" }
+    ]);
+
+    const result = await generateStructuredWithRetry(provider, request, {
+      maxAttempts: 2,
+      isRetryable: () => true,
+      buildRetryInstructions: (previous) =>
+        `${previous}\nUse this key: sk-abcdefgh12345678`,
+      validate: (data: JsonObject) => {
+        if (data.caption === "") {
+          throw new AiGenerationError("rejected", "malformed-response", {
+            violations: ["caption-empty"]
+          });
+        }
+
+        return data.caption;
+      }
+    });
+
+    expect(result).toBe("fixed");
+    expect(provider.requests).toHaveLength(2);
+    expect(provider.requests[1].instructions).toContain("[redacted-secret]");
+    expect(provider.requests[1].instructions).not.toContain("sk-abcdefgh12345678");
+  });
+
+  // UNC-257 review follow-up: the retry *call* failing (timeout / 429 /
+  // unparseable JSON) is a different path from a second validation rejection.
+  // The first attempt already produced the only record of why the caption was
+  // rejected, and `generate-command.ts` gates `caption-failure.json` on
+  // `details !== undefined` — so losing it here silently drops diagnostics at
+  // exactly the moment they are needed.
+  it("keeps the first attempt's diagnostics when the retry call itself fails", async () => {
+    const request = createAiGenerationRequest({
+      task: "caption",
+      instructions: "Write a caption.",
+      summary: createQuietSummary()
+    });
+    const provider = new FailOnRetryProvider({ caption: "" });
+
+    const thrown = await generateStructuredWithRetry(provider, request, {
+      maxAttempts: 2,
+      isRetryable: () => true,
+      buildRetryInstructions: (previous) => `${previous}\nretry`,
+      validate: (data: JsonObject, rawResponseJson: string) => {
+        throw new AiGenerationError("rejected", "malformed-response", {
+          violations: ["caption-empty"],
+          rawResponseJson
+        });
+      }
+    }).catch((error: unknown) => error);
+
+    expect(thrown).toBeInstanceOf(AiGenerationError);
+
+    const error = thrown as AiGenerationError;
+
+    // The surfaced reason stays the failure that actually ended the run…
+    expect(error.code).toBe("provider-failed");
+    // …while the first rejection's diagnostics ride along with it.
+    expect(error.details?.violations).toEqual(["caption-empty"]);
+    expect(error.details?.rawResponseJson).toBe('{"caption":""}');
+    expect(provider.requests).toHaveLength(2);
+  });
+});
+
+/**
+ * UNC-254 / T3: `MockAiProvider` returns the same response on every call, so
+ * it cannot express a retry sequence. This local stub returns responses in
+ * call order (the last response repeats for any further calls).
+ */
+class RetrySequenceProvider implements AiProvider {
+  public readonly name = "mock" as const;
+  public readonly requests: AiStructuredGenerationRequest[] = [];
+
+  constructor(private readonly responses: JsonObject[]) {}
+
+  async generateStructured(
+    request: AiStructuredGenerationRequest
+  ): Promise<AiProviderRawResponse> {
+    this.requests.push(request);
+    const next =
+      this.responses[Math.min(this.requests.length - 1, this.responses.length - 1)];
+
+    return { responseJson: JSON.stringify(next) };
+  }
+}
+
+/**
+ * UNC-257 review follow-up: answers the first call and then breaks like a
+ * provider that times out or returns a 429 on the retry, so the retry-call
+ * failure path can be exercised separately from a repeated validation
+ * rejection.
+ */
+class FailOnRetryProvider implements AiProvider {
+  public readonly name = "mock" as const;
+  public readonly requests: AiStructuredGenerationRequest[] = [];
+
+  constructor(private readonly firstResponse: JsonObject) {}
+
+  async generateStructured(
+    request: AiStructuredGenerationRequest
+  ): Promise<AiProviderRawResponse> {
+    this.requests.push(request);
+
+    if (this.requests.length > 1) {
+      throw new Error("socket hang up");
+    }
+
+    return { responseJson: JSON.stringify(this.firstResponse) };
+  }
+}
 
 describe("createMoodPlanSchema", () => {
   it("requires mood/angle/pacing/reason/structure/captionStyle/doNotMention and forbids extras", () => {
