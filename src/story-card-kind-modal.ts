@@ -72,8 +72,13 @@ const modalStyles = `
 
 export const modalStoryCard: StoryCardDefinition = {
   id: "modal",
+  // 조용한 날에도 후보로 남는다 — 반어형 조언 카드의 주 용도가 재료 빈약한 날을 살리는 것이다.
+  // 반대로 바쁜데 blocker·미완 스레드가 없는 날에는 후보에서 빠진다.
   requires: (summary) =>
-    summary.blockersOrConfusion.length > 0 || summary.unfinishedThreads.length > 0,
+    summary.blockersOrConfusion.length > 0 ||
+    summary.unfinishedThreads.length > 0 ||
+    summary.activityLevel === "none" ||
+    summary.activityLevel === "low",
   slots: {
     title: { type: "text", required: true },
     body: { type: "text", required: true },

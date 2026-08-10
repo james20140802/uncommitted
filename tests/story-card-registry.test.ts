@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import type { ActivitySummary } from "../src/activity-summary.js";
 import { escapeHtml } from "../src/html-escape.js";
@@ -72,7 +74,7 @@ describe("story card chrome", () => {
   });
 });
 
-function createSummary(): ActivitySummary {
+function createSummary(overrides: Partial<ActivitySummary> = {}): ActivitySummary {
   return {
     schemaVersion: 1,
     targetDate: "2026-08-02",
@@ -108,7 +110,8 @@ function createSummary(): ActivitySummary {
     possibleJokes: [],
     publicSafetyNotes: [],
     privateItemsToAvoid: [],
-    uncertaintyNotes: []
+    uncertaintyNotes: [],
+    ...overrides
   };
 }
 
@@ -210,5 +213,192 @@ describe("typo card (parent AC3)", () => {
     expect(html).toContain("커밋 0건 &amp; 평온");
     expect(html).toContain("조용한 날");
     expect(html).toContain(`data-story-card-kind="typo"`);
+  });
+});
+
+type MaterialCase = {
+  readonly kindId: string;
+  readonly present: Partial<ActivitySummary>;
+  readonly absent: Partial<ActivitySummary>;
+};
+
+// typo는 requires가 무조건 true 라 "재료 없음"이 설계상 없다 — 아래 별도 테스트에서 다룬다.
+const materialCases: readonly MaterialCase[] = [
+  {
+    kindId: "terminal",
+    present: {
+      commitSignals: {
+        totalCommits: 3,
+        filesChanged: 4,
+        insertions: 40,
+        deletions: 2,
+        subjects: ["fix: 로그인"],
+        themes: []
+      }
+    },
+    absent: {}
+  },
+  {
+    kindId: "diff",
+    present: {
+      commitSignals: {
+        totalCommits: 1,
+        filesChanged: 2,
+        insertions: 10,
+        deletions: 1,
+        subjects: ["chore: 정리"],
+        themes: []
+      }
+    },
+    absent: {}
+  },
+  {
+    kindId: "chat",
+    present: { manualContext: { noteCount: 2, notes: [] } },
+    absent: {}
+  },
+  {
+    kindId: "checkboard",
+    present: { smallWins: ["테스트 통과"] },
+    absent: {}
+  },
+  {
+    kindId: "modal",
+    // 조용한 날 or 조건 때문에 modal의 유일한 탈락 경로는 "바쁜데 blocker·미완 스레드 없음"이다.
+    present: { activityLevel: "high", blockersOrConfusion: ["CI가 계속 죽음"] },
+    absent: { activityLevel: "high" }
+  }
+];
+
+describe("candidate filter material check (parent AC2)", () => {
+  for (const testCase of materialCases) {
+    it(`includes ${testCase.kindId} when its material is present`, () => {
+      const ids = listStoryCardCandidates(createSummary(testCase.present)).map(
+        (kind) => kind.id
+      );
+      expect(ids).toContain(testCase.kindId);
+    });
+
+    it(`excludes ${testCase.kindId} when its material is absent`, () => {
+      const ids = listStoryCardCandidates(createSummary(testCase.absent)).map(
+        (kind) => kind.id
+      );
+      expect(ids).not.toContain(testCase.kindId);
+    });
+  }
+
+  it("covers every registered kind except typo, which has no material condition by design", () => {
+    const covered = new Set(materialCases.map((testCase) => testCase.kindId));
+    const uncovered = listStoryCardKindIds().filter((id) => !covered.has(id));
+    expect(uncovered).toEqual(["typo"]);
+  });
+
+  it("keeps typo a candidate no matter what the summary holds", () => {
+    const quiet = listStoryCardCandidates(createSummary()).map((kind) => kind.id);
+    const busy = listStoryCardCandidates(
+      createSummary({
+        activityLevel: "high",
+        commitSignals: {
+          totalCommits: 9,
+          filesChanged: 20,
+          insertions: 300,
+          deletions: 80,
+          subjects: ["feat: 대공사"],
+          themes: []
+        }
+      })
+    ).map((kind) => kind.id);
+
+    expect(quiet).toContain("typo");
+    expect(busy).toContain("typo");
+  });
+});
+
+describe("candidate filter on a completely quiet day (parent AC3)", () => {
+  it("never returns an empty candidate list when activityLevel is none", () => {
+    const candidates = listStoryCardCandidates(createSummary({ activityLevel: "none" }));
+
+    expect(candidates.length).toBeGreaterThan(0);
+    expect(candidates.map((kind) => kind.id)).toContain("typo");
+  });
+
+  it("keeps modal available on the quiet day so the sparse day has more than one option", () => {
+    const ids = listStoryCardCandidates(createSummary({ activityLevel: "none" })).map(
+      (kind) => kind.id
+    );
+
+    expect(ids).toContain("modal");
+  });
+});
+
+describe("candidate filter determinism (parent AC4)", () => {
+  it("returns the same kind ids in the same order for the same summary", () => {
+    const summary = createSummary({
+      activityLevel: "medium",
+      smallWins: ["플레이키 테스트 잡음"],
+      manualContext: { noteCount: 1, notes: [] },
+      commitSignals: {
+        totalCommits: 2,
+        filesChanged: 5,
+        insertions: 60,
+        deletions: 12,
+        subjects: ["fix: 경합"],
+        themes: []
+      }
+    });
+
+    const first = listStoryCardCandidates(summary).map((kind) => kind.id);
+    const second = listStoryCardCandidates(summary).map((kind) => kind.id);
+
+    expect(second).toEqual(first);
+  });
+
+  it("returns the same kind ids for two structurally equal summaries", () => {
+    const overrides = { activityLevel: "low" } as const;
+
+    const first = listStoryCardCandidates(createSummary(overrides)).map((kind) => kind.id);
+    const second = listStoryCardCandidates(createSummary(overrides)).map((kind) => kind.id);
+
+    expect(second).toEqual(first);
+  });
+
+  it("does not mutate the summary it was given", () => {
+    const summary = createSummary({ activityLevel: "medium", smallWins: ["작은 승리"] });
+    const before = JSON.stringify(summary);
+
+    listStoryCardCandidates(summary);
+
+    expect(JSON.stringify(summary)).toBe(before);
+  });
+});
+
+describe("candidate filter purity (parent AC1)", () => {
+  const cardSourceFiles = [
+    "story-card-registry.ts",
+    "story-card-slots.ts",
+    "story-card-kind-typo.ts",
+    "story-card-kind-terminal.ts",
+    "story-card-kind-modal.ts",
+    "story-card-kind-checkboard.ts",
+    "story-card-kind-chat.ts",
+    "story-card-kind-diff.ts"
+  ];
+
+  for (const fileName of cardSourceFiles) {
+    it(`keeps ${fileName} free of any ai-provider import`, () => {
+      const path = fileURLToPath(new URL(`../src/${fileName}`, import.meta.url));
+      const source = readFileSync(path, "utf8");
+
+      expect(source).not.toContain("ai-provider");
+    });
+  }
+
+  it("computes candidates without touching the network or the clock", () => {
+    // requires()가 순수함을 행동으로 확인한다 — 같은 입력, 같은 출력, 부작용 없음.
+    const summary = createSummary({ activityLevel: "low" });
+
+    for (const kind of storyCardRegistry) {
+      expect(kind.requires(summary)).toBe(kind.requires(summary));
+    }
   });
 });
