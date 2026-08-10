@@ -5,14 +5,19 @@ import { diffStoryCard } from "./story-card-kind-diff.js";
 import { modalStoryCard } from "./story-card-kind-modal.js";
 import { terminalStoryCard } from "./story-card-kind-terminal.js";
 import { typoStoryCard } from "./story-card-kind-typo.js";
-import type { StoryCardDefinition, StoryCardSlotSchema } from "./story-card-slots.js";
+import type {
+  StoryCardCandidate,
+  StoryCardDefinition,
+  StoryCardSlotSchema
+} from "./story-card-slots.js";
 
 export type {
   StoryCardSlotType,
   StoryCardSlotSpec,
   StoryCardSlotSchema,
   StoryCardSlots,
-  StoryCardDefinition
+  StoryCardDefinition,
+  StoryCardCandidate
 } from "./story-card-slots.js";
 export { readSlotText, readSlotLines } from "./story-card-slots.js";
 
@@ -44,4 +49,17 @@ export function listStoryCardCandidates(
   registry: readonly StoryCardDefinition[] = storyCardRegistry
 ): StoryCardDefinition[] {
   return registry.filter((kind) => kind.requires(summary));
+}
+
+// 후보를 LLM 프롬프트·검증으로 넘기기 위한 직렬화 가능한 투영.
+// listStoryCardCandidates가 반환하는 정의에는 render 클로저가 붙어 있어
+// JSON.stringify가 조용히 지워버린다. 여기서 id와 슬롯 스키마만 남긴다.
+export function listStoryCardCandidateProjections(
+  summary: ActivitySummary,
+  registry: readonly StoryCardDefinition[] = storyCardRegistry
+): StoryCardCandidate[] {
+  return listStoryCardCandidates(summary, registry).map((kind) => ({
+    id: kind.id,
+    slots: kind.slots
+  }));
 }

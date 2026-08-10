@@ -5,9 +5,11 @@ import type { ActivitySummary } from "../src/activity-summary.js";
 import { escapeHtml } from "../src/html-escape.js";
 import {
   getStoryCardSlotSchemas,
+  listStoryCardCandidateProjections,
   listStoryCardCandidates,
   listStoryCardKindIds,
   storyCardRegistry,
+  type StoryCardCandidate,
   type StoryCardDefinition
 } from "../src/story-card-registry.js";
 import { renderStoryCardDocument } from "../src/story-card-chrome.js";
@@ -400,5 +402,82 @@ describe("candidate filter purity (parent AC1)", () => {
     for (const kind of storyCardRegistry) {
       expect(kind.requires(summary)).toBe(kind.requires(summary));
     }
+  });
+});
+
+describe("candidate projection for prompt and validation handoff", () => {
+  it("projects each candidate down to its id and slot schema", () => {
+    const projections = listStoryCardCandidateProjections(
+      createSummary({ activityLevel: "none" })
+    );
+
+    expect(projections.length).toBeGreaterThan(0);
+
+    for (const projection of projections) {
+      expect(Object.keys(projection).sort()).toEqual(["id", "slots"]);
+      expect(typeof projection.id).toBe("string");
+      expect(Object.keys(projection.slots).length).toBeGreaterThan(0);
+    }
+  });
+
+  it("survives a JSON round trip unchanged", () => {
+    const projections = listStoryCardCandidateProjections(
+      createSummary({ activityLevel: "none" })
+    );
+    const roundTripped = JSON.parse(JSON.stringify(projections)) as StoryCardCandidate[];
+
+    expect(roundTripped).toEqual(projections);
+  });
+
+  it("carries no render closure that JSON.stringify would silently drop", () => {
+    const projections = listStoryCardCandidateProjections(
+      createSummary({ activityLevel: "none" })
+    );
+
+    for (const projection of projections) {
+      expect("render" in projection).toBe(false);
+      expect("requires" in projection).toBe(false);
+    }
+  });
+
+  it("stays aligned with the candidate list it projects", () => {
+    const summary = createSummary({
+      activityLevel: "medium",
+      smallWins: ["플레이키 테스트 잡음"],
+      commitSignals: {
+        totalCommits: 2,
+        filesChanged: 5,
+        insertions: 60,
+        deletions: 12,
+        subjects: ["fix: 경합"],
+        themes: []
+      }
+    });
+
+    const candidateIds = listStoryCardCandidates(summary).map((kind) => kind.id);
+    const projectedIds = listStoryCardCandidateProjections(summary).map(
+      (projection) => projection.id
+    );
+
+    expect(projectedIds).toEqual(candidateIds);
+  });
+
+  it("reflects a newly registered kind with no change to the projection function", () => {
+    const dummy: StoryCardDefinition = {
+      id: "dummy-projected",
+      requires: () => true,
+      slots: { headline: { type: "text", required: true } },
+      render: () => "<article></article>"
+    };
+
+    const projections = listStoryCardCandidateProjections(createSummary(), [
+      ...storyCardRegistry,
+      dummy
+    ]);
+
+    expect(projections).toContainEqual({
+      id: "dummy-projected",
+      slots: { headline: { type: "text", required: true } }
+    });
   });
 });
