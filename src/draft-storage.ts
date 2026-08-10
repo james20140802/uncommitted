@@ -271,18 +271,24 @@ export async function writeCaptionFailureDiagnostics(
  * false positive, and keeps the pattern local to this module so
  * `credential-detector.ts` — and everything that shares it — is untouched.
  *
- * Remaining boundary (still open, honestly): a token with no recognizable
- * vendor prefix, shorter than 32 characters, and with no `key:`/`key=`
- * delimiter is still not detectable by any of the four passes below. That
- * residual gap needs either a vendor-specific signature or a length/
- * delimiter heuristic to close, and isn't addressed by this change.
+ * A token with no recognizable vendor prefix, shorter than 32 characters, and
+ * with no `key:`/`key=` delimiter is caught by a further keyword-anchored pass
+ * (`redactKeywordAnchoredTokens` below), which is fail-closed by shape rather
+ * than by vocabulary and stays local to diagnostics for the same reason.
+ *
+ * Remaining boundary (still open, honestly): a token that appears with no
+ * vendor prefix, no delimiter, under 32 characters, *and* no nearby credential
+ * keyword — a bare string in free prose — remains undetectable without a
+ * heuristic that would redact ordinary words. That residual gap is not closed
+ * here.
  */
 function redactDiagnosticText(value: string): string {
   const afterSanitize = sanitizeText(value).value;
   const afterArchitecture = redactArchitectureDisclosure(afterSanitize).value;
   const afterSecrets = detectSecrets(afterArchitecture).value;
+  const afterPrefixTokens = redactPrefixAnchoredTokens(afterSecrets);
 
-  return redactPrefixAnchoredTokens(afterSecrets);
+  return redactKeywordAnchoredTokens(afterPrefixTokens);
 }
 
 /**
@@ -315,6 +321,47 @@ function redactPrefixAnchoredTokens(value: string): string {
     (result, pattern) => result.replace(pattern, PREFIX_ANCHORED_TOKEN_PLACEHOLDER),
     value
   );
+}
+
+/**
+ * UNC-257 review follow-up #2: closes the residual gap the passes above leave
+ * open — a token with no recognized vendor prefix, shorter than the 32-char
+ * high-entropy sweep, and with no `key:`/`key=` delimiter ("token
+ * abc123def456ghi789") reached caption-failure.json verbatim.
+ *
+ * This still does not widen `credential-detector.ts`: that detector gates
+ * export/safety-report decisions product-wide, where redacting the word after
+ * every "token"/"secret" in prose would be a real regression. Here the blast
+ * radius is one local diagnostics file that nothing publishes, so diagnostics
+ * redaction is deliberately fail-closed — an over-redacted word costs a reader
+ * one word of context, an under-redacted one persists a credential to disk.
+ *
+ * The false positive that matters ("token bucket", "secret sauce") is avoided
+ * by shape rather than by vocabulary: only candidates that look like tokens —
+ * at least 12 characters and either containing a digit or mixing letter case —
+ * are redacted, so ordinary lowercase English words after a keyword survive.
+ */
+const KEYWORD_ANCHORED_TOKEN_PATTERN =
+  /\b(?:api[_-]?keys?|keys?|tokens?|secrets?|passwords?|passphrases?|credentials?|auth|bearer)\b[ \t]+(?:is[ \t]+|was[ \t]+)?([A-Za-z0-9_\-./+=]{12,})/gi;
+
+function redactKeywordAnchoredTokens(value: string): string {
+  return value.replace(
+    KEYWORD_ANCHORED_TOKEN_PATTERN,
+    (match, candidate: string) => {
+      if (!isTokenShaped(candidate)) {
+        return match;
+      }
+
+      return match.replace(candidate, PREFIX_ANCHORED_TOKEN_PLACEHOLDER);
+    }
+  );
+}
+
+function isTokenShaped(candidate: string): boolean {
+  const hasDigit = /\d/.test(candidate);
+  const hasMixedCase = /[a-z]/.test(candidate) && /[A-Z]/.test(candidate);
+
+  return hasDigit || hasMixedCase;
 }
 
 export async function writeLatestDraftPointer(

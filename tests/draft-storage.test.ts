@@ -325,6 +325,66 @@ describe("draft storage", () => {
     expect(raw).toContain("[redacted-secret]");
   });
 
+  // UNC-257 review follow-up: the prefix-anchored pass above only fires on a
+  // recognized vendor prefix. A token with no vendor prefix, under 32 chars,
+  // and no `key:`/`key=` delimiter ("token abc123def456ghi789") slipped past
+  // every pass and was persisted verbatim into caption-failure.json. Diagnostics
+  // redaction is fail-closed: a keyword-anchored pass shaped to token-like
+  // candidates closes it.
+  it("redacts an undelimited non-vendor token that follows a credential keyword", async () => {
+    const draftRoot = await createDraftRoot();
+    const revision = await createDraftRevision({
+      draftRoot,
+      targetDate: "2026-08-10"
+    });
+
+    await writeCaptionFailureDiagnostics(revision, {
+      failedAt: "2026-08-10T14:30:00.000Z",
+      reason: "AI provider returned invalid caption.",
+      violations: ["hashtags-count-out-of-range"],
+      attempts: 2,
+      rawResponseJson:
+        '{"caption":"", "note":"use token abc123def456ghi789 and password Hunter2Hunter2 to retry"}'
+    });
+
+    const raw = await readFile(
+      join(revision.outputDir, "caption-failure.json"),
+      "utf8"
+    );
+
+    expect(raw).not.toContain("abc123def456ghi789");
+    expect(raw).not.toContain("Hunter2Hunter2");
+    expect(raw).toContain("[redacted-secret]");
+  });
+
+  // The same pass must not eat ordinary prose. Plain lowercase words after a
+  // credential keyword ("token bucket", "secret sauce") are exactly the
+  // false positive that kept this heuristic out of the shared
+  // credential-detector.ts, so it stays shaped to token-like candidates.
+  it("leaves ordinary prose after a credential keyword intact", async () => {
+    const draftRoot = await createDraftRoot();
+    const revision = await createDraftRevision({
+      draftRoot,
+      targetDate: "2026-08-10"
+    });
+
+    await writeCaptionFailureDiagnostics(revision, {
+      failedAt: "2026-08-10T14:30:00.000Z",
+      reason:
+        "token bucket exhausted while the secret sauce configuration reloaded",
+      violations: ["caption-empty"],
+      attempts: 2
+    });
+
+    const diagnostics = JSON.parse(
+      await readFile(join(revision.outputDir, "caption-failure.json"), "utf8")
+    ) as Record<string, unknown>;
+
+    expect(diagnostics.reason).toBe(
+      "token bucket exhausted while the secret sauce configuration reloaded"
+    );
+  });
+
   it("returns a short error for unusable draft roots", async () => {
     const directory = await createDraftRoot();
     const draftRoot = join(directory, "draft-root-file");
