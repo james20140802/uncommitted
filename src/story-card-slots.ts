@@ -19,6 +19,13 @@ export type StoryCardDefinition = {
   readonly render: (slots: StoryCardSlots, chrome: StoryCardChrome) => string;
 };
 
+// 후보 목록을 LLM 프롬프트·검증에 넘기기 위한 직렬화 가능한 투영.
+// render / requires 함수를 빼고 id와 슬롯 스키마만 남긴다.
+export type StoryCardCandidate = {
+  readonly id: string;
+  readonly slots: StoryCardSlotSchema;
+};
+
 export function readSlotText(slots: StoryCardSlots, name: string): string {
   const value = slots[name];
   if (typeof value === "string") return value;
