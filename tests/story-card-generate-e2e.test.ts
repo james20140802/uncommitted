@@ -3,13 +3,15 @@ import { access, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type {
   AiProvider,
   AiProviderRawResponse,
   AiStructuredGenerationRequest
 } from "../src/ai-provider.js";
 import { runCli } from "../src/cli.js";
+import { writeStoryCardFailureDiagnostics } from "../src/draft-storage.js";
+import { generateStoryCardPlan } from "../src/story-card-generator.js";
 import type { GitActivityEvent } from "../src/collect-git-command.js";
 import type { CaptionResult } from "../src/diary-generator.js";
 import { addProject, type ProjectRecord } from "../src/project-add.js";
@@ -27,6 +29,43 @@ import type { MoodPlan } from "../src/story-format-plan.js";
  * 인라인한다 — tests/generate-command.test.ts의 헬퍼들은 export되어 있지
  * 않고, 그것들을 공용 모듈로 빼는 건 이 이슈 범위 밖의 리팩터링이다.
  */
+
+/**
+ * UNC-265 T7 리뷰 반영 (finding 4): "진단 기록 실패가 드래프트 생성을
+ * 막아서는 안 된다"는 규칙을 실제로 태워보려면 쓰기 자체를 실패시켜야
+ * 한다. 디스크 상태만으로는 이 실패를 주입할 수 없으므로(리비전 출력
+ * 경로를 미리 만들어 충돌시키면 allocateNextRevision의 readdir 스캔이
+ * 그걸 보고 다른 리비전 번호를 잡아버린다), tests/generate-command.test.ts가
+ * 세운 선례대로 실제 구현을 vi.fn(...)으로 감싼다 — 기본 동작은 실제
+ * 함수로 그대로 통과하고, 딱 한 테스트만 mockRejectedValueOnce로
+ * 한 번의 호출을 실패시킨다.
+ */
+vi.mock("../src/draft-storage.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/draft-storage.js")>();
+
+  return {
+    ...actual,
+    writeStoryCardFailureDiagnostics: vi.fn(actual.writeStoryCardFailureDiagnostics)
+  };
+});
+
+/**
+ * UNC-265 T7 리뷰 반영 (finding 2): AiGenerationError가 **아닌** throw도
+ * 사유가 진단에 남아야 한다. 이 갈래는 실재한다 — generateStoryCardPlan의
+ * 후보 투영·지시문 생성·안전 입력 매핑은 그 함수의 try 블록 **밖**에서
+ * 돌아서, 거기서 난 오류는 AiGenerationError로 감싸이지 않고 그대로
+ * 빠져나온다. 프로바이더 스텁으로는 만들 수 없는 실패라 위와 같은
+ * 방식으로 실제 구현을 감싸고 한 테스트에서만 한 번 실패시킨다.
+ */
+vi.mock("../src/story-card-generator.js", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../src/story-card-generator.js")>();
+
+  return {
+    ...actual,
+    generateStoryCardPlan: vi.fn(actual.generateStoryCardPlan)
+  };
+});
 
 const execFileAsync = promisify(execFile);
 
@@ -253,11 +292,18 @@ describe("story card plan in the generate path (UNC-265)", () => {
       aiProvider: provider
     });
     const outputDir = join(fixture.draftRoot, "2026-05-11", "rev-001");
+    const activitySummary = (await readJson(
+      join(outputDir, "activity-summary.json")
+    )) as { activityLevel: string };
     const story = (await readJson(join(outputDir, "story.json"))) as StoryJsonShape;
     const cards = story.storyCardPlan?.cards ?? [];
 
     expect(exitCode).toBe(0);
     expect(stderr).toEqual([]);
+    // 이 시나리오가 정말 조용한 날을 태우는지부터 못 박는다. fixture가
+    // 언젠가 이 날짜에 활동을 만들기 시작하면, 이 단언이 없으면 테스트는
+    // 계속 통과하면서 조용한 날 경로를 더 이상 검증하지 않게 된다.
+    expect(activitySummary.activityLevel).toBe("none");
     expect(cards.length).toBeGreaterThanOrEqual(1);
     expect(cards[0]).toMatchObject({ type: "typo", source: "generated" });
     expectNoEmptyRequiredSlot(cards);
@@ -299,6 +345,82 @@ describe("story card plan in the generate path (UNC-265)", () => {
     });
     // 프로바이더 호출 자체가 죽은 실행은 그 사실을 진단에 남긴다 (부모 AC6).
     expect(diagnostics.providerFailure?.code).toBe("provider-failed");
+    await expectCompleteDraft(outputDir);
+  });
+
+  it("records the cause when card generation throws a non-AiGenerationError", async () => {
+    const { io, stderr } = createIo();
+    const fixture = await createRegisteredProjectFixture();
+    const provider = new TaskAwareProvider({
+      storyCards: validStoryCardResponse()
+    });
+
+    await writeGitEvent(fixture.project, "2026-05-12");
+    await writeManualNote(fixture.project, "2026-05-12");
+
+    // 후보 투영·지시문 생성 단계의 프로그래밍 오류를 흉내낸다 — 프로바이더
+    // 실패가 아니라 분류되지 않은 예외다.
+    vi.mocked(generateStoryCardPlan).mockRejectedValueOnce(
+      new TypeError("candidates is not iterable")
+    );
+
+    const exitCode = await runCli(["generate", "today"], io, {
+      homeDir: fixture.homeDir,
+      now: () => "2026-05-12T23:30:00.000Z",
+      aiProvider: provider
+    });
+    const outputDir = join(fixture.draftRoot, "2026-05-12", "rev-001");
+    const story = (await readJson(join(outputDir, "story.json"))) as StoryJsonShape;
+    const diagnostics = (await readJson(
+      join(outputDir, "story-card-failure.json")
+    )) as StoryCardFailureShape & {
+      providerFailure?: { code: string; message: string };
+    };
+
+    expect(exitCode).toBe(0);
+    expect(stderr).toEqual([]);
+    expect(story.storyCardPlan?.cards[0]?.source).toBe("fallback");
+    // 아무것도 설명하지 못하는 `{ attempts: 0, cards: [] }`만 남아서는 안 된다.
+    expect(diagnostics.providerFailure?.message).toContain(
+      "candidates is not iterable"
+    );
+    expect(diagnostics.providerFailure?.message).toContain("Unclassified");
+    await expectCompleteDraft(outputDir);
+  });
+
+  it("still completes the draft when writing the failure diagnostics itself fails", async () => {
+    const { io, stderr } = createIo();
+    const fixture = await createRegisteredProjectFixture();
+    const provider = new TaskAwareProvider({ failStoryCards: true });
+
+    await writeGitEvent(fixture.project, "2026-05-12");
+    await writeManualNote(fixture.project, "2026-05-12");
+
+    // 진단 기록 호출 딱 한 번을 실패시킨다 (디스크 가득 참·권한 등).
+    // 앞선 시나리오들도 같은 모듈 mock을 공유하므로 호출 수를 먼저 비운다.
+    vi.mocked(writeStoryCardFailureDiagnostics).mockClear();
+    vi.mocked(writeStoryCardFailureDiagnostics).mockRejectedValueOnce(
+      new Error("disk full")
+    );
+
+    const exitCode = await runCli(["generate", "today"], io, {
+      homeDir: fixture.homeDir,
+      now: () => "2026-05-12T23:30:00.000Z",
+      aiProvider: provider
+    });
+    const outputDir = join(fixture.draftRoot, "2026-05-12", "rev-001");
+    const story = (await readJson(join(outputDir, "story.json"))) as StoryJsonShape;
+    const cards = story.storyCardPlan?.cards ?? [];
+
+    // 카드 실패도, 그 실패를 기록하려다 난 실패도 그날을 죽이지 않는다.
+    expect(exitCode).toBe(0);
+    expect(stderr).toEqual([]);
+    expect(vi.mocked(writeStoryCardFailureDiagnostics)).toHaveBeenCalledTimes(1);
+    expect(cards.length).toBeGreaterThanOrEqual(1);
+    expect(cards[0]?.source).toBe("fallback");
+    expectNoEmptyRequiredSlot(cards);
+    // 쓰기가 죽었으니 진단 파일은 남지 않는다 — 그래도 드래프트는 완성된다.
+    expect(await fileExists(join(outputDir, "story-card-failure.json"))).toBe(false);
     await expectCompleteDraft(outputDir);
   });
 });

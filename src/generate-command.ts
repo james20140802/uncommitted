@@ -417,10 +417,21 @@ export async function runGenerateCommand(
     });
   } catch (error) {
     storyCardGeneration = undefined;
+    // UNC-265 T7 리뷰 반영 (finding 2): AiGenerationError가 아닌 throw
+    // (카드 경로를 빠져나온 프로그래밍 오류 등)도 사유를 남긴다. 그러지
+    // 않으면 운영자에게 `{ attempts: 0, cards: [] }`뿐인, 아무것도 설명하지
+    // 못하는 진단 파일만 남는다(부모 AC6). T6의 타입이 허용하는 코드 중
+    // "provider-failed"가 가장 덜 틀린 값이라 그것을 쓰되, 분류되지 않은
+    // 예외라는 사실은 message에 명시해 프로바이더 실패와 헷갈리지 않게 한다.
     storyCardCallFailure =
       error instanceof AiGenerationError
         ? { message: error.message, code: error.code }
-        : undefined;
+        : {
+            message: `Unclassified story card generation failure: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+            code: "provider-failed"
+          };
   }
 
   const storyCardPlan = assembleStoryCardPlan({
@@ -548,6 +559,35 @@ export async function runGenerateCommand(
   // "[redacted-architecture]"), so the risk/reason would never be recorded
   // and nothing would ever be blocked (breaking parent AC2/AC4). The
   // written artifacts stay redacted regardless of what the report finds.
+  //
+  // UNC-265 / T7 — 카드 슬롯은 이 안전 텍스트에서 **의도적으로 제외**한다.
+  // 여기 넘기는 `generatedDraft`는 카드 계획을 붙이기 전의 드래프트다.
+  //
+  // 왜: 이 보고서가 `blocked`로 나오면 아래에서 GenerateCommandError
+  // ("safety-blocked", exit 6)를 던져 **그날 드래프트 전체가 죽는다**.
+  // 카드 슬롯을 여기 섞으면 카드 한 장의 secret 모양 문자열 하나가 그날을
+  // 통째로 날리게 되고, 그건 "한 장이 실패해도 나머지와 드래프트는 계속
+  // 된다"(부모 AC4) / "전부 실패해도 최소 한 장으로 완성된다"(AC5)와 정면
+  // 충돌한다. 2026-07-26 사고(자유 텍스트 응답 하나가 그날을 죽인 일)를
+  // 다른 문으로 다시 들이는 셈이다.
+  //
+  // 대가로 감수한 비대칭: 카드 슬롯은 redaction은 통과하지만
+  // (redactArchitectureDisclosureFromDraft, diary-generator.ts) 검사는
+  // 통과하지 않는다. 그래서 **같은 문자열이 슬라이드 본문에 있으면 warning
+  // 위험으로 기록되는데, 카드 슬롯에 있으면 조용히 정화되고 잔여 위험
+  // 항목이 남지 않는다.** secret·로컬 절대경로·이메일처럼 redaction이
+  // 덮지 않는 범주는 카드 슬롯에서 아예 탐지되지 않는다.
+  //
+  // 올바른 최종 설계는 "카드별로 검사해서 걸린 카드만 degrade시키기"이지만,
+  // 그건 카드 단위 안전 판정과 새 degrade 트리거가 필요한 **새 메커니즘**이고
+  // (block이냐 warn이냐 in-place redaction이냐는 정책 선택이기도 하다),
+  // 이 이슈의 어느 하위 태스크도 그것을 다루지 않는다. 카드가 실제로
+  // 렌더되어 공개 산출물이 되는 **UNC-235에서 렌더 경로를 함께 보고
+  // 결정한다.** 지금은 카드가 저장만 되고 렌더·export되지 않으므로 이
+  // 구멍은 실재하지만 아직 발현되지 않는다.
+  //
+  // 경고: 이 주석을 읽고 "그냥 storyCardPlan을 붙이면 되겠네"라고 고치지 마라.
+  // 위의 exit 6 결과를 먼저 이해해야 한다.
   const safetyReport = createSafetyReport(
     buildDraftSafetyText({
       draft: generatedDraft,
