@@ -591,6 +591,26 @@ class TaskAwareProvider implements AiProvider {
       };
     }
 
+    // UNC-265 / T7: generate가 story-card task를 부르게 되면서 이 스텁도
+    // 그 task를 의도적으로 정상 응답으로 받는다. 받지 않으면 `Unexpected
+    // task` 에러가 카드 실패 격리에 삼켜져, 이 파일의 모든 fixture가 조용히
+    // degrade 경로만 태우게 된다. typo는 requires()가 무조건 참이다.
+    if (request.task === "story-card") {
+      return {
+        responseJson: JSON.stringify({
+          cards: [
+            {
+              type: "typo",
+              slots: [
+                { name: "headline", lines: ["오늘의 기록"] },
+                { name: "kicker", lines: ["uncommitted"] }
+              ]
+            }
+          ]
+        })
+      };
+    }
+
     if (request.task === "caption") {
       const caption: CaptionResult = {
         caption: "오늘은 소스 게이팅을 텍스트 draft까지 연결했다.",

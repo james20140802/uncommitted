@@ -373,7 +373,17 @@ describe("architecture-disclosure e2e (UNC-208 / T4)", () => {
         }),
         caption: createCaption({
           caption: "오늘은 route guard 버그를 하나 잡았다. 나머지는 조용했다."
-        })
+        }),
+        // UNC-265 / T7: 카드 슬롯도 같은 disclosure를 담아본다 — story.json에
+        // 실려 나가는 LLM 자유 텍스트라 slides/caption과 똑같이 정화되어야 한다.
+        storyCards: {
+          cards: [
+            {
+              type: "typo",
+              slots: [{ name: "headline", lines: ["route guard가 조용해졌다"] }]
+            }
+          ]
+        }
       });
 
       await writeGitEvent(fixture.project, "2026-06-07");
@@ -387,6 +397,9 @@ describe("architecture-disclosure e2e (UNC-208 / T4)", () => {
       const outputDir = join(fixture.draftRoot, "2026-06-07", "rev-001");
       const story = (await readJson(join(outputDir, "story.json"))) as {
         slides: Array<{ title: string; body: string; visualMood: string }>;
+        storyCardPlan?: {
+          cards: Array<{ slots: Record<string, string | string[]> }>;
+        };
       };
       const caption = await readFile(join(outputDir, "caption.txt"), "utf8");
       const metadata = await readJson(join(outputDir, "metadata.json"));
@@ -424,6 +437,12 @@ describe("architecture-disclosure e2e (UNC-208 / T4)", () => {
       expect(caption).not.toContain("route guard");
       expect(caption).toContain("[redacted-architecture]");
 
+      // UNC-265 / T7: 카드 슬롯 surface도 같은 기준으로 정화된다.
+      const cardHeadline = story.storyCardPlan?.cards[0]?.slots.headline;
+
+      expect(cardHeadline).not.toContain("route guard");
+      expect(cardHeadline).toContain("[redacted-architecture]");
+
       // Image-prompt surface: because this draft is exportable, it DOES
       // reach visual-asset generation, whose prompt is built from
       // slide.visualMood. Assert the recorded provider request never saw
@@ -451,6 +470,14 @@ class FixtureAwareProvider implements AiProvider {
     private readonly options: {
       draft: ReturnType<typeof createDraft>;
       caption: CaptionResult;
+      /**
+       * UNC-265 / T7: 카드 슬롯도 story.json에 실려 나가는 LLM 자유
+       * 텍스트라 같은 redaction을 통과해야 한다. 생략하면 깨끗한 typo
+       * 카드를 돌려준다 — 이 스텁이 story-card task를 받지 않으면
+       * `Unexpected task` 에러가 카드 실패 격리에 삼켜져 이 파일의
+       * fixture가 조용히 degrade 경로만 태우게 된다.
+       */
+      storyCards?: unknown;
     }
   ) {}
 
@@ -486,6 +513,24 @@ class FixtureAwareProvider implements AiProvider {
 
     if (request.task === "draft") {
       return { responseJson: JSON.stringify(this.options.draft) };
+    }
+
+    if (request.task === "story-card") {
+      return {
+        responseJson: JSON.stringify(
+          this.options.storyCards ?? {
+            cards: [
+              {
+                type: "typo",
+                slots: [
+                  { name: "headline", lines: ["오늘의 기록"] },
+                  { name: "kicker", lines: ["uncommitted"] }
+                ]
+              }
+            ]
+          }
+        )
+      };
     }
 
     if (request.task === "caption") {

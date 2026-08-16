@@ -47,8 +47,20 @@ import {
   writeDraftArtifactJson,
   writeDraftArtifactText,
   writeIncompleteDraftMarker,
-  writeLatestDraftPointer
+  writeLatestDraftPointer,
+  writeStoryCardFailureDiagnostics,
+  type StoryCardFailureCardRecord,
+  type StoryCardFailureProviderFailure
 } from "./draft-storage.js";
+import {
+  generateStoryCardPlan,
+  type StoryCardGenerationResult
+} from "./story-card-generator.js";
+import {
+  assembleStoryCardPlan,
+  type StoryCardEntryOutcome,
+  type StoryCardPlan
+} from "./story-card-plan.js";
 import type { ManualNoteEvent } from "./note-command.js";
 import type { ProjectRecord, ProjectsFile } from "./project-add.js";
 import { loadSourceConfig } from "./source-config.js";
@@ -388,6 +400,57 @@ export async function runGenerateCommand(
     koreanEnglishMix: config.persona.voice.koreanEnglishMix,
     rawNarrativeProjection
   });
+  // UNC-265 / T7: 카드 계획을 만든다. 카드 실패는 그날 전체 실패로 승격되지
+  // 않는다 — 프로바이더 호출 자체가 실패해도 결정론적 기본값 계획으로
+  // 떨어지고 진단만 남긴다. 2026-07-26 exit 4에 대한 구조적 답이다.
+  let storyCardGeneration: StoryCardGenerationResult | undefined;
+  // 브리프 대비 보강: 호출이 통째로 죽은 경우의 사유를 버리지 않고
+  // 진단으로 옮긴다. 그러지 않으면 "카드가 계속 슬롯을 어긴 실행"과
+  // "카드 생성 호출이 죽은 실행"이 사후에 구분되지 않는다(부모 AC6).
+  let storyCardCallFailure: StoryCardFailureProviderFailure | undefined;
+
+  try {
+    storyCardGeneration = await generateStoryCardPlan({
+      activitySummary,
+      moodPlan: storyFormatPlan,
+      provider
+    });
+  } catch (error) {
+    storyCardGeneration = undefined;
+    storyCardCallFailure =
+      error instanceof AiGenerationError
+        ? { message: error.message, code: error.code }
+        : undefined;
+  }
+
+  const storyCardPlan = assembleStoryCardPlan({
+    outcomes: storyCardGeneration?.outcomes ?? [],
+    summary: activitySummary
+  });
+  const storyCardFailures = collectStoryCardFailureRecords(
+    storyCardGeneration?.outcomes ?? [],
+    storyCardPlan
+  );
+  const storyCardProviderFailure =
+    storyCardGeneration?.providerFailure ?? storyCardCallFailure;
+
+  if (storyCardGeneration === undefined || storyCardFailures.length > 0) {
+    try {
+      await writeStoryCardFailureDiagnostics(draftRevision, {
+        failedAt: generatedAt,
+        attempts: storyCardGeneration?.attempts ?? 0,
+        cards: storyCardFailures,
+        rawResponseJson: storyCardGeneration?.rawResponseJson,
+        ...(storyCardProviderFailure === undefined
+          ? {}
+          : { providerFailure: storyCardProviderFailure })
+      });
+    } catch {
+      // 진단 기록 실패가 드래프트 생성을 막아서는 안 된다 — 카드 실패는
+      // 결코 그날을 죽이지 않는다는 규칙이 진단 기록에도 그대로 적용된다.
+    }
+  }
+
   let captionResult;
 
   try {
@@ -439,8 +502,13 @@ export async function runGenerateCommand(
   // Redacting here also means the image prompt (derived from
   // slide.visualMood in carousel-renderer.ts) is redacted at the source,
   // before visual asset generation runs.
+  // UNC-265 / T7: 카드 계획을 **redaction 전에** 붙인다. 카드 슬롯도 LLM
+  // 자유 텍스트라 title/slides와 같은 redaction을 통과해야 하기 때문이다.
   const preRedactionCaptionText = deriveCaptionText(captionResult);
-  const draft = redactArchitectureDisclosureFromDraft(generatedDraft);
+  const draft = redactArchitectureDisclosureFromDraft({
+    ...generatedDraft,
+    storyCardPlan
+  });
   const caption = redactArchitectureDisclosureFromCaption(
     preRedactionCaptionText
   );
@@ -1155,4 +1223,36 @@ function isAiProviderName(value: unknown): value is AiProviderName {
     typeof value === "string" &&
     providerNames.includes(value as AiProviderName)
   );
+}
+
+/**
+ * UNC-265 / T7: 거부된 카드마다 계획에서 실제로 어떻게 끝났는지를 판정한다.
+ * 그 종류가 계획에 `degraded`로 남았으면 기본값으로 살아남은 것이고,
+ * 없으면 계획에서 빠진 것이다. 이 구분이 사후 추적의 핵심이라 진단에
+ * 그대로 남긴다 — 계획 자체는 `source`만 들고 있어서 "왜 그렇게 됐는지"는
+ * 여기서만 알 수 있다.
+ */
+function collectStoryCardFailureRecords(
+  outcomes: readonly StoryCardEntryOutcome[],
+  plan: StoryCardPlan
+): StoryCardFailureCardRecord[] {
+  const degradedTypes = new Set(
+    plan.cards.filter((card) => card.source === "degraded").map((card) => card.type)
+  );
+
+  return outcomes.flatMap((outcome) => {
+    if (outcome.status !== "rejected") return [];
+
+    return [
+      {
+        cardIndex: outcome.cardIndex,
+        cardType: outcome.rawType,
+        outcome:
+          outcome.rawType !== null && degradedTypes.has(outcome.rawType)
+            ? ("degraded" as const)
+            : ("dropped" as const),
+        violations: outcome.violations.map((violation) => violation.code)
+      }
+    ];
+  });
 }
