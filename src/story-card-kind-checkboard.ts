@@ -1,6 +1,7 @@
 import { escapeHtml } from "./html-escape.js";
 import { renderStoryCardDocument, type StoryCardChrome } from "./story-card-chrome.js";
 import {
+  firstMeaningfulLines,
   fitSlotLines,
   fitSlotText,
   readSlotLines,
@@ -89,7 +90,7 @@ export const checkboardStoryCard: StoryCardDefinition = {
     return {
       heading: fitSlotText("오늘의 체크리스트", checkboardSlots.heading),
       done: fitSlotLines(
-        summary.smallWins.length > 0 ? summary.smallWins : ["오늘은 쉬어가는 날"],
+        firstMeaningfulLines(summary.smallWins, ["오늘은 쉬어가는 날"]),
         checkboardSlots.done
       ),
       todo: fitSlotLines(summary.unfinishedThreads, checkboardSlots.todo)

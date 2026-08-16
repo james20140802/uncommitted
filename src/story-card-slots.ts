@@ -91,3 +91,38 @@ export function fitSlotLines(
 
   return cleaned.slice(0, spec.maxLines);
 }
+
+/**
+ * UNC-263 T5 리뷰 반영: `a ?? b ?? fixed` 형태의 선택은 공백뿐인 문자열을
+ * "값 있음"으로 오판해 승인된 고정 문구를 밀어낸다 — `??`는 빈 문자열이
+ * nullish가 아니라서 그냥 통과시키기 때문이다. trim해서 실제 내용이 남는
+ * 첫 후보를 고른다. 아무것도 없으면 undefined를 돌려주므로 호출부가
+ * 자기 `?? 고정문구`로 마저 떨어진다.
+ */
+export function firstMeaningfulText(
+  ...candidates: readonly (string | undefined)[]
+): string | undefined {
+  for (const candidate of candidates) {
+    if (candidate !== undefined && candidate.trim().length > 0) return candidate;
+  }
+
+  return undefined;
+}
+
+/**
+ * `list.length > 0 ? list : fixed` 형태의 lines 선택판. 원소가 전부
+ * 공백뿐인 배열도 length > 0이라 "내용 있음"으로 오판된다 — 그 결과가
+ * fitSlotLines를 통과하며 빈 배열로 졸아들면 required lines 슬롯이
+ * 조용히 비어버린다(chat.messages가 실제로 겪은 사례). trim해서 내용이
+ * 남는 줄이 하나라도 있는 첫 목록을 고르고, 선택된 목록은 그대로
+ * 돌려준다 — 공백 줄 제거 자체는 fitSlotLines의 몫이다.
+ */
+export function firstMeaningfulLines(
+  ...candidateLists: readonly (readonly string[])[]
+): string[] {
+  for (const candidate of candidateLists) {
+    if (candidate.some((line) => line.trim().length > 0)) return [...candidate];
+  }
+
+  return [];
+}

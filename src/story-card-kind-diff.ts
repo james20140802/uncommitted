@@ -1,6 +1,7 @@
 import { escapeHtml } from "./html-escape.js";
 import { renderStoryCardDocument, type StoryCardChrome } from "./story-card-chrome.js";
 import {
+  firstMeaningfulText,
   fitSlotLines,
   fitSlotText,
   readSlotLines,
@@ -74,7 +75,7 @@ export const diffStoryCard: StoryCardDefinition = {
   buildDefaultSlots({ summary }) {
     return {
       filename: fitSlotText(
-        summary.commitSignals.subjects[0] ?? "오늘의 변경",
+        firstMeaningfulText(summary.commitSignals.subjects[0]) ?? "오늘의 변경",
         diffSlots.filename
       ),
       added: fitSlotLines(summary.smallWins, diffSlots.added),

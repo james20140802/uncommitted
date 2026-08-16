@@ -1,6 +1,8 @@
 import { escapeHtml } from "./html-escape.js";
 import { renderStoryCardDocument, type StoryCardChrome } from "./story-card-chrome.js";
 import {
+  firstMeaningfulLines,
+  firstMeaningfulText,
   fitSlotLines,
   fitSlotText,
   readSlotLines,
@@ -67,13 +69,14 @@ export const terminalStoryCard: StoryCardDefinition = {
   slots: terminalSlots,
   buildDefaultSlots({ summary }) {
     const command =
-      summary.commitSignals.subjects[0] ?? summary.smallWins[0] ?? "git status";
+      firstMeaningfulText(summary.commitSignals.subjects[0], summary.smallWins[0]) ??
+      "git status";
 
     return {
       prompt: fitSlotText("~/uncommitted", terminalSlots.prompt),
       command: fitSlotText(command, terminalSlots.command),
       output: fitSlotLines(
-        summary.smallWins.length > 0 ? summary.smallWins : ["오늘은 조용했다"],
+        firstMeaningfulLines(summary.smallWins, ["오늘은 조용했다"]),
         terminalSlots.output
       )
     };

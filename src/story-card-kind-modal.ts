@@ -1,6 +1,7 @@
 import { escapeHtml } from "./html-escape.js";
 import { renderStoryCardDocument, type StoryCardChrome } from "./story-card-chrome.js";
 import {
+  firstMeaningfulText,
   fitSlotText,
   readSlotText,
   type StoryCardDefinition,
@@ -94,9 +95,10 @@ export const modalStoryCard: StoryCardDefinition = {
   slots: modalSlots,
   buildDefaultSlots({ summary }) {
     const body =
-      summary.blockersOrConfusion[0] ??
-      summary.unfinishedThreads[0] ??
-      "오늘은 쉬어가는 날입니다. 내일의 나에게 넘깁니다.";
+      firstMeaningfulText(
+        summary.blockersOrConfusion[0],
+        summary.unfinishedThreads[0]
+      ) ?? "오늘은 쉬어가는 날입니다. 내일의 나에게 넘깁니다.";
 
     return {
       title: fitSlotText("알림", modalSlots.title),

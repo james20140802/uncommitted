@@ -133,4 +133,46 @@ describe("story card default slots", () => {
 
     expect(readSlotLines(slots, "done").join(" ")).toContain("테스트");
   });
+
+  // UNC-263 T5 리뷰 반영: `??`나 `list.length > 0 ? list : fixed` 형태의
+  // 선택 로직은 공백뿐인 문자열을 "값 있음"으로 오판해 승인된 고정 문구를
+  // 밀어낸다. 그 결과 필수 슬롯이 빈 문자열/빈 배열로 끝나 자기 검증에
+  // 실패할 수 있다 — degrade 경로 자체가 무력해지는 시나리오.
+  const whitespaceOnlySummary = createSummary({
+    activityLevel: "high",
+    commitSignals: {
+      totalCommits: 1,
+      filesChanged: 1,
+      insertions: 1,
+      deletions: 0,
+      subjects: ["   "],
+      themes: []
+    },
+    smallWins: ["   "],
+    unfinishedThreads: ["   "],
+    blockersOrConfusion: ["   "],
+    possibleJokes: ["   "],
+    manualContext: { noteCount: 1, notes: [] }
+  });
+
+  it("still produces valid defaults when every candidate field is whitespace-only", () => {
+    for (const kind of storyCardRegistry) {
+      const slots = kind.buildDefaultSlots({ summary: whitespaceOnlySummary });
+      const wireSlots = Object.entries(slots).map(([name, value]) => ({
+        name,
+        lines: Array.isArray(value) ? value : [value]
+      }));
+      const outcomes = validateStoryCardPlanEntries(
+        [{ type: kind.id, slots: wireSlots }],
+        [{ id: kind.id, slots: kind.slots }]
+      );
+
+      expect(
+        outcomes[0].status,
+        `${kind.id} default slots with whitespace-only material: ${JSON.stringify(
+          outcomes[0]
+        )}`
+      ).toBe("accepted");
+    }
+  });
 });

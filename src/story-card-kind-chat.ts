@@ -1,6 +1,7 @@
 import { escapeHtml } from "./html-escape.js";
 import { renderStoryCardDocument, type StoryCardChrome } from "./story-card-chrome.js";
 import {
+  firstMeaningfulLines,
   fitSlotLines,
   readSlotLines,
   type StoryCardDefinition,
@@ -81,7 +82,7 @@ export const chatStoryCard: StoryCardDefinition = {
 
     return {
       messages: fitSlotLines(
-        material.length > 0 ? material : ["오늘은 쉬어가는 날", "내일 다시"],
+        firstMeaningfulLines(material, ["오늘은 쉬어가는 날", "내일 다시"]),
         chatSlots.messages
       )
     };
