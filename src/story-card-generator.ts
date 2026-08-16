@@ -3,6 +3,7 @@ import {
   AiGenerationError,
   createAiGenerationRequest,
   generateStructuredWithRetry,
+  type AiGenerationErrorCode,
   type AiProvider,
   type JsonObject,
   type JsonValue,
@@ -25,10 +26,26 @@ import type { MoodPlan } from "./story-format-plan.js";
  */
 export const STORY_CARD_MAX_ATTEMPTS = 2;
 
+/**
+ * UNC-261 T3 리뷰 반영: 재시도 도중 프로바이더 호출 자체가 죽어 생성이
+ * 끝난 경우, 그 사실이 사라지지 않게 남긴다 (부모 AC6, 사후 원인 추적).
+ * 직렬화 가능해야 T6(진단 아티팩트)·T7(전달)이 그대로 옮겨 쓸 수 있다.
+ */
+export type StoryCardProviderFailure = {
+  readonly message: string;
+  readonly code: AiGenerationErrorCode;
+};
+
 export type StoryCardGenerationResult = {
   readonly outcomes: StoryCardEntryOutcome[];
   readonly attempts: number;
   readonly rawResponseJson?: string;
+  /**
+   * 재시도가 소진돼서가 아니라 재시도 호출 자체(네트워크·타임아웃 등)가
+   * 실패해서 루프가 끝났을 때만 채운다. 그래도 이미 확보한 outcomes는
+   * 그대로 반환한다 — 아래 generateStoryCardPlan의 catch 블록 주석 참고.
+   */
+  readonly providerFailure?: StoryCardProviderFailure;
 };
 
 export type GenerateStoryCardPlanOptions = {
@@ -240,10 +257,30 @@ export async function generateStoryCardPlan(
   } catch (error) {
     if (lastOutcomes === undefined) throw error;
 
+    // UNC-261 T3 리뷰 반영: "validate가 한 번이라도 돌았는가"는 종료 원인의
+    // 대리 지표일 뿐이다. attempt 1이 위반으로 재시도에 들어간 뒤 attempt 2의
+    // provider.generateStructured() 자체가 죽어도(네트워크·타임아웃) 여기로
+    // 떨어지는데, 그 경우와 "재시도를 다 써서 위반이 남은" 경우를 구분해야
+    // 한다. withPriorDiagnostics(ai-provider.ts)가 종료 에러의 message/code는
+    // 항상 실제로 끝난 원인의 것으로 유지하므로("provider-failed" 등), 우리
+    // validate()가 던진 위반 소진 에러만 "malformed-response" 코드를 갖는다는
+    // 사실로 둘을 가른다.
+    //
+    // 컨트롤러 결정: 어느 쪽이든 이미 확보한 outcomes는 그대로 돌려준다.
+    // 재시도 호출이 죽었다고 attempt 1이 만든 정상 카드까지 버리면 하루 전체가
+    // fallback으로 넘어가버려, "카드 실패가 하루 실패로 승격되지 않는다"는 이
+    // 이슈의 목적과 정반대가 된다. 대신 providerFailure에 종료 원인을 남겨
+    // 사후 추적(부모 AC6)이 가능하게 한다.
+    const isValidationExhaustion =
+      error instanceof AiGenerationError && error.code === "malformed-response";
+
     return {
       outcomes: lastOutcomes,
       attempts,
-      rawResponseJson: lastRawResponseJson
+      rawResponseJson: lastRawResponseJson,
+      ...(!isValidationExhaustion && error instanceof AiGenerationError
+        ? { providerFailure: { message: error.message, code: error.code } }
+        : {})
     };
   }
 }

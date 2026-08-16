@@ -217,6 +217,7 @@ describe("generateStoryCardPlan", () => {
     expect(result.outcomes[0].status).toBe("accepted");
     expect(result.outcomes[1].status).toBe("rejected");
     expect(result.rawResponseJson).toBeTypeOf("string");
+    expect(result.providerFailure).toBeUndefined();
   });
 
   it("propagates a provider-level failure — that is not a card failure", async () => {
@@ -235,6 +236,46 @@ describe("generateStoryCardPlan", () => {
         provider
       })
     ).rejects.toThrow();
+  });
+
+  it("keeps attempt 1's partial outcomes and records the provider failure when the retry call itself dies", async () => {
+    // 리뷰 지적 재현: attempt 1은 위반이 있는 응답을 받아 재시도로 들어가고,
+    // attempt 2에서 provider.generateStructured() 자체가 죽는다(네트워크
+    // 등). "validate가 한 번이라도 돌았는가"만 보면 이 경우도 마치 재시도가
+    // 소진돼 위반이 남은 것처럼 보이지만, 실제로는 프로바이더 호출이 죽은
+    // 것이다 — providerFailure로 그 차이를 남겨야 한다.
+    let callCount = 0;
+    const provider: AiProvider = {
+      name: "mock",
+      model: "stub",
+      async generateStructured(): Promise<AiProviderRawResponse> {
+        callCount += 1;
+
+        if (callCount === 1) {
+          return {
+            responseJson: cardResponse([
+              { type: "typo", slots: [{ name: "headline", lines: ["가".repeat(80)] }] }
+            ])
+          };
+        }
+
+        throw new Error("network down");
+      }
+    };
+
+    const result = await generateStoryCardPlan({
+      activitySummary: createSummary(),
+      moodPlan: createMoodPlan(),
+      provider
+    });
+
+    expect(callCount).toBe(2);
+    expect(result.attempts).toBe(1);
+    expect(result.outcomes).toHaveLength(1);
+    expect(result.outcomes[0].status).toBe("rejected");
+    expect(result.providerFailure).toBeDefined();
+    expect(result.providerFailure?.code).toBe("provider-failed");
+    expect(result.providerFailure?.message.length).toBeGreaterThan(0);
   });
 
   it("asks for as many cards as the mood plan's suggestedSlideCount", async () => {

@@ -230,6 +230,58 @@ describe("AI provider abstraction", () => {
     expect(schema?.properties?.formatName).toBeUndefined();
   });
 
+  it("uses the story card plan schema for the OpenAI-compatible story-card response format, not the diary draft schema", async () => {
+    const calls: Array<{ url: string; request: AiProviderHttpRequest }> = [];
+    const provider = createAiProvider(
+      {
+        provider: "openai",
+        persona: "dry reviewer",
+        roastLevel: 3
+      },
+      {
+        env: { OPENAI_API_KEY: "sk-test-secret" },
+        transport: createTransport(calls, {
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({ cards: [] })
+              }
+            }
+          ]
+        })
+      }
+    );
+
+    await generateStructured(
+      provider,
+      createAiGenerationRequest({
+        task: "story-card",
+        instructions: "Return a compact JSON object.",
+        summary: createQuietSummary()
+      })
+    );
+
+    const body = JSON.parse(calls[0]?.request.body ?? "{}") as {
+      response_format?: {
+        json_schema?: {
+          name?: string;
+          strict?: boolean;
+          schema?: { required?: string[]; properties?: Record<string, unknown> };
+        };
+      };
+    };
+
+    expect(body.response_format?.json_schema?.name).toBe(
+      "uncommitted_story_card_plan"
+    );
+    expect(body.response_format?.json_schema?.strict).toBe(true);
+
+    const schema = body.response_format?.json_schema?.schema;
+    expect(schema?.required).toContain("cards");
+    expect(schema?.required).not.toContain("title");
+    expect(schema?.properties?.title).toBeUndefined();
+  });
+
   it("creates an OpenRouter provider with provider-specific credentials and endpoint", async () => {
     const calls: Array<{ url: string; request: AiProviderHttpRequest }> = [];
     const provider = createAiProvider(
@@ -505,6 +557,60 @@ describe("AI provider abstraction", () => {
 
     expect(body.tools?.[0]?.name).toBe("uncommitted_diary_draft");
     expect(body.tool_choice?.name).toBe("uncommitted_diary_draft");
+  });
+
+  it("creates an Anthropic provider that uses the story card plan schema for the story-card task", async () => {
+    const calls: Array<{ url: string; request: AiProviderHttpRequest }> = [];
+    const provider = createAiProvider(
+      {
+        provider: "anthropic",
+        persona: "dry reviewer",
+        roastLevel: 3
+      },
+      {
+        env: { ANTHROPIC_API_KEY: "sk-ant-test-secret" },
+        transport: createTransport(calls, {
+          content: [
+            {
+              type: "tool_use",
+              name: "uncommitted_story_card_plan",
+              input: { cards: [] }
+            }
+          ],
+          stop_reason: "tool_use"
+        })
+      }
+    );
+
+    await generateStructured(
+      provider,
+      createAiGenerationRequest({
+        task: "story-card",
+        instructions: "Return JSON.",
+        summary: createQuietSummary()
+      })
+    );
+
+    const body = JSON.parse(calls[0]?.request.body ?? "{}") as {
+      tools?: Array<{
+        name: string;
+        strict?: boolean;
+        input_schema?: { required?: string[]; properties?: Record<string, unknown> };
+      }>;
+      tool_choice?: { type: string; name: string };
+    };
+
+    expect(body.tools?.[0]?.name).toBe("uncommitted_story_card_plan");
+    expect(body.tools?.[0]?.strict).toBe(true);
+    expect(body.tool_choice).toEqual({
+      type: "tool",
+      name: "uncommitted_story_card_plan"
+    });
+
+    const schema = body.tools?.[0]?.input_schema;
+    expect(schema?.required).toContain("cards");
+    expect(schema?.required).not.toContain("title");
+    expect(schema?.properties?.title).toBeUndefined();
   });
 
   it("fails clearly when ANTHROPIC_API_KEY is missing", () => {
