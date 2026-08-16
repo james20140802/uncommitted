@@ -1,4 +1,5 @@
 import type { ActivitySummary } from "./activity-summary.js";
+import { TYPO_FALLBACK_HEADLINE } from "./story-card-kind-typo.js";
 import { storyCardRegistry } from "./story-card-registry.js";
 import type {
   StoryCardCandidate,
@@ -330,7 +331,7 @@ export type StoryCardPlanCard = {
 
 export type StoryCardPlan = {
   readonly schemaVersion: 1;
-  readonly cards: StoryCardPlanCard[];
+  readonly cards: readonly StoryCardPlanCard[];
 };
 
 const FALLBACK_CARD_TYPE = "typo";
@@ -346,19 +347,29 @@ function toWireSlots(slots: StoryCardSlots): unknown[] {
  * 기본값도 자기 종류의 제약을 만족하는지 **같은 검증기로** 다시 본다.
  * 기본값을 신뢰해서 그냥 통과시키면, 제약을 어기는 기본값이 조용히
  * 카드로 나가 degrade 경로가 있으나 마나 해진다.
+ *
+ * UNC-263 T5 리뷰 반영 (finding 2): buildDefaultSlots는 오늘의 요약
+ * 데이터로 계산하는 코드다 — 통상 순수 문자열 조작이라 던지지 않지만,
+ * "카드 하나의 실패가 계획 전체를 죽여서는 안 된다"는 이 태스크의 목적을
+ * 코드로도 지키려면 이 호출 자체를 무방비로 두면 안 된다. 던지면 그 카드만
+ * 버린다 — 재검증에 실패했을 때와 같은 취급이다.
  */
 function degradeToDefaults(
   definition: StoryCardDefinition,
   summary: ActivitySummary
 ): StoryCardSlots | null {
-  const slots = definition.buildDefaultSlots({ summary });
-  const outcomes = validateStoryCardPlanEntries(
-    [{ type: definition.id, slots: toWireSlots(slots) }],
-    [{ id: definition.id, slots: definition.slots }]
-  );
-  const outcome = outcomes[0];
+  try {
+    const slots = definition.buildDefaultSlots({ summary });
+    const outcomes = validateStoryCardPlanEntries(
+      [{ type: definition.id, slots: toWireSlots(slots) }],
+      [{ id: definition.id, slots: definition.slots }]
+    );
+    const outcome = outcomes[0];
 
-  return outcome?.status === "accepted" ? outcome.entry.slots : null;
+    return outcome?.status === "accepted" ? outcome.entry.slots : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -388,7 +399,14 @@ export function assembleStoryCardPlan(options: {
       continue;
     }
 
-    const definition = registry.find((kind) => kind.id === outcome.rawType);
+    // UNC-263 T5 리뷰 반영 (finding 4): 레지스트리 전체가 아니라 오늘의
+    // 후보(requires(summary) === true)에서만 degrade 대상을 찾는다. T2가
+    // "오늘의 후보가 아니다"라는 이유로 이미 거부한 카드를, 그 이유를
+    // 무시하고 되살리면 안 된다 — 없는 활동을 지어내지 않는다는 원칙과도
+    // 맞닿아 있다.
+    const definition = registry.find(
+      (kind) => kind.id === outcome.rawType && kind.requires(options.summary)
+    );
 
     if (definition === undefined) continue;
 
@@ -401,16 +419,31 @@ export function assembleStoryCardPlan(options: {
 
   if (cards.length > 0) return { schemaVersion: 1, cards };
 
-  const fallback = registry.find((kind) => kind.id === FALLBACK_CARD_TYPE);
+  const fallbackDefinition = registry.find((kind) => kind.id === FALLBACK_CARD_TYPE);
 
-  if (fallback === undefined) return { schemaVersion: 1, cards: [] };
+  if (fallbackDefinition === undefined) return { schemaVersion: 1, cards: [] };
 
+  // UNC-263 T5 리뷰 반영 (finding 1b): 최후의 한 장도 다른 degrade 카드와
+  // 똑같이 재검증을 거친다 — fallback이라고 봐주지 않는다.
+  const fallbackSlots = degradeToDefaults(fallbackDefinition, options.summary);
+
+  if (fallbackSlots !== null) {
+    return {
+      schemaVersion: 1,
+      cards: [{ type: fallbackDefinition.id, slots: fallbackSlots, source: "fallback" }]
+    };
+  }
+
+  // UNC-263 T5 리뷰 반영 (finding 1c): typo의 기본값 생성마저 재검증에
+  // 실패하면, 승인된 고정 문구로 카드를 직접 만든다. buildDefaultSlots를
+  // 다시 부르지 않는다 — 실패할 수 있는 코드에 기대지 않는 게 이 바닥의
+  // 조건이다. 부모 AC5가 요구하는 "그날의 최후의 한 장"은 여기서 끝난다.
   return {
     schemaVersion: 1,
     cards: [
       {
-        type: fallback.id,
-        slots: fallback.buildDefaultSlots({ summary: options.summary }),
+        type: FALLBACK_CARD_TYPE,
+        slots: { headline: TYPO_FALLBACK_HEADLINE },
         source: "fallback"
       }
     ]
