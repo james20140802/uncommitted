@@ -53,10 +53,12 @@ const terminalStyles = `
 export const terminalStoryCard: StoryCardDefinition = {
   id: "terminal",
   requires: (summary) => summary.commitSignals.totalCommits > 0,
+  // 슬롯 한계값(UNC-259): 등폭 터미널 스테이지 기준 한 줄에 들어가는
+  // 문자 수에서 역산. UNC-235에서 재조정될 수 있다.
   slots: {
-    prompt: { type: "text", required: true },
-    command: { type: "text", required: true },
-    output: { type: "lines", required: false }
+    prompt: { type: "text", required: true, maxLength: 24 },
+    command: { type: "text", required: true, maxLength: 60 },
+    output: { type: "lines", required: false, maxLines: 6, maxLength: 60 }
   },
   render(slots: StoryCardSlots, chrome: StoryCardChrome): string {
     const prompt = escapeHtml(readSlotText(slots, "prompt").trim());

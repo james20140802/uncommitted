@@ -59,10 +59,12 @@ function renderDiffLines(lines: string[], kind: "added" | "removed"): string {
 export const diffStoryCard: StoryCardDefinition = {
   id: "diff",
   requires: (summary) => summary.commitSignals.filesChanged > 0,
+  // 슬롯 한계값(UNC-259): added/removed가 스테이지를 나눠 쓰므로 각각
+  // 5줄, 등폭 폭에서 줄 길이를 역산. UNC-235에서 재조정될 수 있다.
   slots: {
-    filename: { type: "text", required: true },
-    added: { type: "lines", required: false },
-    removed: { type: "lines", required: false }
+    filename: { type: "text", required: true, maxLength: 48 },
+    added: { type: "lines", required: false, maxLines: 5, maxLength: 56 },
+    removed: { type: "lines", required: false, maxLines: 5, maxLength: 56 }
   },
   render(slots: StoryCardSlots, chrome: StoryCardChrome): string {
     const filename = escapeHtml(readSlotText(slots, "filename").trim());

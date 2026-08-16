@@ -63,8 +63,10 @@ function splitMessage(line: string): { speaker: string; message: string } {
 export const chatStoryCard: StoryCardDefinition = {
   id: "chat",
   requires: (summary) => summary.manualContext.noteCount > 0,
+  // 슬롯 한계값(UNC-259): 말풍선은 줄마다 여백을 먹으므로 6줄이 상한.
+  // UNC-235에서 재조정될 수 있다.
   slots: {
-    messages: { type: "lines", required: true }
+    messages: { type: "lines", required: true, maxLines: 6, maxLength: 60 }
   },
   render(slots: StoryCardSlots, chrome: StoryCardChrome): string {
     const rows = readSlotLines(slots, "messages").map((line, index) => {

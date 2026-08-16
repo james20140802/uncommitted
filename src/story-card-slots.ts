@@ -6,6 +6,17 @@ export type StoryCardSlotType = "text" | "lines";
 export type StoryCardSlotSpec = {
   readonly type: StoryCardSlotType;
   readonly required: boolean;
+  /**
+   * `lines` 슬롯이 허용하는 최대 줄 수. `text` 슬롯에는 의미가 없다.
+   * 선언하지 않으면 줄 수를 제한하지 않는다 — 기존 슬롯 정의가 그대로
+   * 살아 있도록 optional로 둔다.
+   */
+  readonly maxLines?: number;
+  /**
+   * `text` 슬롯은 전체 길이, `lines` 슬롯은 **줄 하나의** 길이 상한.
+   * 선언하지 않으면 길이를 제한하지 않는다.
+   */
+  readonly maxLength?: number;
 };
 
 export type StoryCardSlotSchema = Readonly<Record<string, StoryCardSlotSpec>>;

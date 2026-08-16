@@ -79,11 +79,14 @@ export const modalStoryCard: StoryCardDefinition = {
     summary.unfinishedThreads.length > 0 ||
     summary.activityLevel === "none" ||
     summary.activityLevel === "low",
+  // 슬롯 한계값(UNC-259): 모달 본문은 버튼 두 개를 아래에 두고도 남는
+  // 높이에서 역산. 버튼 라벨은 짧아야 잘리지 않는다.
+  // UNC-235에서 재조정될 수 있다.
   slots: {
-    title: { type: "text", required: true },
-    body: { type: "text", required: true },
-    primaryAction: { type: "text", required: true },
-    secondaryAction: { type: "text", required: false }
+    title: { type: "text", required: true, maxLength: 32 },
+    body: { type: "text", required: true, maxLength: 120 },
+    primaryAction: { type: "text", required: true, maxLength: 16 },
+    secondaryAction: { type: "text", required: false, maxLength: 16 }
   },
   render(slots: StoryCardSlots, chrome: StoryCardChrome): string {
     const title = escapeHtml(readSlotText(slots, "title").trim());
