@@ -23,7 +23,7 @@ export type AiProviderName =
   | "mistral"
   | "openrouter";
 
-export type AiGenerationTask = "story-plan" | "caption" | "draft";
+export type AiGenerationTask = "story-plan" | "caption" | "draft" | "story-card";
 
 export type SafeProjectSummary = {
   projectId: string;
@@ -656,27 +656,40 @@ function createChatCompletionBody(
 }
 
 function createResponseFormat(task: AiGenerationTask): JsonObject {
+  const { name, schema } = createTaskSchemaDefinition(task);
+
   return {
     type: "json_schema",
-    json_schema:
-      task === "story-plan"
-        ? {
-            name: "uncommitted_story_format_plan",
-            strict: true,
-            schema: createMoodPlanSchema()
-          }
-        : task === "caption"
-          ? {
-              name: "uncommitted_caption",
-              strict: true,
-              schema: createCaptionSchema()
-            }
-          : {
-              name: "uncommitted_diary_draft",
-              strict: true,
-              schema: createDiaryDraftSchema()
-            }
+    json_schema: { name, strict: true, schema }
   };
+}
+
+// UNC-261 / T3: story-card task가 더해지며 네 갈래가 되어 중첩 삼항으로는
+// 더 읽히지 않는다. createResponseFormat과 createAnthropicToolDefinition이
+// 같은 (name/schema) 매핑을 쓰므로 조회 함수 하나로 합쳐 중복을 없앤다.
+function createTaskSchemaDefinition(task: AiGenerationTask): {
+  name: string;
+  schema: JsonObject;
+} {
+  if (task === "story-plan") {
+    return {
+      name: "uncommitted_story_format_plan",
+      schema: createMoodPlanSchema()
+    };
+  }
+
+  if (task === "caption") {
+    return { name: "uncommitted_caption", schema: createCaptionSchema() };
+  }
+
+  if (task === "story-card") {
+    return {
+      name: "uncommitted_story_card_plan",
+      schema: createStoryCardPlanSchema()
+    };
+  }
+
+  return { name: "uncommitted_diary_draft", schema: createDiaryDraftSchema() };
 }
 
 /**
@@ -741,6 +754,47 @@ export function createMoodPlanSchema(): JsonObject {
       doNotMention: {
         type: "array",
         items: { type: "string" }
+      }
+    }
+  };
+}
+
+/**
+ * UNC-261 / T3: 카드 계획 응답 스키마. 슬롯 키는 카드 종류마다 다른데
+ * strict 스키마는 additionalProperties: false를 요구하므로, 슬롯을
+ * { name, lines[] } 배열로 평탄화해 표현한다. `text` 슬롯은 원소가 하나인
+ * lines로 오고, 검증기(story-card-plan.ts)가 다시 문자열로 정규화한다.
+ * type은 여기서 열거하지 않는다 — 후보는 그날마다 달라지므로 프롬프트가
+ * 열거하고 검증기가 후보 소속을 판정한다.
+ */
+export function createStoryCardPlanSchema(): JsonObject {
+  return {
+    type: "object",
+    additionalProperties: false,
+    required: ["cards"],
+    properties: {
+      cards: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["type", "slots"],
+          properties: {
+            type: { type: "string" },
+            slots: {
+              type: "array",
+              items: {
+                type: "object",
+                additionalProperties: false,
+                required: ["name", "lines"],
+                properties: {
+                  name: { type: "string" },
+                  lines: { type: "array", items: { type: "string" } }
+                }
+              }
+            }
+          }
+        }
       }
     }
   };
@@ -848,15 +902,9 @@ function createAnthropicToolDefinition(task: AiGenerationTask): {
   toolName: string;
   schema: JsonObject;
 } {
-  if (task === "story-plan") {
-    return { toolName: "uncommitted_story_format_plan", schema: createMoodPlanSchema() };
-  }
+  const { name, schema } = createTaskSchemaDefinition(task);
 
-  if (task === "caption") {
-    return { toolName: "uncommitted_caption", schema: createCaptionSchema() };
-  }
-
-  return { toolName: "uncommitted_diary_draft", schema: createDiaryDraftSchema() };
+  return { toolName: name, schema };
 }
 
 function extractAnthropicToolUseContent(value: unknown): string {

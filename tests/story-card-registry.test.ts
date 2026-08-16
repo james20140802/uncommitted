@@ -378,8 +378,14 @@ describe("candidate filter purity (UNC-232 AC1)", () => {
   // 카드 종류가 늘어날 때마다 이 목록을 손으로 갱신하면 언젠가 빠뜨린다 —
   // src/story-card-* 글롭으로 대상을 도출해 "새 종류 추가 시 다른 코드는
   // 안 바뀐다"는 레지스트리의 계약을 이 테스트도 그대로 따르게 한다.
+  // story-card-generator.ts(UNC-261 / T3)는 이 계약의 예외다 — 후보 목록을
+  // 프로바이더 프롬프트로 옮기는 provider-facing 절반으로 설계됐고,
+  // ai-provider 결합이 그 파일의 존재 이유다. 순수해야 하는 건 카드 종류
+  // 정의·검증·레지스트리 쪽이지 이 글롭 전체가 아니므로 이름으로 제외한다.
   const srcDir = fileURLToPath(new URL("../src/", import.meta.url));
-  const cardSourceFiles = readdirSync(srcDir).filter((name) => name.startsWith("story-card-"));
+  const cardSourceFiles = readdirSync(srcDir).filter(
+    (name) => name.startsWith("story-card-") && name !== "story-card-generator.ts"
+  );
 
   for (const fileName of cardSourceFiles) {
     it(`keeps ${fileName} free of any ai-provider import`, () => {
