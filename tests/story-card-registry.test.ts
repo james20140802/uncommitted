@@ -140,6 +140,7 @@ describe("story card registry extensibility (parent AC2)", () => {
     id: "dummy-seventh",
     requires: () => true,
     slots: { headline: { type: "text", required: true } },
+    buildDefaultSlots: () => ({ headline: "dummy" }),
     render: (slots, chrome) =>
       renderStoryCardDocument({
         kindId: "dummy-seventh",
@@ -468,6 +469,7 @@ describe("candidate projection for prompt and validation handoff", () => {
       id: "dummy-projected",
       requires: () => true,
       slots: { headline: { type: "text", required: true } },
+      buildDefaultSlots: () => ({ headline: "dummy" }),
       render: () => "<article></article>"
     };
 

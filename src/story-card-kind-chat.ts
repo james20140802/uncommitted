@@ -1,8 +1,10 @@
 import { escapeHtml } from "./html-escape.js";
 import { renderStoryCardDocument, type StoryCardChrome } from "./story-card-chrome.js";
 import {
+  fitSlotLines,
   readSlotLines,
   type StoryCardDefinition,
+  type StoryCardSlotSchema,
   type StoryCardSlots
 } from "./story-card-slots.js";
 
@@ -60,13 +62,29 @@ function splitMessage(line: string): { speaker: string; message: string } {
   };
 }
 
+// 슬롯 한계값(UNC-259): 말풍선은 줄마다 여백을 먹으므로 6줄이 상한.
+// UNC-235에서 재조정될 수 있다.
+const chatSlots = {
+  messages: { type: "lines", required: true, maxLines: 6, maxLength: 60 }
+} as const satisfies StoryCardSlotSchema;
+
 export const chatStoryCard: StoryCardDefinition = {
   id: "chat",
   requires: (summary) => summary.manualContext.noteCount > 0,
-  // 슬롯 한계값(UNC-259): 말풍선은 줄마다 여백을 먹으므로 6줄이 상한.
-  // UNC-235에서 재조정될 수 있다.
-  slots: {
-    messages: { type: "lines", required: true, maxLines: 6, maxLength: 60 }
+  slots: chatSlots,
+  buildDefaultSlots({ summary }) {
+    const material = [
+      ...summary.possibleJokes,
+      ...summary.smallWins,
+      ...summary.unfinishedThreads
+    ];
+
+    return {
+      messages: fitSlotLines(
+        material.length > 0 ? material : ["오늘은 쉬어가는 날", "내일 다시"],
+        chatSlots.messages
+      )
+    };
   },
   render(slots: StoryCardSlots, chrome: StoryCardChrome): string {
     const rows = readSlotLines(slots, "messages").map((line, index) => {

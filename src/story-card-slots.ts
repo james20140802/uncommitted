@@ -23,10 +23,25 @@ export type StoryCardSlotSchema = Readonly<Record<string, StoryCardSlotSpec>>;
 
 export type StoryCardSlots = Readonly<Record<string, string | string[]>>;
 
+/**
+ * UNC-262 / T4: 규칙 기반 기본 슬롯 생성기가 받는 컨텍스트.
+ * 재료는 **이미 파생된** 요약 필드뿐이다 — 이 경로는 새 활동 파생을
+ * 도입하지 않으며, 없는 활동을 지어내지도 않는다.
+ */
+export type StoryCardDefaultContext = {
+  readonly summary: ActivitySummary;
+};
+
 export type StoryCardDefinition = {
   readonly id: string;
   readonly requires: (summary: ActivitySummary) => boolean;
   readonly slots: StoryCardSlotSchema;
+  /**
+   * LLM 슬롯이 끝내 검증을 통과하지 못했을 때 이 종류를 살려내는
+   * 결정론적 기본값. 반드시 자기 종류의 slots 제약을 만족해야 한다 —
+   * 그렇지 않으면 degrade 경로 자체가 무력해진다.
+   */
+  readonly buildDefaultSlots: (context: StoryCardDefaultContext) => StoryCardSlots;
   readonly render: (slots: StoryCardSlots, chrome: StoryCardChrome) => string;
 };
 
@@ -49,4 +64,30 @@ export function readSlotLines(slots: StoryCardSlots, name: string): string[] {
   if (Array.isArray(value)) return value.filter((line) => line.trim().length > 0);
   if (typeof value === "string" && value.trim().length > 0) return [value];
   return [];
+}
+
+/**
+ * 기본값이 제 종류의 제약을 넘지 않도록 자르는 공용 헬퍼.
+ * 자를 때는 말줄임표를 붙이지 않는다 — 붙이면 그 자체가 길이에 포함돼
+ * 다시 한계를 넘길 수 있고, 카드 문구는 짧게 잘려도 정직하다.
+ */
+export function fitSlotText(value: string, spec: StoryCardSlotSpec): string {
+  const trimmed = value.trim().replace(/\s+/g, " ");
+
+  if (spec.maxLength === undefined) return trimmed;
+
+  return trimmed.slice(0, spec.maxLength);
+}
+
+export function fitSlotLines(
+  values: readonly string[],
+  spec: StoryCardSlotSpec
+): string[] {
+  const cleaned = values
+    .map((value) => fitSlotText(value, spec))
+    .filter((value) => value.length > 0);
+
+  if (spec.maxLines === undefined) return cleaned;
+
+  return cleaned.slice(0, spec.maxLines);
 }

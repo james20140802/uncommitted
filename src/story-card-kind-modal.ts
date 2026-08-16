@@ -1,8 +1,10 @@
 import { escapeHtml } from "./html-escape.js";
 import { renderStoryCardDocument, type StoryCardChrome } from "./story-card-chrome.js";
 import {
+  fitSlotText,
   readSlotText,
   type StoryCardDefinition,
+  type StoryCardSlotSchema,
   type StoryCardSlots
 } from "./story-card-slots.js";
 
@@ -70,6 +72,16 @@ const modalStyles = `
     }
 `;
 
+// 슬롯 한계값(UNC-259): 모달 본문은 버튼 두 개를 아래에 두고도 남는
+// 높이에서 역산. 버튼 라벨은 짧아야 잘리지 않는다.
+// UNC-235에서 재조정될 수 있다.
+const modalSlots = {
+  title: { type: "text", required: true, maxLength: 32 },
+  body: { type: "text", required: true, maxLength: 120 },
+  primaryAction: { type: "text", required: true, maxLength: 16 },
+  secondaryAction: { type: "text", required: false, maxLength: 16 }
+} as const satisfies StoryCardSlotSchema;
+
 export const modalStoryCard: StoryCardDefinition = {
   id: "modal",
   // 조용한 날에도 후보로 남는다 — 반어형 조언 카드의 주 용도가 재료 빈약한 날을 살리는 것이다.
@@ -79,14 +91,19 @@ export const modalStoryCard: StoryCardDefinition = {
     summary.unfinishedThreads.length > 0 ||
     summary.activityLevel === "none" ||
     summary.activityLevel === "low",
-  // 슬롯 한계값(UNC-259): 모달 본문은 버튼 두 개를 아래에 두고도 남는
-  // 높이에서 역산. 버튼 라벨은 짧아야 잘리지 않는다.
-  // UNC-235에서 재조정될 수 있다.
-  slots: {
-    title: { type: "text", required: true, maxLength: 32 },
-    body: { type: "text", required: true, maxLength: 120 },
-    primaryAction: { type: "text", required: true, maxLength: 16 },
-    secondaryAction: { type: "text", required: false, maxLength: 16 }
+  slots: modalSlots,
+  buildDefaultSlots({ summary }) {
+    const body =
+      summary.blockersOrConfusion[0] ??
+      summary.unfinishedThreads[0] ??
+      "오늘은 쉬어가는 날입니다. 내일의 나에게 넘깁니다.";
+
+    return {
+      title: fitSlotText("알림", modalSlots.title),
+      body: fitSlotText(body, modalSlots.body),
+      primaryAction: fitSlotText("확인", modalSlots.primaryAction),
+      secondaryAction: fitSlotText("나중에", modalSlots.secondaryAction)
+    };
   },
   render(slots: StoryCardSlots, chrome: StoryCardChrome): string {
     const title = escapeHtml(readSlotText(slots, "title").trim());
