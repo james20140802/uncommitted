@@ -1,5 +1,8 @@
+import type { ActivitySummary } from "./activity-summary.js";
+import { storyCardRegistry } from "./story-card-registry.js";
 import type {
   StoryCardCandidate,
+  StoryCardDefinition,
   StoryCardSlotSpec,
   StoryCardSlots
 } from "./story-card-slots.js";
@@ -315,4 +318,101 @@ export function validateStoryCardPlanEntries(
   candidates: readonly StoryCardCandidate[]
 ): StoryCardEntryOutcome[] {
   return rawEntries.map((raw, index) => validateEntry(raw, index, candidates));
+}
+
+export type StoryCardPlanCardSource = "generated" | "degraded" | "fallback";
+
+export type StoryCardPlanCard = {
+  readonly type: string;
+  readonly slots: StoryCardSlots;
+  readonly source: StoryCardPlanCardSource;
+};
+
+export type StoryCardPlan = {
+  readonly schemaVersion: 1;
+  readonly cards: StoryCardPlanCard[];
+};
+
+const FALLBACK_CARD_TYPE = "typo";
+
+function toWireSlots(slots: StoryCardSlots): unknown[] {
+  return Object.entries(slots).map(([name, value]) => ({
+    name,
+    lines: Array.isArray(value) ? value : [value]
+  }));
+}
+
+/**
+ * 기본값도 자기 종류의 제약을 만족하는지 **같은 검증기로** 다시 본다.
+ * 기본값을 신뢰해서 그냥 통과시키면, 제약을 어기는 기본값이 조용히
+ * 카드로 나가 degrade 경로가 있으나 마나 해진다.
+ */
+function degradeToDefaults(
+  definition: StoryCardDefinition,
+  summary: ActivitySummary
+): StoryCardSlots | null {
+  const slots = definition.buildDefaultSlots({ summary });
+  const outcomes = validateStoryCardPlanEntries(
+    [{ type: definition.id, slots: toWireSlots(slots) }],
+    [{ id: definition.id, slots: definition.slots }]
+  );
+  const outcome = outcomes[0];
+
+  return outcome?.status === "accepted" ? outcome.entry.slots : null;
+}
+
+/**
+ * UNC-263 / T5: 카드마다 독립적으로 처리한다. 한 장이 끝내 실패해도
+ * 형제 카드로 번지지 않고, 그 카드만 자기 종류의 결정론적 기본값으로
+ * 대체되거나 계획에서 빠진다. 전부 빠져도 typo 1장으로 계획을 완성한다 —
+ * typo의 requires()가 무조건 참이라 어떤 날에도 유효한 최종 fallback이다.
+ *
+ * 카드 실패가 그날 전체 실패로 승격되어서는 안 된다. 2026-07-26 exit 4
+ * (그날 드래프트가 activity-summary.json만 남은 채 끝남)에 대한 구조적 답이다.
+ */
+export function assembleStoryCardPlan(options: {
+  outcomes: readonly StoryCardEntryOutcome[];
+  summary: ActivitySummary;
+  registry?: readonly StoryCardDefinition[];
+}): StoryCardPlan {
+  const registry = options.registry ?? storyCardRegistry;
+  const cards: StoryCardPlanCard[] = [];
+
+  for (const outcome of options.outcomes) {
+    if (outcome.status === "accepted") {
+      cards.push({
+        type: outcome.entry.type,
+        slots: outcome.entry.slots,
+        source: "generated"
+      });
+      continue;
+    }
+
+    const definition = registry.find((kind) => kind.id === outcome.rawType);
+
+    if (definition === undefined) continue;
+
+    const slots = degradeToDefaults(definition, options.summary);
+
+    if (slots === null) continue;
+
+    cards.push({ type: definition.id, slots, source: "degraded" });
+  }
+
+  if (cards.length > 0) return { schemaVersion: 1, cards };
+
+  const fallback = registry.find((kind) => kind.id === FALLBACK_CARD_TYPE);
+
+  if (fallback === undefined) return { schemaVersion: 1, cards: [] };
+
+  return {
+    schemaVersion: 1,
+    cards: [
+      {
+        type: fallback.id,
+        slots: fallback.buildDefaultSlots({ summary: options.summary }),
+        source: "fallback"
+      }
+    ]
+  };
 }
