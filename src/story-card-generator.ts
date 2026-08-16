@@ -142,6 +142,29 @@ function readRawCards(data: StoryCardProviderData): unknown[] {
 }
 
 /**
+ * 카드가 한 장도 없는 응답을 나타내는 합성 거부 결과. 실제 카드 엔트리가
+ * 없으니 rawType은 null이고, 그래서 조립 단계(T5)는 이걸 degrade 대상으로
+ * 찾지 못해 그대로 버린다 — 결과는 기존과 같은 typo 안전망 한 장이다.
+ * 달라지는 건 진단이다: 호출부가 이 거부 결과를 보고 실패 진단을 남긴다.
+ */
+function emptyCardListOutcome(): StoryCardEntryOutcome {
+  return {
+    status: "rejected",
+    cardIndex: 0,
+    rawType: null,
+    violations: [
+      {
+        cardIndex: 0,
+        cardType: null,
+        slot: null,
+        code: STORY_CARD_VIOLATIONS.emptyCardList,
+        message: "the response contained no cards"
+      }
+    ]
+  };
+}
+
+/**
  * buildSafeDiaryInput / buildSafeCaptionInput(diary-generator.ts)과 같은
  * 관례: 카드가 실제로 쓰는 파생 필드만 담는다. SafeActivitySummary가 요구하는
  * 필수 필드(quiet/overview/highlights/projectSummaries)는 채우되, 원시
@@ -224,10 +247,31 @@ export async function generateStoryCardPlan(
       validate: (data, rawResponseJson) => {
         attempts += 1;
 
-        const outcomes = validateStoryCardPlanEntries(
-          readRawCards(data),
-          candidates
-        );
+        const rawCards = readRawCards(data);
+
+        // 최종 통합 리뷰 반영: 카드가 한 장도 없는 응답은 위반이 0건이라
+        // 그냥 통과해버린다 — 재시도도 안 걸리고 진단도 안 남은 채 조용히
+        // typo 한 장으로 떨어진다. 운영자에게는 "바쁜 하루가 생성 카드 한
+        // 장으로 끝났는데 이유를 적어둔 파일이 없는" 상태만 남는다(부모
+        // AC6가 막으려는 사후 추적 불능). 모델에게 N장을 요구해놓고 0장을
+        // 정상으로 취급할 이유도 없으므로, 형식 위반으로 다뤄 재시도를 태운다.
+        if (rawCards.length === 0) {
+          // 재시도까지 소진되면 catch가 lastOutcomes를 그대로 돌려주므로,
+          // 여기서 합성 거부 결과를 남겨야 호출부의 진단 게이트가 열린다.
+          lastOutcomes = [emptyCardListOutcome()];
+          lastRawResponseJson = rawResponseJson;
+
+          throw new AiGenerationError(
+            "Story card plan contained no cards.",
+            "malformed-response",
+            {
+              violations: [STORY_CARD_VIOLATIONS.emptyCardList],
+              rawResponseJson
+            }
+          );
+        }
+
+        const outcomes = validateStoryCardPlanEntries(rawCards, candidates);
 
         lastOutcomes = outcomes;
         lastRawResponseJson = rawResponseJson;

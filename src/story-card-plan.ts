@@ -17,6 +17,7 @@ import type {
  * 덕분에 AC1/AC2 단위 테스트가 AI provider를 스텁하지 않고 돈다.
  */
 export const STORY_CARD_VIOLATIONS = {
+  emptyCardList: "card-empty-plan",
   malformedEntry: "card-malformed-entry",
   unknownCardType: "card-unknown-type",
   unknownSlotKey: "card-unknown-slot-key",

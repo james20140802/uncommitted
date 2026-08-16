@@ -7,6 +7,7 @@ import type {
 } from "../src/ai-provider.js";
 import type { MoodPlan } from "../src/story-format-plan.js";
 import { listStoryCardCandidateProjections } from "../src/story-card-registry.js";
+import { STORY_CARD_VIOLATIONS } from "../src/story-card-plan.js";
 import {
   STORY_CARD_MAX_ATTEMPTS,
   buildStoryCardInstructions,
@@ -218,6 +219,91 @@ describe("generateStoryCardPlan", () => {
     expect(result.outcomes[1].status).toBe("rejected");
     expect(result.rawResponseJson).toBeTypeOf("string");
     expect(result.providerFailure).toBeUndefined();
+  });
+
+  it("retries a response that contains no cards at all", async () => {
+    // 최종 통합 리뷰 지적: 카드 0장 응답은 위반이 0건이라 그대로 통과해
+    // 재시도도 진단도 없이 조용히 typo 한 장으로 떨어졌다.
+    const provider = createStubProvider([
+      JSON.stringify({ cards: [] }),
+      cardResponse([
+        { type: "typo", slots: [{ name: "headline", lines: ["복구된 카드"] }] }
+      ])
+    ]);
+    const result = await generateStoryCardPlan({
+      activitySummary: createSummary(),
+      moodPlan: createMoodPlan(),
+      provider
+    });
+
+    expect(provider.calls).toBe(2);
+    expect(result.outcomes).toHaveLength(1);
+    expect(result.outcomes[0].status).toBe("accepted");
+  });
+
+  it("feeds the empty-plan violation back into the retry instructions", async () => {
+    const seenInstructions: string[] = [];
+    const responses = [
+      JSON.stringify({ cards: [] }),
+      cardResponse([
+        { type: "typo", slots: [{ name: "headline", lines: ["복구된 카드"] }] }
+      ])
+    ];
+    let index = 0;
+    const provider: AiProvider = {
+      name: "mock",
+      model: "stub",
+      async generateStructured(
+        request: AiStructuredGenerationRequest
+      ): Promise<AiProviderRawResponse> {
+        seenInstructions.push(request.instructions);
+        const body = responses[Math.min(index, responses.length - 1)];
+        index += 1;
+
+        return { responseJson: body };
+      }
+    };
+
+    await generateStoryCardPlan({
+      activitySummary: createSummary(),
+      moodPlan: createMoodPlan(),
+      provider
+    });
+
+    expect(seenInstructions).toHaveLength(2);
+    expect(seenInstructions[1]).toContain(STORY_CARD_VIOLATIONS.emptyCardList);
+  });
+
+  it("records a rejected outcome when every attempt returns no cards", async () => {
+    // 진단 게이트(generate-command)가 열리려면 거부 결과가 하나는 있어야
+    // 한다. 없으면 "이유가 적히지 않은 fallback 하루"가 다시 생긴다.
+    const provider = createStubProvider([JSON.stringify({ cards: [] })]);
+    const result = await generateStoryCardPlan({
+      activitySummary: createSummary(),
+      moodPlan: createMoodPlan(),
+      provider
+    });
+
+    expect(result.attempts).toBe(STORY_CARD_MAX_ATTEMPTS);
+    expect(result.outcomes).toHaveLength(1);
+
+    const outcome = result.outcomes[0];
+
+    expect(outcome.status).toBe("rejected");
+    if (outcome.status !== "rejected") return;
+    expect(outcome.violations[0].code).toBe(STORY_CARD_VIOLATIONS.emptyCardList);
+  });
+
+  it("treats a response with no cards key the same as an empty card list", async () => {
+    const provider = createStubProvider([JSON.stringify({})]);
+    const result = await generateStoryCardPlan({
+      activitySummary: createSummary(),
+      moodPlan: createMoodPlan(),
+      provider
+    });
+
+    expect(result.outcomes).toHaveLength(1);
+    expect(result.outcomes[0].status).toBe("rejected");
   });
 
   it("propagates a provider-level failure — that is not a card failure", async () => {
