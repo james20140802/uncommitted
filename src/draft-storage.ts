@@ -1,5 +1,6 @@
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import type { AiGenerationErrorCode } from "./ai-provider.js";
 import { redactArchitectureDisclosure } from "./architecture-disclosure.js";
 import { detectSecrets } from "./credential-detector.js";
 import { sanitizeText } from "./redaction.js";
@@ -248,6 +249,72 @@ export async function writeCaptionFailureDiagnostics(
       input.rawResponseJson === undefined
         ? null
         : redactDiagnosticText(input.rawResponseJson)
+  });
+}
+
+/**
+ * UNC-264 / T6: 카드 검증 실패의 사후 추적용 산출물.
+ *
+ * 캡션 진단(caption-failure.json)과 파일명 관례를 맞추되 **경로는 다르다**:
+ * - `textDraftFiles`(필수 아티팩트 목록)에 넣지 않는다. 넣으면 "degrade해도
+ *   드래프트는 완성된다"는 부모 AC4/AC5와 정면 충돌한다.
+ * - `writeIncompleteDraftMarker`를 부르지 않는다. 카드 실패는 결코 리비전을
+ *   미완성으로 만들지 않는다 — 그게 캡션 실패와 카드 실패의 성질 차이다.
+ * - metadata.json은 건드리지 않는다. degrade 발생 신호는 이 파일의 존재
+ *   여부로만 표현한다.
+ *
+ * 원본 응답은 기존 redactDiagnosticText를 그대로 통과시킨다 — 로그도 남는
+ * 데이터이고, 새 redaction 규칙을 여기서 도입하지 않는다.
+ *
+ * providerFailure(T3에서 추가)는 재시도가 소진돼서가 아니라 프로바이더
+ * 호출 자체가 죽어 루프가 끝난 경우를 구분해서 남긴다 — 카드가 슬롯 제약을
+ * 계속 어겨서 degrade된 실행과 재시도 호출이 죽어서 degrade된 실행은
+ * 사후 원인이 다르므로(부모 AC6), 선택 필드로 그대로 보존한다.
+ */
+export type StoryCardFailureCardRecord = {
+  cardIndex: number;
+  cardType: string | null;
+  outcome: "degraded" | "dropped";
+  violations: string[];
+};
+
+export type StoryCardFailureProviderFailure = {
+  message: string;
+  code: AiGenerationErrorCode;
+};
+
+export type StoryCardFailureDiagnosticsInput = {
+  failedAt: string;
+  attempts: number;
+  cards: StoryCardFailureCardRecord[];
+  rawResponseJson?: string;
+  providerFailure?: StoryCardFailureProviderFailure;
+};
+
+export async function writeStoryCardFailureDiagnostics(
+  revision: DraftRevision,
+  input: StoryCardFailureDiagnosticsInput
+): Promise<void> {
+  await writeDraftArtifactJson(revision, "story-card-failure.json", {
+    schemaVersion: 1,
+    stage: "story-card",
+    failedAt: input.failedAt,
+    targetDate: revision.targetDate,
+    revision: revision.revision,
+    attempts: input.attempts,
+    cards: input.cards.map((card) => ({
+      cardIndex: card.cardIndex,
+      cardType: card.cardType,
+      outcome: card.outcome,
+      violations: card.violations
+    })),
+    rawResponse:
+      input.rawResponseJson === undefined
+        ? null
+        : redactDiagnosticText(input.rawResponseJson),
+    ...(input.providerFailure === undefined
+      ? {}
+      : { providerFailure: input.providerFailure })
   });
 }
 
