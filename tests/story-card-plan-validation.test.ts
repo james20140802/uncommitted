@@ -191,6 +191,10 @@ describe("validateStoryCardPlanEntries", () => {
     expect(outcomes).toHaveLength(3);
     for (const outcome of outcomes) {
       expect(outcome.status).toBe("rejected");
+      if (outcome.status !== "rejected") continue;
+      expect(outcome.violations[0].code).toBe(
+        STORY_CARD_VIOLATIONS.malformedEntry
+      );
     }
   });
 
