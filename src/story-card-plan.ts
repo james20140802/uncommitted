@@ -18,6 +18,7 @@ import type {
  */
 export const STORY_CARD_VIOLATIONS = {
   emptyCardList: "card-empty-plan",
+  cardCountMismatch: "card-count-mismatch",
   malformedEntry: "card-malformed-entry",
   unknownCardType: "card-unknown-type",
   unknownSlotKey: "card-unknown-slot-key",

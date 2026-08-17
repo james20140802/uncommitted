@@ -154,6 +154,11 @@ describe("story card plan in the generate path (UNC-265)", () => {
           output: ["3 passed"]
         },
         source: "generated"
+      },
+      {
+        type: "typo",
+        slots: { headline: "오늘의 커밋 둘", kicker: "2026-05-12" },
+        source: "generated"
       }
     ]);
     // 카드가 전부 검증을 통과한 실행에는 진단 파일이 남지 않아야 한다.
@@ -174,6 +179,13 @@ describe("story card plan in the generate path (UNC-265)", () => {
               { name: "prompt", lines: ["~/uncommitted"] },
               // terminal.command의 maxLength는 60이다.
               { name: "command", lines: ["x".repeat(80)] }
+            ]
+          },
+          {
+            type: "typo",
+            slots: [
+              { name: "headline", lines: ["오늘의 커밋 둘"] },
+              { name: "kicker", lines: ["2026-05-12"] }
             ]
           }
         ]
@@ -233,7 +245,8 @@ describe("story card plan in the generate path (UNC-265)", () => {
       storyCards: {
         cards: [
           { type: "not-a-card-kind", slots: [{ name: "headline", lines: ["…"] }] },
-          { type: "also-not-a-kind", slots: [{ name: "headline", lines: ["…"] }] }
+          { type: "also-not-a-kind", slots: [{ name: "headline", lines: ["…"] }] },
+          { type: "still-not-a-kind", slots: [{ name: "headline", lines: ["…"] }] }
         ]
       }
     });
@@ -270,6 +283,12 @@ describe("story card plan in the generate path (UNC-265)", () => {
       {
         cardIndex: 1,
         cardType: "also-not-a-kind",
+        outcome: "dropped",
+        violations: ["card-unknown-type"]
+      },
+      {
+        cardIndex: 2,
+        cardType: "still-not-a-kind",
         outcome: "dropped",
         violations: ["card-unknown-type"]
       }
@@ -475,6 +494,8 @@ function validTypoCard() {
 }
 
 function validStoryCardResponse() {
+  // 픽스처 mood plan의 suggestedSlideCount(3)와 장수를 맞춘다 —
+  // 장수 불일치는 이제 형식 위반이다.
   return {
     cards: [
       validTypoCard(),
@@ -484,6 +505,13 @@ function validStoryCardResponse() {
           { name: "prompt", lines: ["~/uncommitted"] },
           { name: "command", lines: ["pnpm test"] },
           { name: "output", lines: ["3 passed"] }
+        ]
+      },
+      {
+        type: "typo",
+        slots: [
+          { name: "headline", lines: ["오늘의 커밋 둘"] },
+          { name: "kicker", lines: ["2026-05-12"] }
         ]
       }
     ]

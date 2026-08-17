@@ -147,6 +147,33 @@ function readRawCards(data: StoryCardProviderData): unknown[] {
  * 찾지 못해 그대로 버린다 — 결과는 기존과 같은 typo 안전망 한 장이다.
  * 달라지는 건 진단이다: 호출부가 이 거부 결과를 보고 실패 진단을 남긴다.
  */
+/**
+ * 요구한 장수와 응답 장수가 다른 계획을 나타내는 합성 거부 결과.
+ * rawType이 null이라 조립 단계(T5)는 degrade 대상으로 잡지 않는다 —
+ * 유효하게 검증된 카드는 그대로 살아남고, 이 거부는 호출부의 진단
+ * 게이트만 연다. cardIndex는 실제 카드 인덱스와 겹치지 않게 응답
+ * 장수(마지막 카드 다음 자리)를 쓴다.
+ */
+function cardCountMismatchOutcome(
+  actual: number,
+  expected: number
+): StoryCardEntryOutcome {
+  return {
+    status: "rejected",
+    cardIndex: actual,
+    rawType: null,
+    violations: [
+      {
+        cardIndex: actual,
+        cardType: null,
+        slot: null,
+        code: STORY_CARD_VIOLATIONS.cardCountMismatch,
+        message: `expected ${expected} cards but the response contained ${actual}`
+      }
+    ]
+  };
+}
+
 function emptyCardListOutcome(): StoryCardEntryOutcome {
   return {
     status: "rejected",
@@ -273,23 +300,37 @@ export async function generateStoryCardPlan(
 
         const outcomes = validateStoryCardPlanEntries(rawCards, candidates);
 
-        lastOutcomes = outcomes;
+        // PR #137 리뷰 반영: 지시문은 "exactly N장"을 요구하는데 검증이
+        // 장수를 보지 않아, 6장을 요구해도 1장짜리 응답이 재시도·진단 없이
+        // 조용히 통과했다. 0장 처리와 같은 근거로 형식 위반으로 다룬다.
+        // 재시도가 소진되면 검증을 통과한 카드는 그대로 살아남고(부모 AC4),
+        // 장수 위반은 합성 거부 결과로 남아 진단 게이트를 연다(부모 AC6).
+        const countMismatch = rawCards.length !== cardCount;
+
+        lastOutcomes = countMismatch
+          ? [...outcomes, cardCountMismatchOutcome(rawCards.length, cardCount)]
+          : outcomes;
         lastRawResponseJson = rawResponseJson;
 
         const rejected = outcomes.filter(
           (outcome) => outcome.status === "rejected"
         );
 
-        if (rejected.length > 0) {
+        if (rejected.length > 0 || countMismatch) {
           throw new AiGenerationError(
-            "Story card plan violated slot constraints.",
+            "Story card plan violated its output contract.",
             "malformed-response",
             {
-              violations: rejected.flatMap((outcome) =>
-                outcome.status === "rejected"
-                  ? outcome.violations.map((violation) => violation.code)
-                  : []
-              ),
+              violations: [
+                ...rejected.flatMap((outcome) =>
+                  outcome.status === "rejected"
+                    ? outcome.violations.map((violation) => violation.code)
+                    : []
+                ),
+                ...(countMismatch
+                  ? [STORY_CARD_VIOLATIONS.cardCountMismatch]
+                  : [])
+              ],
               rawResponseJson
             }
           );

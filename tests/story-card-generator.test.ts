@@ -134,7 +134,7 @@ describe("generateStoryCardPlan", () => {
     ]);
     const result = await generateStoryCardPlan({
       activitySummary: createSummary(),
-      moodPlan: createMoodPlan(),
+      moodPlan: createMoodPlan(1),
       provider
     });
 
@@ -154,7 +154,7 @@ describe("generateStoryCardPlan", () => {
     ]);
     const result = await generateStoryCardPlan({
       activitySummary: createSummary(),
-      moodPlan: createMoodPlan(),
+      moodPlan: createMoodPlan(1),
       provider
     });
 
@@ -190,7 +190,7 @@ describe("generateStoryCardPlan", () => {
 
     await generateStoryCardPlan({
       activitySummary: createSummary(),
-      moodPlan: createMoodPlan(),
+      moodPlan: createMoodPlan(1),
       provider
     });
 
@@ -210,7 +210,7 @@ describe("generateStoryCardPlan", () => {
     ]);
     const result = await generateStoryCardPlan({
       activitySummary: createSummary(),
-      moodPlan: createMoodPlan(),
+      moodPlan: createMoodPlan(2),
       provider
     });
 
@@ -232,7 +232,7 @@ describe("generateStoryCardPlan", () => {
     ]);
     const result = await generateStoryCardPlan({
       activitySummary: createSummary(),
-      moodPlan: createMoodPlan(),
+      moodPlan: createMoodPlan(1),
       provider
     });
 
@@ -266,7 +266,7 @@ describe("generateStoryCardPlan", () => {
 
     await generateStoryCardPlan({
       activitySummary: createSummary(),
-      moodPlan: createMoodPlan(),
+      moodPlan: createMoodPlan(1),
       provider
     });
 
@@ -304,6 +304,97 @@ describe("generateStoryCardPlan", () => {
 
     expect(result.outcomes).toHaveLength(1);
     expect(result.outcomes[0].status).toBe("rejected");
+  });
+
+  it("retries a response whose card count differs from the requested count", async () => {
+    // PR #137 리뷰 지적: 지시문은 "exactly N장"인데 검증은 장수를 보지
+    // 않아, 6장을 요구해도 1장짜리 응답이 재시도·진단 없이 통과했다.
+    const provider = createStubProvider([
+      cardResponse([
+        { type: "typo", slots: [{ name: "headline", lines: ["한 장뿐"] }] }
+      ]),
+      cardResponse([
+        { type: "typo", slots: [{ name: "headline", lines: ["첫 장"] }] },
+        { type: "typo", slots: [{ name: "headline", lines: ["둘째 장"] }] }
+      ])
+    ]);
+    const result = await generateStoryCardPlan({
+      activitySummary: createSummary(),
+      moodPlan: createMoodPlan(2),
+      provider
+    });
+
+    expect(provider.calls).toBe(2);
+    expect(result.outcomes).toHaveLength(2);
+    expect(
+      result.outcomes.every((outcome) => outcome.status === "accepted")
+    ).toBe(true);
+  });
+
+  it("feeds the count-mismatch violation back into the retry instructions", async () => {
+    const seenInstructions: string[] = [];
+    const responses = [
+      cardResponse([
+        { type: "typo", slots: [{ name: "headline", lines: ["한 장뿐"] }] }
+      ]),
+      cardResponse([
+        { type: "typo", slots: [{ name: "headline", lines: ["첫 장"] }] },
+        { type: "typo", slots: [{ name: "headline", lines: ["둘째 장"] }] }
+      ])
+    ];
+    let index = 0;
+    const provider: AiProvider = {
+      name: "mock",
+      model: "stub",
+      async generateStructured(
+        request: AiStructuredGenerationRequest
+      ): Promise<AiProviderRawResponse> {
+        seenInstructions.push(request.instructions);
+        const body = responses[Math.min(index, responses.length - 1)];
+        index += 1;
+
+        return { responseJson: body };
+      }
+    };
+
+    await generateStoryCardPlan({
+      activitySummary: createSummary(),
+      moodPlan: createMoodPlan(2),
+      provider
+    });
+
+    expect(seenInstructions).toHaveLength(2);
+    expect(seenInstructions[1]).toContain(
+      STORY_CARD_VIOLATIONS.cardCountMismatch
+    );
+  });
+
+  it("keeps validated cards and records a count-mismatch rejection when retries run out", async () => {
+    // 재시도가 소진돼도 유효한 카드는 살아남아야 하고(부모 AC4), 장수가
+    // 어긋났다는 사실은 거부 결과로 남아 진단 게이트를 열어야 한다(부모 AC6).
+    const provider = createStubProvider([
+      cardResponse([
+        { type: "typo", slots: [{ name: "headline", lines: ["한 장뿐"] }] }
+      ])
+    ]);
+    const result = await generateStoryCardPlan({
+      activitySummary: createSummary(),
+      moodPlan: createMoodPlan(3),
+      provider
+    });
+
+    expect(result.attempts).toBe(STORY_CARD_MAX_ATTEMPTS);
+    expect(result.outcomes).toHaveLength(2);
+    expect(result.outcomes[0].status).toBe("accepted");
+
+    const rejected = result.outcomes[1];
+
+    expect(rejected.status).toBe("rejected");
+    if (rejected.status !== "rejected") return;
+    expect(rejected.rawType).toBeNull();
+    expect(rejected.violations[0].code).toBe(
+      STORY_CARD_VIOLATIONS.cardCountMismatch
+    );
   });
 
   it("propagates a provider-level failure — that is not a card failure", async () => {
@@ -351,7 +442,7 @@ describe("generateStoryCardPlan", () => {
 
     const result = await generateStoryCardPlan({
       activitySummary: createSummary(),
-      moodPlan: createMoodPlan(),
+      moodPlan: createMoodPlan(1),
       provider
     });
 

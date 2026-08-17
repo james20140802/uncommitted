@@ -1817,12 +1817,28 @@ function createProviderDraft(
 // UNC-265 / T7: 어떤 날에도 유효한 카드 응답. typo는 requires()가 무조건
 // 참이라 조용한 날 fixture에서도 후보로 남고, 슬롯도 한계 안에 들어간다.
 function createProviderStoryCards() {
+  // 기본 mood plan 픽스처의 suggestedSlideCount(3)와 장수를 맞춘다 —
+  // 장수 불일치는 이제 형식 위반이라 진단 파일을 남긴다.
   return {
     cards: [
       {
         type: "typo",
         slots: [
           { name: "headline", lines: ["오늘의 기록"] },
+          { name: "kicker", lines: ["uncommitted"] }
+        ]
+      },
+      {
+        type: "typo",
+        slots: [
+          { name: "headline", lines: ["둘째 장"] },
+          { name: "kicker", lines: ["uncommitted"] }
+        ]
+      },
+      {
+        type: "typo",
+        slots: [
+          { name: "headline", lines: ["셋째 장"] },
           { name: "kicker", lines: ["uncommitted"] }
         ]
       }
