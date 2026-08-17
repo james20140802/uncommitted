@@ -1,9 +1,13 @@
 import { escapeHtml } from "./html-escape.js";
 import { renderStoryCardDocument, type StoryCardChrome } from "./story-card-chrome.js";
 import {
+  firstMeaningfulLines,
+  fitSlotLines,
+  fitSlotText,
   readSlotLines,
   readSlotText,
   type StoryCardDefinition,
+  type StoryCardSlotSchema,
   type StoryCardSlots
 } from "./story-card-slots.js";
 
@@ -69,14 +73,28 @@ function renderItems(lines: string[], checked: boolean): string {
     .join("\n");
 }
 
+// 슬롯 한계값(UNC-259): 체크박스 목록은 done+todo가 한 스테이지를
+// 나눠 쓰므로 각각 5줄까지. UNC-235에서 재조정될 수 있다.
+const checkboardSlots = {
+  heading: { type: "text", required: true, maxLength: 32 },
+  done: { type: "lines", required: false, maxLines: 5, maxLength: 40 },
+  todo: { type: "lines", required: false, maxLines: 5, maxLength: 40 }
+} as const satisfies StoryCardSlotSchema;
+
 export const checkboardStoryCard: StoryCardDefinition = {
   id: "checkboard",
   requires: (summary) =>
     summary.smallWins.length > 0 || summary.unfinishedThreads.length > 0,
-  slots: {
-    heading: { type: "text", required: true },
-    done: { type: "lines", required: false },
-    todo: { type: "lines", required: false }
+  slots: checkboardSlots,
+  buildDefaultSlots({ summary }) {
+    return {
+      heading: fitSlotText("오늘의 체크리스트", checkboardSlots.heading),
+      done: fitSlotLines(
+        firstMeaningfulLines(summary.smallWins, ["오늘은 쉬어가는 날"]),
+        checkboardSlots.done
+      ),
+      todo: fitSlotLines(summary.unfinishedThreads, checkboardSlots.todo)
+    };
   },
   render(slots: StoryCardSlots, chrome: StoryCardChrome): string {
     const heading = escapeHtml(readSlotText(slots, "heading").trim());

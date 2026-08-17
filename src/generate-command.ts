@@ -47,8 +47,20 @@ import {
   writeDraftArtifactJson,
   writeDraftArtifactText,
   writeIncompleteDraftMarker,
-  writeLatestDraftPointer
+  writeLatestDraftPointer,
+  writeStoryCardFailureDiagnostics,
+  type StoryCardFailureCardRecord,
+  type StoryCardFailureProviderFailure
 } from "./draft-storage.js";
+import {
+  generateStoryCardPlan,
+  type StoryCardGenerationResult
+} from "./story-card-generator.js";
+import {
+  assembleStoryCardPlan,
+  type StoryCardEntryOutcome,
+  type StoryCardPlan
+} from "./story-card-plan.js";
 import type { ManualNoteEvent } from "./note-command.js";
 import type { ProjectRecord, ProjectsFile } from "./project-add.js";
 import { loadSourceConfig } from "./source-config.js";
@@ -388,6 +400,68 @@ export async function runGenerateCommand(
     koreanEnglishMix: config.persona.voice.koreanEnglishMix,
     rawNarrativeProjection
   });
+  // UNC-265 / T7: 카드 계획을 만든다. 카드 실패는 그날 전체 실패로 승격되지
+  // 않는다 — 프로바이더 호출 자체가 실패해도 결정론적 기본값 계획으로
+  // 떨어지고 진단만 남긴다. 2026-07-26 exit 4에 대한 구조적 답이다.
+  let storyCardGeneration: StoryCardGenerationResult | undefined;
+  // 브리프 대비 보강: 호출이 통째로 죽은 경우의 사유를 버리지 않고
+  // 진단으로 옮긴다. 그러지 않으면 "카드가 계속 슬롯을 어긴 실행"과
+  // "카드 생성 호출이 죽은 실행"이 사후에 구분되지 않는다(부모 AC6).
+  let storyCardCallFailure: StoryCardFailureProviderFailure | undefined;
+
+  try {
+    storyCardGeneration = await generateStoryCardPlan({
+      activitySummary,
+      moodPlan: storyFormatPlan,
+      provider
+    });
+  } catch (error) {
+    storyCardGeneration = undefined;
+    // UNC-265 T7 리뷰 반영 (finding 2): AiGenerationError가 아닌 throw
+    // (카드 경로를 빠져나온 프로그래밍 오류 등)도 사유를 남긴다. 그러지
+    // 않으면 운영자에게 `{ attempts: 0, cards: [] }`뿐인, 아무것도 설명하지
+    // 못하는 진단 파일만 남는다(부모 AC6). T6의 타입이 허용하는 코드 중
+    // "provider-failed"가 가장 덜 틀린 값이라 그것을 쓰되, 분류되지 않은
+    // 예외라는 사실은 message에 명시해 프로바이더 실패와 헷갈리지 않게 한다.
+    storyCardCallFailure =
+      error instanceof AiGenerationError
+        ? { message: error.message, code: error.code }
+        : {
+            message: `Unclassified story card generation failure: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+            code: "provider-failed"
+          };
+  }
+
+  const storyCardPlan = assembleStoryCardPlan({
+    outcomes: storyCardGeneration?.outcomes ?? [],
+    summary: activitySummary
+  });
+  const storyCardFailures = collectStoryCardFailureRecords(
+    storyCardGeneration?.outcomes ?? [],
+    storyCardPlan
+  );
+  const storyCardProviderFailure =
+    storyCardGeneration?.providerFailure ?? storyCardCallFailure;
+
+  if (storyCardGeneration === undefined || storyCardFailures.length > 0) {
+    try {
+      await writeStoryCardFailureDiagnostics(draftRevision, {
+        failedAt: generatedAt,
+        attempts: storyCardGeneration?.attempts ?? 0,
+        cards: storyCardFailures,
+        rawResponseJson: storyCardGeneration?.rawResponseJson,
+        ...(storyCardProviderFailure === undefined
+          ? {}
+          : { providerFailure: storyCardProviderFailure })
+      });
+    } catch {
+      // 진단 기록 실패가 드래프트 생성을 막아서는 안 된다 — 카드 실패는
+      // 결코 그날을 죽이지 않는다는 규칙이 진단 기록에도 그대로 적용된다.
+    }
+  }
+
   let captionResult;
 
   try {
@@ -439,8 +513,13 @@ export async function runGenerateCommand(
   // Redacting here also means the image prompt (derived from
   // slide.visualMood in carousel-renderer.ts) is redacted at the source,
   // before visual asset generation runs.
+  // UNC-265 / T7: 카드 계획을 **redaction 전에** 붙인다. 카드 슬롯도 LLM
+  // 자유 텍스트라 title/slides와 같은 redaction을 통과해야 하기 때문이다.
   const preRedactionCaptionText = deriveCaptionText(captionResult);
-  const draft = redactArchitectureDisclosureFromDraft(generatedDraft);
+  const draft = redactArchitectureDisclosureFromDraft({
+    ...generatedDraft,
+    storyCardPlan
+  });
   const caption = redactArchitectureDisclosureFromCaption(
     preRedactionCaptionText
   );
@@ -480,6 +559,35 @@ export async function runGenerateCommand(
   // "[redacted-architecture]"), so the risk/reason would never be recorded
   // and nothing would ever be blocked (breaking parent AC2/AC4). The
   // written artifacts stay redacted regardless of what the report finds.
+  //
+  // UNC-265 / T7 — 카드 슬롯은 이 안전 텍스트에서 **의도적으로 제외**한다.
+  // 여기 넘기는 `generatedDraft`는 카드 계획을 붙이기 전의 드래프트다.
+  //
+  // 왜: 이 보고서가 `blocked`로 나오면 아래에서 GenerateCommandError
+  // ("safety-blocked", exit 6)를 던져 **그날 드래프트 전체가 죽는다**.
+  // 카드 슬롯을 여기 섞으면 카드 한 장의 secret 모양 문자열 하나가 그날을
+  // 통째로 날리게 되고, 그건 "한 장이 실패해도 나머지와 드래프트는 계속
+  // 된다"(부모 AC4) / "전부 실패해도 최소 한 장으로 완성된다"(AC5)와 정면
+  // 충돌한다. 2026-07-26 사고(자유 텍스트 응답 하나가 그날을 죽인 일)를
+  // 다른 문으로 다시 들이는 셈이다.
+  //
+  // 대가로 감수한 비대칭: 카드 슬롯은 redaction은 통과하지만
+  // (redactArchitectureDisclosureFromDraft, diary-generator.ts) 검사는
+  // 통과하지 않는다. 그래서 **같은 문자열이 슬라이드 본문에 있으면 warning
+  // 위험으로 기록되는데, 카드 슬롯에 있으면 조용히 정화되고 잔여 위험
+  // 항목이 남지 않는다.** secret·로컬 절대경로·이메일처럼 redaction이
+  // 덮지 않는 범주는 카드 슬롯에서 아예 탐지되지 않는다.
+  //
+  // 올바른 최종 설계는 "카드별로 검사해서 걸린 카드만 degrade시키기"이지만,
+  // 그건 카드 단위 안전 판정과 새 degrade 트리거가 필요한 **새 메커니즘**이고
+  // (block이냐 warn이냐 in-place redaction이냐는 정책 선택이기도 하다),
+  // 이 이슈의 어느 하위 태스크도 그것을 다루지 않는다. 카드가 실제로
+  // 렌더되어 공개 산출물이 되는 **UNC-235에서 렌더 경로를 함께 보고
+  // 결정한다.** 지금은 카드가 저장만 되고 렌더·export되지 않으므로 이
+  // 구멍은 실재하지만 아직 발현되지 않는다.
+  //
+  // 경고: 이 주석을 읽고 "그냥 storyCardPlan을 붙이면 되겠네"라고 고치지 마라.
+  // 위의 exit 6 결과를 먼저 이해해야 한다.
   const safetyReport = createSafetyReport(
     buildDraftSafetyText({
       draft: generatedDraft,
@@ -1155,4 +1263,36 @@ function isAiProviderName(value: unknown): value is AiProviderName {
     typeof value === "string" &&
     providerNames.includes(value as AiProviderName)
   );
+}
+
+/**
+ * UNC-265 / T7: 거부된 카드마다 계획에서 실제로 어떻게 끝났는지를 판정한다.
+ * 그 종류가 계획에 `degraded`로 남았으면 기본값으로 살아남은 것이고,
+ * 없으면 계획에서 빠진 것이다. 이 구분이 사후 추적의 핵심이라 진단에
+ * 그대로 남긴다 — 계획 자체는 `source`만 들고 있어서 "왜 그렇게 됐는지"는
+ * 여기서만 알 수 있다.
+ */
+function collectStoryCardFailureRecords(
+  outcomes: readonly StoryCardEntryOutcome[],
+  plan: StoryCardPlan
+): StoryCardFailureCardRecord[] {
+  const degradedTypes = new Set(
+    plan.cards.filter((card) => card.source === "degraded").map((card) => card.type)
+  );
+
+  return outcomes.flatMap((outcome) => {
+    if (outcome.status !== "rejected") return [];
+
+    return [
+      {
+        cardIndex: outcome.cardIndex,
+        cardType: outcome.rawType,
+        outcome:
+          outcome.rawType !== null && degradedTypes.has(outcome.rawType)
+            ? ("degraded" as const)
+            : ("dropped" as const),
+        violations: outcome.violations.map((violation) => violation.code)
+      }
+    ];
+  });
 }

@@ -81,13 +81,20 @@ describe("generate command", () => {
     };
     const safetyReport = await readJson(join(outputDir, "safety-report.json"));
     const visualAsset = await readFile(join(outputDir, "visuals", "01.png"));
+    const artifactNames = await readdir(outputDir);
 
     expect(exitCode).toBe(0);
     expect(stderr).toEqual([]);
+    // UNC-265 / T7: 이 fixture의 카드는 전부 검증을 통과해야 한다. 진단
+    // 파일이 생겼다면 스텁의 story-card 응답이 조용히 degrade 경로를 타고
+    // 있다는 뜻이고, 그러면 이 파일 전체가 정상 경로를 더 이상 검증하지
+    // 않게 된다.
+    expect(artifactNames).not.toContain("story-card-failure.json");
     expect(stdout).toEqual([`Generated text draft for 2026-05-12: ${outputDir}`]);
     expect(provider.requests.map((request) => request.task)).toEqual([
       "story-plan",
       "draft",
+      "story-card",
       "caption"
     ]);
     expect(activitySummary).toMatchObject({
@@ -1332,6 +1339,13 @@ class TaskAwareProvider implements AiProvider {
        * the retry, so the retry-call failure path is exercised end to end.
        */
       captionMalformedThenProviderFailure?: boolean;
+      /**
+       * UNC-265 / T7: generate가 story-card task를 부르게 되면서 이 스텁도
+       * 그 task를 **의도적으로 정상 응답**으로 받아야 한다. 여기서 받지
+       * 않으면 `Unexpected task` 에러가 generate의 카드 실패 격리에 삼켜져,
+       * 이 파일의 모든 fixture가 조용히 degrade 경로만 태우게 된다.
+       */
+      storyCards?: unknown;
       model?: string;
     } = {}
   ) {
@@ -1356,6 +1370,14 @@ class TaskAwareProvider implements AiProvider {
 
       return {
         responseJson: JSON.stringify(this.options.draft ?? createProviderDraft())
+      };
+    }
+
+    if (request.task === "story-card") {
+      return {
+        responseJson: JSON.stringify(
+          this.options.storyCards ?? createProviderStoryCards()
+        )
       };
     }
 
@@ -1789,6 +1811,38 @@ function createProviderDraft(
     ],
     altText: "Uncommitted text diary draft generated from local activity.",
     ...overrides
+  };
+}
+
+// UNC-265 / T7: 어떤 날에도 유효한 카드 응답. typo는 requires()가 무조건
+// 참이라 조용한 날 fixture에서도 후보로 남고, 슬롯도 한계 안에 들어간다.
+function createProviderStoryCards() {
+  // 기본 mood plan 픽스처의 suggestedSlideCount(3)와 장수를 맞춘다 —
+  // 장수 불일치는 이제 형식 위반이라 진단 파일을 남긴다.
+  return {
+    cards: [
+      {
+        type: "typo",
+        slots: [
+          { name: "headline", lines: ["오늘의 기록"] },
+          { name: "kicker", lines: ["uncommitted"] }
+        ]
+      },
+      {
+        type: "typo",
+        slots: [
+          { name: "headline", lines: ["둘째 장"] },
+          { name: "kicker", lines: ["uncommitted"] }
+        ]
+      },
+      {
+        type: "typo",
+        slots: [
+          { name: "headline", lines: ["셋째 장"] },
+          { name: "kicker", lines: ["uncommitted"] }
+        ]
+      }
+    ]
   };
 }
 

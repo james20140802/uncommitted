@@ -1525,6 +1525,104 @@ describe("architecture disclosure redaction (UNC-206)", () => {
     expect(redacted.slides).toEqual(draft.slides);
   });
 
+  it("redacts architecture-disclosure detail from every story card slot (UNC-265)", () => {
+    const draft: DiaryDraft = {
+      schemaVersion: 1,
+      targetDate: "2026-05-12",
+      title: "a perfectly normal day",
+      slides: [
+        {
+          index: 1,
+          title: "signal",
+          body: "Shipped a small feature and fixed a typo.",
+          visualMood: "quiet terminal"
+        }
+      ],
+      altText: "diary",
+      metadata: {
+        targetDate: "2026-05-12",
+        generatedAt: "2026-05-12T23:30:00.000Z",
+        activityLevel: "medium",
+        mood: "cleanup",
+        angle: "A small feature shipped and a typo got fixed.",
+        projectIds: ["uncommitted"],
+        entryMode: "daily_global",
+        slideCount: 1
+      },
+      storyCardPlan: {
+        schemaVersion: 1,
+        cards: [
+          {
+            type: "typo",
+            slots: { headline: "the admin allowlist finally behaved" },
+            source: "generated"
+          },
+          {
+            type: "terminal",
+            slots: {
+              prompt: "~/uncommitted",
+              output: [
+                "auth checkpoint stopped flaking",
+                "nothing sensitive on this line"
+              ]
+            },
+            source: "degraded"
+          }
+        ]
+      }
+    };
+
+    const redacted = redactArchitectureDisclosureFromDraft(draft);
+    const cards = redacted.storyCardPlan?.cards ?? [];
+
+    // 문자열 슬롯은 그대로, 배열 슬롯은 원소마다 redaction을 통과한다.
+    expect(cards[0]?.slots.headline).not.toContain("admin allowlist");
+    expect(cards[0]?.slots.headline).toContain("[redacted-architecture]");
+    expect(cards[1]?.slots.output).toEqual([
+      expect.stringContaining("[redacted-architecture]"),
+      "nothing sensitive on this line"
+    ]);
+    expect(cards[1]?.slots.output).not.toContain("auth checkpoint");
+    // 구조 필드(type/source)와 나머지 드래프트는 손대지 않는다.
+    expect(cards[0]?.source).toBe("generated");
+    expect(cards[1]?.type).toBe("terminal");
+    expect(cards[1]?.slots.prompt).toBe("~/uncommitted");
+    expect(redacted.title).toBe(draft.title);
+    expect(redacted.slides).toEqual(draft.slides);
+  });
+
+  it("leaves a draft without a story card plan unchanged", () => {
+    const draft: DiaryDraft = {
+      schemaVersion: 1,
+      targetDate: "2026-05-12",
+      title: "a perfectly normal day",
+      slides: [
+        {
+          index: 1,
+          title: "signal",
+          body: "Shipped a small feature and fixed a typo.",
+          visualMood: "quiet terminal"
+        }
+      ],
+      altText: "diary",
+      metadata: {
+        targetDate: "2026-05-12",
+        generatedAt: "2026-05-12T23:30:00.000Z",
+        activityLevel: "medium",
+        mood: "cleanup",
+        angle: "A small feature shipped and a typo got fixed.",
+        projectIds: ["uncommitted"],
+        entryMode: "daily_global",
+        slideCount: 1
+      }
+    };
+
+    const redacted = redactArchitectureDisclosureFromDraft(draft);
+
+    expect(redacted).toEqual(draft);
+    expect("storyCardPlan" in redacted).toBe(false);
+  });
+
   it("redacts architecture-disclosure detail from a caption string", () => {
     const caption =
       "오늘은 route guard 버그를 잡았다. admin allowlist는 여전히 말썽이다.";

@@ -1,8 +1,11 @@
 import { escapeHtml } from "./html-escape.js";
 import { renderStoryCardDocument, type StoryCardChrome } from "./story-card-chrome.js";
 import {
+  firstMeaningfulLines,
+  fitSlotLines,
   readSlotLines,
   type StoryCardDefinition,
+  type StoryCardSlotSchema,
   type StoryCardSlots
 } from "./story-card-slots.js";
 
@@ -60,11 +63,36 @@ function splitMessage(line: string): { speaker: string; message: string } {
   };
 }
 
+// 슬롯 한계값(UNC-259): 말풍선은 줄마다 여백을 먹으므로 6줄이 상한.
+// UNC-235에서 재조정될 수 있다.
+const chatSlots = {
+  messages: { type: "lines", required: true, maxLines: 6, maxLength: 60 }
+} as const satisfies StoryCardSlotSchema;
+
 export const chatStoryCard: StoryCardDefinition = {
   id: "chat",
   requires: (summary) => summary.manualContext.noteCount > 0,
-  slots: {
-    messages: { type: "lines", required: true }
+  slots: chatSlots,
+  buildDefaultSlots({ summary }) {
+    const material = [
+      ...summary.possibleJokes,
+      ...summary.smallWins,
+      ...summary.unfinishedThreads
+    ];
+
+    // PR #137 리뷰 반영: chat은 noteCount > 0일 때만 후보라, degrade가
+    // 도는 날에는 반드시 메모가 기록돼 있다. 분류되지 않은 메모뿐인 날
+    // "쉬어가는 날" 고정 문구를 내보내면 기록된 활동과 모순되는 하루를
+    // 지어내게 되므로, 실제 기록(메모 수)에서 파생한 문구로 떨어진다.
+    return {
+      messages: fitSlotLines(
+        firstMeaningfulLines(material, [
+          `오늘 남긴 메모 ${summary.manualContext.noteCount}건`,
+          "정리는 내일의 나에게"
+        ]),
+        chatSlots.messages
+      )
+    };
   },
   render(slots: StoryCardSlots, chrome: StoryCardChrome): string {
     const rows = readSlotLines(slots, "messages").map((line, index) => {

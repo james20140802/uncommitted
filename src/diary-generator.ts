@@ -14,6 +14,8 @@ import type {
 import { redactArchitectureDisclosure } from "./architecture-disclosure.js";
 import type { Persona, PersonaLangMix } from "./persona.js";
 import { emailPattern } from "./redaction.js";
+import type { StoryCardPlan, StoryCardPlanCard } from "./story-card-plan.js";
+import type { StoryCardSlots } from "./story-card-slots.js";
 import { isMood } from "./story-format-plan.js";
 import type {
   ProjectPersonaHint,
@@ -47,6 +49,13 @@ export type DiaryDraft = {
   slides: DiarySlide[];
   altText: string;
   metadata: DiaryDraftMetadata;
+  /**
+   * UNC-265 / T7: 검증된 카드 계획. story.json의 **하위 호환 추가 필드**다 —
+   * schemaVersion을 올리지 않는다. 기존 소비자(render/preview/export)는 알 수
+   * 없는 필드를 거부하지 않으므로 변경 없이 계속 돈다. 실제 carousel 렌더
+   * 경로 배선은 UNC-235 소유이며 여기서 렌더러를 건드리지 않는다.
+   */
+  storyCardPlan?: StoryCardPlan;
 };
 
 export type DiaryGeneratorOptions = {
@@ -175,6 +184,12 @@ export function redactArchitectureDisclosureFromCaption(
  * provider-generated string that reaches story.json, so it is scrubbed here
  * too; the remaining metadata fields are safe (`mood` is a fixed-vocabulary
  * enum, the rest are structural).
+ *
+ * UNC-265 / T7: `storyCardPlan`의 슬롯 값도 같은 취급을 받는다. 카드 슬롯은
+ * title/altText/슬라이드 본문과 똑같은 **LLM 자유 텍스트**이고 story.json에
+ * 그대로 실려 나가므로, 여기서 빠지면 공개 산출물에 아키텍처 상세가 새는
+ * 구멍이 하나 그대로 남는다. `storyCardPlan`이 없으면 드래프트를 그대로 둔다.
+ *
  * Pure function — returns a new DiaryDraft, does not mutate the input.
  */
 export function redactArchitectureDisclosureFromDraft(
@@ -193,8 +208,34 @@ export function redactArchitectureDisclosureFromDraft(
     metadata: {
       ...draft.metadata,
       angle: redactArchitectureDisclosure(draft.metadata.angle).value
-    }
+    },
+    ...(draft.storyCardPlan === undefined
+      ? {}
+      : { storyCardPlan: redactStoryCardPlan(draft.storyCardPlan) })
   };
+}
+
+function redactStoryCardPlan(plan: StoryCardPlan): StoryCardPlan {
+  return {
+    ...plan,
+    cards: plan.cards.map(
+      (card): StoryCardPlanCard => ({
+        ...card,
+        slots: redactStoryCardSlots(card.slots)
+      })
+    )
+  };
+}
+
+function redactStoryCardSlots(slots: StoryCardSlots): StoryCardSlots {
+  return Object.fromEntries(
+    Object.entries(slots).map(([name, value]) => [
+      name,
+      Array.isArray(value)
+        ? value.map((line) => redactArchitectureDisclosure(line).value)
+        : redactArchitectureDisclosure(value).value
+    ])
+  );
 }
 
 function buildSafeDiaryInput(options: {

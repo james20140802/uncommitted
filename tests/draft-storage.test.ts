@@ -12,6 +12,7 @@ import {
   writeDraftArtifactText,
   writeIncompleteDraftMarker,
   writeLatestDraftPointer,
+  writeStoryCardFailureDiagnostics,
   writeTextDraftRevision
 } from "../src/draft-storage.js";
 
@@ -405,6 +406,150 @@ describe("draft storage", () => {
       code: "inspect-failed",
       message: "Could not inspect draft revisions."
     });
+  });
+});
+
+describe("writeStoryCardFailureDiagnostics", () => {
+  it("writes story-card-failure.json with the per-card violation records", async () => {
+    const root = await createDraftRoot();
+    const revision = await createDraftRevision({
+      draftRoot: root,
+      targetDate: "2026-08-17"
+    });
+
+    await writeStoryCardFailureDiagnostics(revision, {
+      failedAt: "2026-08-17T05:30:00.000Z",
+      attempts: 2,
+      cards: [
+        {
+          cardIndex: 1,
+          cardType: "modal",
+          outcome: "degraded",
+          violations: ["card-text-too-long"]
+        },
+        {
+          cardIndex: 2,
+          cardType: "nope",
+          outcome: "dropped",
+          violations: ["card-unknown-type"]
+        }
+      ]
+    });
+
+    const written = JSON.parse(
+      await readFile(join(revision.outputDir, "story-card-failure.json"), "utf8")
+    );
+
+    expect(written.schemaVersion).toBe(1);
+    expect(written.stage).toBe("story-card");
+    expect(written.attempts).toBe(2);
+    expect(written.targetDate).toBe("2026-08-17");
+    expect(written.cards).toHaveLength(2);
+    expect(written.cards[0].outcome).toBe("degraded");
+    expect(written.cards[1].violations).toEqual(["card-unknown-type"]);
+    expect(written.rawResponse).toBeNull();
+    expect(written.providerFailure).toBeUndefined();
+  });
+
+  it("redacts the raw response before it is stored", async () => {
+    const root = await createDraftRoot();
+    const revision = await createDraftRevision({
+      draftRoot: root,
+      targetDate: "2026-08-17"
+    });
+
+    await writeStoryCardFailureDiagnostics(revision, {
+      failedAt: "2026-08-17T05:30:00.000Z",
+      attempts: 2,
+      cards: [],
+      rawResponseJson: '{"cards":[],"note":"key is sk-abcdef1234567890abcdef"}'
+    });
+
+    const written = JSON.parse(
+      await readFile(join(revision.outputDir, "story-card-failure.json"), "utf8")
+    );
+
+    expect(written.rawResponse).not.toContain("sk-abcdef1234567890abcdef");
+    expect(written.rawResponse).toContain("[redacted-secret]");
+  });
+
+  it("records a provider failure when the retry loop died mid-run", async () => {
+    const root = await createDraftRoot();
+    const revision = await createDraftRevision({
+      draftRoot: root,
+      targetDate: "2026-08-17"
+    });
+
+    await writeStoryCardFailureDiagnostics(revision, {
+      failedAt: "2026-08-17T05:30:00.000Z",
+      attempts: 1,
+      cards: [
+        {
+          cardIndex: 0,
+          cardType: "modal",
+          outcome: "degraded",
+          violations: []
+        }
+      ],
+      providerFailure: {
+        message: "request timed out",
+        code: "provider-unavailable"
+      }
+    });
+
+    const written = JSON.parse(
+      await readFile(join(revision.outputDir, "story-card-failure.json"), "utf8")
+    );
+
+    expect(written.providerFailure).toEqual({
+      message: "request timed out",
+      code: "provider-unavailable"
+    });
+  });
+
+  it("does not mark the revision incomplete and is not a required draft file", async () => {
+    const root = await createDraftRoot();
+    const result = await writeTextDraftRevision({
+      draftRoot: root,
+      targetDate: "2026-08-17",
+      generatedAt: "2026-08-17T05:30:00.000Z",
+      activitySummary: { schemaVersion: 1 },
+      story: { schemaVersion: 1 },
+      caption: "caption\n",
+      metadata: { schemaVersion: 1, status: "draft" }
+    });
+
+    await writeStoryCardFailureDiagnostics(
+      {
+        targetDate: result.targetDate,
+        revision: result.revision,
+        dateDir: result.dateDir,
+        outputDir: result.outputDir,
+        latestPointerPath: result.latestPointerPath,
+        dateLatestPointerPath: result.dateLatestPointerPath
+      },
+      {
+        failedAt: "2026-08-17T05:30:00.000Z",
+        attempts: 2,
+        cards: [
+          {
+            cardIndex: 0,
+            cardType: "typo",
+            outcome: "degraded",
+            violations: ["card-empty-slot"]
+          }
+        ]
+      }
+    );
+
+    expect(result.files).not.toContain("story-card-failure.json");
+
+    const metadata = JSON.parse(
+      await readFile(join(result.outputDir, "metadata.json"), "utf8")
+    );
+
+    expect(metadata.status).toBe("draft");
+    expect(metadata.incomplete).toBeUndefined();
   });
 });
 
