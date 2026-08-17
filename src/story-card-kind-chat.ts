@@ -80,9 +80,16 @@ export const chatStoryCard: StoryCardDefinition = {
       ...summary.unfinishedThreads
     ];
 
+    // PR #137 리뷰 반영: chat은 noteCount > 0일 때만 후보라, degrade가
+    // 도는 날에는 반드시 메모가 기록돼 있다. 분류되지 않은 메모뿐인 날
+    // "쉬어가는 날" 고정 문구를 내보내면 기록된 활동과 모순되는 하루를
+    // 지어내게 되므로, 실제 기록(메모 수)에서 파생한 문구로 떨어진다.
     return {
       messages: fitSlotLines(
-        firstMeaningfulLines(material, ["오늘은 쉬어가는 날", "내일 다시"]),
+        firstMeaningfulLines(material, [
+          `오늘 남긴 메모 ${summary.manualContext.noteCount}건`,
+          "정리는 내일의 나에게"
+        ]),
         chatSlots.messages
       )
     };

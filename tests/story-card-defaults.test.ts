@@ -123,6 +123,28 @@ describe("story card default slots", () => {
     }
   });
 
+  it("chat fallback reflects recorded notes instead of claiming a rest day", () => {
+    // PR #137 리뷰 지적: chat은 noteCount > 0일 때만 후보인데, 메모가
+    // 농담·성과·미완 스레드로 분류되지 않은 날 degrade되면 "쉬어가는 날"
+    // 문구가 나가 기록된 활동과 모순되는 하루를 지어냈다.
+    const notedButUnclassifiedSummary = createSummary({
+      activityLevel: "low",
+      manualContext: { noteCount: 2, notes: [] }
+    });
+    const chat = storyCardRegistry.find((kind) => kind.id === "chat");
+
+    expect(chat).toBeDefined();
+    if (!chat) return;
+
+    const messages = readSlotLines(
+      chat.buildDefaultSlots({ summary: notedButUnclassifiedSummary }),
+      "messages"
+    );
+
+    expect(messages.join(" ")).not.toContain("쉬어가는 날");
+    expect(messages.join(" ")).toContain("2건");
+  });
+
   it("prefers already-derived material over the fixed quiet-day copy when it exists", () => {
     const checkboard = storyCardRegistry.find((kind) => kind.id === "checkboard");
 
