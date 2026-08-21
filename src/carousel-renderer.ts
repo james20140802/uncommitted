@@ -110,12 +110,23 @@ export type CarouselPngRenderFailure = {
   message: string;
 };
 
+export type CarouselDegradeRecord = {
+  from: "photo-first";
+  to: "story-card";
+  reason: string;
+};
+
 export type CarouselPngRenderResult = {
   schemaVersion: 1;
   status: "rendered" | "failed";
   files: string[];
   images: CarouselPngMetadata[];
   failures?: CarouselPngRenderFailure[];
+  /**
+   * UNC-270: photo-first 자산이 한 장이라도 못 쓰게 되어 드래프트 전체를
+   * story-card로 다시 렌더했을 때만 채워진다.
+   */
+  degraded?: CarouselDegradeRecord;
 };
 
 export type RenderCarouselPngsOptions = {
@@ -123,6 +134,15 @@ export type RenderCarouselPngsOptions = {
   cards: CarouselHtmlCard[];
   visualAssets?: CarouselPngVisualAsset[];
   renderer?: CarouselHtmlToPngRenderer;
+  /**
+   * UNC-270: photo-first raw-copy가 실패하면 이 콜백이 돌려주는 story-card
+   * 카드 세트로 **드래프트 전체를** 다시 렌더한다. 콜백이 없으면 종전대로
+   * render-failed로 던진다 (호출부가 degrade를 원하지 않는 경우).
+   *
+   * 장 단위가 아니라 드래프트 단위인 이유: 섞인 캐러셀 — 어떤 장은 사진,
+   * 어떤 장은 카드 — 을 내지 않는다는 것이 부모 AC4의 결정이다.
+   */
+  photoFirstDegrade?: () => CarouselHtmlCard[];
 };
 
 export type CreateCarouselHtmlCardsOptions = {
@@ -205,6 +225,54 @@ export function createCarouselHtmlCards(
 export async function renderCarouselPngs(
   options: RenderCarouselPngsOptions
 ): Promise<CarouselPngRenderResult> {
+  try {
+    return await renderCardSet(options.cards, options);
+  } catch (error) {
+    if (
+      !(error instanceof PhotoFirstAssetError) ||
+      options.photoFirstDegrade === undefined
+    ) {
+      throw error instanceof PhotoFirstAssetError ? error.cause : error;
+    }
+
+    // 부분 결과는 버린다. 섞인 캐러셀 대신 일관된 카드 세트를 낸다.
+    const result = await renderCardSet(options.photoFirstDegrade(), {
+      ...options,
+      // degrade 후에는 사진 자산을 붙이지 않는다 — 못 쓰게 된 자산이
+      // 바로 degrade의 원인이다.
+      visualAssets: []
+    });
+
+    return {
+      ...result,
+      degraded: {
+        from: "photo-first",
+        to: "story-card",
+        reason: error.reason
+      }
+    };
+  }
+}
+
+/**
+ * raw-copy 단계에서만 던지는 내부 신호. 바깥 렌더가 이걸 보고 드래프트
+ * 전체를 story-card로 다시 그린다. 원래 오류는 cause로 실어 보내
+ * degrade를 못 하는 호출부에서도 종전 동작이 유지되게 한다.
+ */
+class PhotoFirstAssetError extends Error {
+  constructor(
+    public readonly reason: string,
+    public readonly cause: CarouselPngRenderError
+  ) {
+    super(reason);
+    this.name = "PhotoFirstAssetError";
+  }
+}
+
+async function renderCardSet(
+  cards: CarouselHtmlCard[],
+  options: RenderCarouselPngsOptions
+): Promise<CarouselPngRenderResult> {
   // Renderer is created lazily so photo-first-only drafts never launch Chromium.
   let renderer: CarouselHtmlToPngRenderer | undefined = options.renderer;
   const shouldCloseRenderer = options.renderer === undefined;
@@ -213,7 +281,7 @@ export async function renderCarouselPngs(
   const failures: CarouselPngRenderFailure[] = [];
 
   try {
-    for (const [index, card] of options.cards.entries()) {
+    for (const [index, card] of cards.entries()) {
       const visualAsset = findVisualAsset(card, options.visualAssets ?? []);
       const filePath = `carousel/${String(index + 1).padStart(2, "0")}.png`;
       let png: Uint8Array;
@@ -242,12 +310,18 @@ export async function renderCarouselPngs(
             message: renderError.message
           });
 
-          throw withPartialRenderResult(renderError, {
-            status: "failed",
-            files,
-            images,
-            failures
-          });
+          // UNC-270: 이 실패는 "그 장을 못 그렸다"가 아니라 "photo-first
+          // 자산을 못 쓴다"는 신호다. 바깥에서 드래프트 전체를 story-card로
+          // 다시 그린다.
+          throw new PhotoFirstAssetError(
+            `photo-first asset for slide ${card.slideIndex} is unusable: ${renderError.message}`,
+            withPartialRenderResult(renderError, {
+              status: "failed",
+              files,
+              images,
+              failures
+            })
+          );
         }
       } else {
         // story-card mode (or photo-first with no visual asset): use Playwright.
@@ -316,6 +390,10 @@ export async function renderCarouselPngs(
       });
     }
   } catch (error) {
+    if (error instanceof PhotoFirstAssetError) {
+      throw error;
+    }
+
     if (error instanceof CarouselPngRenderError) {
       throw error;
     }

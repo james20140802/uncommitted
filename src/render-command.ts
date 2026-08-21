@@ -47,6 +47,8 @@ export type RenderCommandResult = {
   outputDir: string;
   carouselDir: string;
   renderResult: CarouselPngRenderResult;
+  /** UNC-270: degrade가 일어났을 때 CLI가 출력할 경고 문구. */
+  warnings?: string[];
 };
 
 const usage = "Usage: uncommitted render latest";
@@ -97,7 +99,10 @@ export async function runRenderCommand(
       revision,
       cards,
       visualAssets,
-      renderer: options.renderer
+      renderer: options.renderer,
+      // UNC-270: photo-first 자산이 못 쓰게 되면 같은 story.json으로
+      // story-card 카드를 다시 만들어 드래프트 전체를 그 세트로 렌더한다.
+      photoFirstDegrade: () => createCardsWithStyle(story, "story-card")
     });
 
     await writeDraftArtifactJson(
@@ -106,11 +111,18 @@ export async function runRenderCommand(
       buildRenderedMetadata(metadata, renderResult)
     );
 
+    const warnings = renderResult.degraded
+      ? [
+          `Photo-first assets were unusable, so the whole draft was rendered as story-card. Reason: ${renderResult.degraded.reason}`
+        ]
+      : undefined;
+
     return {
       targetDate: revision.targetDate,
       outputDir: revision.outputDir,
       carouselDir: join(revision.outputDir, "carousel"),
-      renderResult
+      renderResult,
+      ...(warnings ? { warnings } : {})
     };
   } catch (error) {
     if (error instanceof CarouselPngRenderError) {
@@ -305,7 +317,13 @@ function buildRenderedMetadata(
   return {
     ...metadata,
     files: mergeFiles(metadata.files, renderResult.files),
-    carousel: renderResult
+    carousel: renderResult,
+    // UNC-270: 실제로 그려진 모드를 metadata에 반영한다. 요청된 모드는
+    // requestedCarouselVisualStyle에 그대로 남아 있어 두 값을 비교하면
+    // degrade가 일어났음이 드러난다.
+    ...(renderResult.degraded
+      ? { carouselVisualStyle: renderResult.degraded.to }
+      : {})
   };
 }
 

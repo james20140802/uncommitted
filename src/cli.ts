@@ -622,6 +622,11 @@ async function runRender(
 
     io.stdout(`Rendered carousel for ${result.targetDate}: ${result.outputDir}`);
     io.stdout(`Carousel files: ${result.carouselDir}`);
+
+    for (const warning of result.warnings ?? []) {
+      io.stderr(`Warning: ${warning}`);
+    }
+
     return 0;
   } catch (error) {
     if (error instanceof RenderCommandError) {
