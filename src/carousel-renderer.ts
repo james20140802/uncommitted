@@ -236,8 +236,15 @@ export async function renderCarouselPngs(
     }
 
     // 부분 결과는 버린다. 섞인 캐러셀 대신 일관된 카드 세트를 낸다.
-    const result = await renderCardSet(options.photoFirstDegrade(), {
+    // renderCardSet은 첫 인자로 받은 카드 세트만 그리고 options.cards는
+    // 절대 읽지 않는다 — 그래도 spread한 options에 원래의 photo-first
+    // cards가 그대로 남아 있으면 어느 카드 세트가 실제로 쓰이는지 헷갈리니,
+    // `cards`를 story-card 세트로 명시적으로 덮어써 options 객체 자체를
+    // 실제로 쓰이는 값과 일치시킨다.
+    const storyCardCards = options.photoFirstDegrade();
+    const result = await renderCardSet(storyCardCards, {
       ...options,
+      cards: storyCardCards,
       // degrade 후에는 사진 자산을 붙이지 않는다 — 못 쓰게 된 자산이
       // 바로 degrade의 원인이다.
       visualAssets: []

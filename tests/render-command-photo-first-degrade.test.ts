@@ -58,6 +58,14 @@ describe("photo-first render-time degrade (UNC-270 / parent AC4)", () => {
     expect(metadata.carouselVisualStyle).toBe("story-card");
     expect(metadata.requestedCarouselVisualStyle).toBe("photo-first");
     expect(metadata.carousel.degraded.reason).toBeTruthy();
+
+    // AC: "exit 5로 죽지 않고 완주" 만으로는 사용자가 degrade를 알아챌 수
+    // 없다 — CLI가 띄울 경고 문구가 실제로 채워지는지 검증한다.
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings?.[0]).toContain("story-card");
+    expect(result.warnings?.[0]).toContain(
+      result.renderResult.degraded?.reason ?? ""
+    );
   });
 
   it("degrades when a photo asset is present but not a valid PNG", async () => {
@@ -70,6 +78,8 @@ describe("photo-first render-time degrade (UNC-270 / parent AC4)", () => {
 
     expect(result.renderResult.status).toBe("rendered");
     expect(result.renderResult.degraded?.to).toBe("story-card");
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings?.[0]).toContain("story-card");
   });
 
   it("degrades when a photo asset has the wrong dimensions", async () => {
@@ -82,6 +92,8 @@ describe("photo-first render-time degrade (UNC-270 / parent AC4)", () => {
 
     expect(result.renderResult.status).toBe("rendered");
     expect(result.renderResult.degraded?.to).toBe("story-card");
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings?.[0]).toContain("story-card");
   });
 
   it("does not degrade when every photo asset is valid", async () => {
@@ -94,6 +106,8 @@ describe("photo-first render-time degrade (UNC-270 / parent AC4)", () => {
 
     expect(result.renderResult.status).toBe("rendered");
     expect(result.renderResult.degraded).toBeUndefined();
+    // 정상 경로에서는 경고 문구가 전혀 없어야 한다.
+    expect(result.warnings).toBeUndefined();
   });
 });
 
