@@ -45,6 +45,22 @@ import {
  * 실제로 존재하는 두 주입 지점만 쓴다: `options.imageAssetProvider`
  * (주입된 provider 자체가 호출됐는지)와 `createImageAssetProvider`
  * export(생성자가 호출됐는지).
+ *
+ * story-card describe 블록의 두 테스트는 **서로 다른 것**을 고정한다 —
+ * 하나로 뭉뚱그리지 말 것:
+ *   - 테스트 1("never calls the injected image provider")은 종단 행동을
+ *     본다: 주입된 provider의 `generateImageAsset`이 story-card 모드에서
+ *     호출되는지. 이 속성은 **이중으로 가드**되어 있다 —
+ *     `resolveImageAssetProvider`의 early-return(:796-798)과, 카드
+ *     스타일이 "story-card"면 provider를 넘기지 않는 하류의 per-card
+ *     게이트(`src/visual-assets.ts:149-150`, `generateCarouselVisualAssets`
+ *     내부)가 각각 독립적으로 이 호출을 막는다. 따라서 early-return
+ *     **하나만** 제거해도 테스트 1은 하류 게이트 덕에 여전히 통과한다 —
+ *     break-and-restore로 직접 확인했다(둘 다 동시에 제거해야 실패한다).
+ *   - **early-return 자체를 단독으로 고정하는 것은 테스트 2**
+ *     ("never constructs an image provider")다 — `createImageAssetProvider`
+ *     export 호출 여부를 직접 관측하므로, early-return만 제거해도 바로
+ *     실패한다(실제로 확인됨).
  */
 
 vi.mock("../src/visual-assets.js", async (importOriginal) => {
@@ -129,7 +145,14 @@ describe("image provider exposure (UNC-271 / parent AC3)", () => {
     expect(exitCode).toBe(0);
     expect(stderr).toEqual([]);
     expect(stdout).toEqual([`Generated text draft for 2026-05-12: ${outputDir}`]);
-    // ① 주입한 provider조차 호출되지 않는다 — story-card는 early-return이다.
+    // ① 종단 행동: story-card 모드에서는 주입한 provider조차 호출되지
+    // 않는다. 이 단언은 **이중으로** 보장된다 — resolveImageAssetProvider의
+    // early-return(src/generate-command.ts:796-798)과, 카드 스타일이
+    // "story-card"면 provider를 아예 넘기지 않는 하류의
+    // per-card 게이트(src/visual-assets.ts:149-150)가 각각 독립적으로
+    // 이 호출을 막는다. 그래서 early-return **하나만** 제거해도 이 테스트는
+    // 여전히 통과한다(하류 게이트가 대신 막으므로) — early-return 자체를
+    // 단독으로 고정하는 테스트는 아래 ②다.
     expect(injectedProvider.generateImageAsset).not.toHaveBeenCalled();
     expect(metadata.carouselVisualStyle).toBe("story-card");
     expect(metadata.visualAssets.length).toBeGreaterThan(0);
@@ -167,6 +190,25 @@ describe("image provider exposure (UNC-271 / parent AC3)", () => {
 });
 
 describe("photo-first generate-time degrade (UNC-271 / parent AC4, generate half)", () => {
+  const originalFetch = globalThis.fetch;
+  const fetchSpy = vi.fn(async (): Promise<Response> => {
+    throw new Error("network must not be reached in these tests");
+  });
+
+  beforeEach(() => {
+    fetchSpy.mockClear();
+    // Same belt-and-suspenders network isolation as the story-card block
+    // above. Safe today because resolveImageAssetProvider returns the
+    // injected failingProvider before it would ever reach
+    // createImageAssetProvider (src/generate-command.ts:800-802) — but that
+    // reasoning shouldn't have to live outside the test.
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
   it("regenerates every card as story-card when the provider fails", async () => {
     const { io, stderr } = createIo();
     const fixture = await createRegisteredProjectFixture({
@@ -209,6 +251,9 @@ describe("photo-first generate-time degrade (UNC-271 / parent AC4, generate half
       metadata.visualAssets.every((asset) => asset.fallbackState === "provider-failed")
     ).toBe(true);
     expect(failingProvider.generateImageAsset).toHaveBeenCalled();
+    // The failure is served entirely by the injected fake — no real network
+    // call happens on the way to or during the degrade.
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });
 
