@@ -541,3 +541,90 @@ export function mergeStoryCardSlotFindings(
     storyCardSlots: [...findings]
   };
 }
+
+export type StoryCardPlanRescanResult = {
+  /** 재검증 뒤 다시 마스킹까지 끝낸, 실제로 내보낼 계획. */
+  plan: StoryCardPlan;
+  findings: StoryCardSlotFinding[];
+};
+
+/**
+ * UNC-269 T5 리뷰 반영 (Critical 1): `revalidateStoryCardPlan`의 degrade
+ * 경로(`degradeToDefaults` → `buildDefaultSlots`)는 그날의 활동 요약에서
+ * **마스킹을 거치지 않은** 원문을 새로 끌어온다 — 터미널 카드의
+ * command/output이 커밋 subject·smallWins 원문 그대로인 것이 그 예다.
+ * 그 원문이 secret 모양이면 재검증을 거친 계획에 마스킹되지 않은 채로
+ * 남아 story.json / 렌더 산출물로 나간다. 그래서 재검증 뒤 계획은
+ * **한 번 더** checkStoryCardPlanSafety를 통과해야 한다 — 이 두 번째
+ * 통과는 그 자체로 다시 캐스케이드되지 않는다: buildDefaultSlots의
+ * 결과는 이미 fitSlotText/fitSlotLines로 슬롯 길이에 맞춰져 있고,
+ * degradeToDefaults가 그 결과를 다시 검증기로 재검사한 뒤에만 채택하기
+ * 때문이다.
+ *
+ * UNC-269 T5 리뷰 반영 (Important 3): 재검증이 카드를 통째로 바꾸거나
+ * (degrade) 떨어뜨리면(drop) 1차 마스킹 때 기록한 발견의 cardIndex가
+ * 최종 계획과 어긋난다. 그래서 1차 발견을 무조건 이어 붙이지 않는다 —
+ * 재검증 전/후 계획을 카드 내용(type + slots)으로 매칭해, **내용이 그대로
+ * 살아남은 카드의 발견만** 그 카드의 최종 위치로 인덱스를 다시 맞춰
+ * 이어 붙인다. 내용이 바뀐(=degrade된) 카드의 1차 발견은 버리고, 대신
+ * 이 함수의 2차 스캔이 그 카드의 최종 내용에서 새로 찾아낸 발견으로
+ * 대체한다 — 그 카드가 더 이상 1차 발견이 가리키던 내용을 담고 있지
+ * 않기 때문이다.
+ */
+export function rescanStoryCardPlanAfterRevalidation(options: {
+  maskedPlan: StoryCardPlan;
+  preRevalidationFindings: readonly StoryCardSlotFinding[];
+  revalidatedPlan: StoryCardPlan;
+}): StoryCardPlanRescanResult {
+  const { plan, findings: freshFindings } = checkStoryCardPlanSafety(
+    options.revalidatedPlan
+  );
+
+  const indexMap = mapSurvivingCardIndices(options.maskedPlan, plan);
+
+  const carriedForward = options.preRevalidationFindings.flatMap((finding) => {
+    const finalIndex = indexMap.get(finding.cardIndex);
+
+    if (finalIndex === undefined) return [];
+
+    return [{ ...finding, cardIndex: finalIndex }];
+  });
+
+  return { plan, findings: [...carriedForward, ...freshFindings] };
+}
+
+/**
+ * 재검증 전 계획의 각 카드가 재검증 뒤 계획의 어느 인덱스로 살아남았는지
+ * (type + slots가 완전히 그대로인 경우에만) 매핑한다. 위치가 아니라
+ * **내용**으로 매칭하므로 앞쪽 카드가 drop되어 뒤쪽 카드들이 통째로
+ * 한 칸씩 당겨지는 경우에도 올바른 최종 인덱스를 찾는다. 이미 매칭된
+ * 최종 카드는 다시 매칭되지 않도록 소비한다 — 내용이 우연히 같은 카드가
+ * 여럿이어도 1:1로만 대응시키기 위해서다.
+ */
+function mapSurvivingCardIndices(
+  before: StoryCardPlan,
+  after: StoryCardPlan
+): Map<number, number> {
+  const availableAfterIndices = after.cards.map((_, index) => index);
+  const indexMap = new Map<number, number>();
+
+  for (const [beforeIndex, beforeCard] of before.cards.entries()) {
+    const matchPosition = availableAfterIndices.findIndex((afterIndex) =>
+      isSameCardContent(beforeCard, after.cards[afterIndex])
+    );
+
+    if (matchPosition === -1) continue;
+
+    indexMap.set(beforeIndex, availableAfterIndices[matchPosition]);
+    availableAfterIndices.splice(matchPosition, 1);
+  }
+
+  return indexMap;
+}
+
+function isSameCardContent(
+  a: StoryCardPlanCard,
+  b: StoryCardPlanCard
+): boolean {
+  return a.type === b.type && JSON.stringify(a.slots) === JSON.stringify(b.slots);
+}

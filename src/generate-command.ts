@@ -74,6 +74,7 @@ import {
   checkStoryCardPlanSafety,
   createSafetyReport,
   mergeStoryCardSlotFindings,
+  rescanStoryCardPlanAfterRevalidation,
   type SafetyReport,
   type SafetyStatus
 } from "./safety-report.js";
@@ -444,15 +445,39 @@ export async function runGenerateCommand(
 
   // UNC-269 / T5: 카드 슬롯의 secret·토큰·로컬 절대경로·이메일을 **여기서**
   // 마스킹한다. 이 시점 이후로 slots 원문은 어떤 산출물에도 남지 않는다.
-  const { plan: maskedStoryCardPlan, findings: storyCardSlotFindings } =
+  const { plan: maskedStoryCardPlan, findings: preRevalidationFindings } =
     checkStoryCardPlanSafety(rawStoryCardPlan);
 
   // 마스킹이 실제로 값을 바꿨을 때만 재검증한다. 재조립은 카드의 source
   // 라벨(generated/degraded/fallback)을 잃으므로 필요할 때만 치른다.
-  const storyCardPlan =
-    storyCardSlotFindings.length === 0
-      ? rawStoryCardPlan
-      : revalidateStoryCardPlan({ plan: maskedStoryCardPlan, summary: activitySummary });
+  //
+  // UNC-269 T5 리뷰 반영 (Critical 1): 재검증의 degrade 경로는 그날의
+  // 활동 요약에서 **마스킹을 거치지 않은** 원문(buildDefaultSlots)을 새로
+  // 끌어올 수 있다 — 재검증만 하고 끝내면 그 원문이 마스킹 한 번 없이
+  // story.json / 렌더 산출물로 나간다. 그래서 재검증한 계획은
+  // rescanStoryCardPlanAfterRevalidation으로 **다시** 스캔한다. 이 함수가
+  // 최종적으로 내보낼 계획과, 최종 계획 인덱스에 맞춰 재정렬된 발견을
+  // 함께 돌려준다(Important 3 — 재검증이 카드를 바꾸거나 떨어뜨리면 1차
+  // 발견의 cardIndex가 어긋나므로, 그 카드의 발견은 버리고 2차 스캔의
+  // 결과로 대체한다).
+  let storyCardPlan = rawStoryCardPlan;
+  let storyCardSlotFindings = preRevalidationFindings;
+
+  if (preRevalidationFindings.length > 0) {
+    const revalidatedStoryCardPlan = revalidateStoryCardPlan({
+      plan: maskedStoryCardPlan,
+      summary: activitySummary
+    });
+    const rescanned = rescanStoryCardPlanAfterRevalidation({
+      maskedPlan: maskedStoryCardPlan,
+      preRevalidationFindings,
+      revalidatedPlan: revalidatedStoryCardPlan
+    });
+
+    storyCardPlan = rescanned.plan;
+    storyCardSlotFindings = rescanned.findings;
+  }
+
   const storyCardFailures = collectStoryCardFailureRecords(
     storyCardGeneration?.outcomes ?? [],
     storyCardPlan

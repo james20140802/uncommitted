@@ -17,7 +17,8 @@ import { addProject, type ProjectRecord } from "../src/project-add.js";
 import {
   checkStoryCardPlanSafety,
   createSafetyReport,
-  mergeStoryCardSlotFindings
+  mergeStoryCardSlotFindings,
+  rescanStoryCardPlanAfterRevalidation
 } from "../src/safety-report.js";
 import {
   revalidateStoryCardPlan,
@@ -128,6 +129,40 @@ describe("checkStoryCardPlanSafety (UNC-269 AC1/AC4)", () => {
 
     expect(findings.every((finding) => finding.severity === "warning")).toBe(true);
   });
+
+  // UNC-269 T5 리뷰 반영 (Important 2): lines 슬롯(배열) 분기가 실제로
+  // secret을 마스킹하는 것을 관찰하는 테스트가 없었다 — `slots[slotName] =
+  // value`로 바꿔도 기존 테스트는 전부 통과했을 것이다. 여러 줄 중 한 줄에만
+  // secret이 있는, 가장 현실적인 케이스로 그 분기를 실제로 태운다.
+  it("masks only the line that carries the secret in a lines slot, leaving sibling lines untouched", () => {
+    const plan: StoryCardPlan = {
+      schemaVersion: 1,
+      cards: [
+        {
+          type: "terminal",
+          slots: {
+            command: "pnpm test",
+            output: ["3 passed", `leaked TOKEN=${fakeToken}`, "done"]
+          },
+          source: "generated"
+        }
+      ]
+    };
+
+    const { plan: masked, findings } = checkStoryCardPlanSafety(plan);
+    const output = masked.cards[0].slots.output as string[];
+
+    expect(output).toHaveLength(3);
+    expect(output[0]).toBe("3 passed");
+    expect(output[2]).toBe("done");
+    expect(output[1]).not.toContain(fakeToken);
+    expect(
+      findings.some(
+        (finding) =>
+          finding.slot === "output" && finding.category === "secret" && finding.severity === "warning"
+      )
+    ).toBe(true);
+  });
 });
 
 describe("mergeStoryCardSlotFindings (UNC-269 AC2/AC3)", () => {
@@ -197,6 +232,127 @@ describe("revalidateStoryCardPlan (UNC-269 — masked slots must still fit)", ()
     expect(revalidateStoryCardPlan({ plan, summary: quietSummary }).cards[0].slots.headline).toBe(
       "짧은 헤드라인"
     );
+  });
+});
+
+/**
+ * UNC-269 T5 리뷰 반영 (Critical 1 / Important 3): 재검증의 degrade 경로는
+ * 그날의 활동 요약에서 마스킹을 거치지 않은 원문을 새로 끌어온다. 마스킹이
+ * 실제로 그 카드를 한계 밖으로 밀어냈을 때(=degrade가 트리거됐을 때)만
+ * 벌어지는 일이라 첫 커밋의 단위 테스트들은 이 경로를 태우지 못했다 —
+ * 여기서 그 정확한 실패 시나리오를 재현한다: 카드 슬롯 마스킹이 슬롯을
+ * 한계 밖으로 밀어내고, 그 결과 degrade가 활동 요약에서 새 원문을 끌어오고,
+ * 그 원문이 다시 secret을 담고 있는 경우.
+ */
+describe("rescanStoryCardPlanAfterRevalidation (UNC-269 review Critical 1 / Important 3)", () => {
+  it("does not leak a fresh secret pulled in by the degrade path, and re-indexes surviving findings", () => {
+    // commitSignals.subjects[0]이 fakeToken을 그대로 담고 있다 — terminal의
+    // buildDefaultSlots가 degrade될 때 이 값을 command 기본값으로 그대로
+    // 끌어온다(src/story-card-kind-terminal.ts:70-83).
+    const summaryWithTokenInCommitSubject: ActivitySummary = {
+      ...quietSummary,
+      commitSignals: {
+        ...quietSummary.commitSignals,
+        totalCommits: 1,
+        subjects: [fakeToken]
+      }
+    };
+
+    // command는 raw 57자(한계 60자 이내)지만, 이메일이 마스킹되면
+    // "[redacted-email]"(16자)로 늘어나 67자가 되어 한계를 넘는다 —
+    // 재검증이 이 카드를 degrade하게 만드는 정확한 트리거다.
+    const overlongAfterMaskingCommand = `${"x".repeat(50)} a@b.co`;
+
+    const rawPlan: StoryCardPlan = {
+      schemaVersion: 1,
+      cards: [
+        {
+          type: "terminal",
+          slots: {
+            prompt: "~/uncommitted",
+            command: overlongAfterMaskingCommand,
+            output: ["done"]
+          },
+          source: "generated"
+        },
+        // 이 카드는 마스킹 뒤에도 한계 안에 들어가서 재검증에서 손대지
+        // 않는다 — Important 3(1차 발견이 최종 인덱스로 올바르게 이어
+        // 붙는지)를 검증하는 대조군이다.
+        {
+          type: "typo",
+          slots: { headline: `TOKEN=${fakeToken}` },
+          source: "generated"
+        }
+      ]
+    };
+
+    const { plan: maskedStoryCardPlan, findings: preRevalidationFindings } =
+      checkStoryCardPlanSafety(rawPlan);
+
+    expect(preRevalidationFindings.length).toBeGreaterThan(0);
+
+    const revalidatedPlan = revalidateStoryCardPlan({
+      plan: maskedStoryCardPlan,
+      summary: summaryWithTokenInCommitSubject
+    });
+    const { plan: finalPlan, findings: finalFindings } = rescanStoryCardPlanAfterRevalidation({
+      maskedPlan: maskedStoryCardPlan,
+      preRevalidationFindings,
+      revalidatedPlan
+    });
+
+    // Critical 1: the degrade path's fresh, unmasked default must not
+    // survive into the plan that ships.
+    const shipped = JSON.stringify(finalPlan);
+
+    expect(shipped).not.toContain(fakeToken);
+    expect(shipped).not.toContain("a@b.co");
+    expect(finalFindings.every((finding) => finding.severity === "warning")).toBe(true);
+
+    // The degraded terminal card (index 0) must carry a fresh finding for
+    // its new (masked) content, recorded at its correct final index.
+    expect(
+      finalFindings.some(
+        (finding) => finding.cardIndex === 0 && finding.cardType === "terminal"
+      )
+    ).toBe(true);
+
+    // Important 3: the untouched typo card's pre-revalidation finding must
+    // survive, still correctly pointing at index 1 (its content — and so
+    // its position in the final plan — never changed).
+    expect(finalPlan.cards[1].type).toBe("typo");
+    expect(finalPlan.cards[1].slots.headline).toBe(maskedStoryCardPlan.cards[1].slots.headline);
+    expect(
+      finalFindings.some(
+        (finding) =>
+          finding.cardIndex === 1 &&
+          finding.cardType === "typo" &&
+          finding.slot === "headline" &&
+          finding.category === "secret"
+      )
+    ).toBe(true);
+  });
+
+  it("carries every finding forward unchanged when revalidation touches nothing", () => {
+    const plan: StoryCardPlan = {
+      schemaVersion: 1,
+      cards: [{ type: "typo", slots: { headline: `TOKEN=${fakeToken}` }, source: "generated" }]
+    };
+    const { plan: maskedStoryCardPlan, findings: preRevalidationFindings } =
+      checkStoryCardPlanSafety(plan);
+    const revalidatedPlan = revalidateStoryCardPlan({
+      plan: maskedStoryCardPlan,
+      summary: quietSummary
+    });
+
+    const { findings } = rescanStoryCardPlanAfterRevalidation({
+      maskedPlan: maskedStoryCardPlan,
+      preRevalidationFindings,
+      revalidatedPlan
+    });
+
+    expect(findings).toHaveLength(preRevalidationFindings.length);
+    expect(findings[0]).toMatchObject({ cardIndex: 0, cardType: "typo", slot: "headline" });
   });
 });
 
