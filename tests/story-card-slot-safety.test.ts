@@ -354,6 +354,87 @@ describe("rescanStoryCardPlanAfterRevalidation (UNC-269 review Critical 1 / Impo
     expect(findings).toHaveLength(preRevalidationFindings.length);
     expect(findings[0]).toMatchObject({ cardIndex: 0, cardType: "typo", slot: "headline" });
   });
+
+  // UNC-269 T5 2차 리뷰 반영 (Important, round 3): 앞선 라운드의 회귀
+  // 테스트는 degrade 기본값 자체가 fakeToken을 담고 있어서, 카드가
+  // 교체되어도 2차 스캔이 항상 새 발견을 만들어냈다 — 그래서 "발견이
+  // 통째로 사라질 수 있다"는 구멍이 가려져 있었다. 여기서는 그날의
+  // commitSignals가 **깨끗해서** degrade된 기본값에 아무 secret도 없는
+  // 경우를 재현한다: 그래도 1차에서 실제로 email을 마스킹했다는 사실
+  // 자체는 findings에 남아야 한다.
+  it("keeps a recorded finding even when the degraded default is completely clean (no fresh finding to fall back on)", () => {
+    const summaryWithCleanCommits: ActivitySummary = {
+      ...quietSummary,
+      commitSignals: {
+        ...quietSummary.commitSignals,
+        totalCommits: 1,
+        subjects: ["clean, unremarkable commit message"]
+      },
+      smallWins: ["작은 성과"]
+    };
+
+    // 1차 마스킹 뒤 60자 한계를 넘어 degrade를 유발하는, Critical 1
+    // 테스트와 같은 트리거 모양(이메일이 포함된 57자 원문).
+    const overlongAfterMaskingCommand = `${"x".repeat(50)} a@b.co`;
+    const rawPlan: StoryCardPlan = {
+      schemaVersion: 1,
+      cards: [
+        {
+          type: "terminal",
+          slots: {
+            prompt: "~/uncommitted",
+            command: overlongAfterMaskingCommand,
+            output: ["done"]
+          },
+          source: "generated"
+        }
+      ]
+    };
+
+    const { plan: maskedStoryCardPlan, findings: preRevalidationFindings } =
+      checkStoryCardPlanSafety(rawPlan);
+
+    expect(preRevalidationFindings.length).toBeGreaterThan(0);
+
+    const revalidatedPlan = revalidateStoryCardPlan({
+      plan: maskedStoryCardPlan,
+      summary: summaryWithCleanCommits
+    });
+    // 재검증이 실제로 이 카드를 degrade시켰는지(=교체됐는지) 전제부터
+    // 확인한다 — 그러지 않으면 이 테스트가 애초에 겨냥한 경로를 타지
+    // 않고도 통과해버릴 수 있다.
+    expect(revalidatedPlan.cards[0].slots.command).not.toBe(
+      maskedStoryCardPlan.cards[0].slots.command
+    );
+
+    const { plan: finalPlan, findings: finalFindings } = rescanStoryCardPlanAfterRevalidation({
+      maskedPlan: maskedStoryCardPlan,
+      preRevalidationFindings,
+      revalidatedPlan
+    });
+
+    // 깨끗한 기본값이 실제로 새 발견을 만들지 않는다는 전제도 확인한다 —
+    // 그러지 않으면 "2차 스캔이 뭔가를 찾아서 우연히 통과"하는 거짓
+    // 양성일 수 있다.
+    expect(JSON.stringify(finalPlan)).not.toContain("a@b.co");
+
+    // 핵심 불변식: 1차에서 email이 마스킹됐다는 사실은 findings에서
+    // 사라지지 않는다.
+    expect(finalFindings.length).toBeGreaterThan(0);
+    expect(
+      finalFindings.some(
+        (finding) => finding.cardType === "terminal" && finding.category === "email"
+      )
+    ).toBe(true);
+    expect(finalFindings.every((finding) => finding.severity === "warning")).toBe(true);
+
+    // 그리고 그 사실이 실제로 safety-report.json 등급에 반영된다 —
+    // mergeStoryCardSlotFindings가 "safe"를 "warning"으로 올린다.
+    const merged = mergeStoryCardSlotFindings(createSafetyReport("아무 문제 없는 하루"), finalFindings);
+
+    expect(merged.status).toBe("warning");
+    expect(merged.storyCardSlots?.length).toBeGreaterThan(0);
+  });
 });
 
 /**

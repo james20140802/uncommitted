@@ -563,13 +563,28 @@ export type StoryCardPlanRescanResult = {
  *
  * UNC-269 T5 리뷰 반영 (Important 3): 재검증이 카드를 통째로 바꾸거나
  * (degrade) 떨어뜨리면(drop) 1차 마스킹 때 기록한 발견의 cardIndex가
- * 최종 계획과 어긋난다. 그래서 1차 발견을 무조건 이어 붙이지 않는다 —
- * 재검증 전/후 계획을 카드 내용(type + slots)으로 매칭해, **내용이 그대로
- * 살아남은 카드의 발견만** 그 카드의 최종 위치로 인덱스를 다시 맞춰
- * 이어 붙인다. 내용이 바뀐(=degrade된) 카드의 1차 발견은 버리고, 대신
- * 이 함수의 2차 스캔이 그 카드의 최종 내용에서 새로 찾아낸 발견으로
- * 대체한다 — 그 카드가 더 이상 1차 발견이 가리키던 내용을 담고 있지
- * 않기 때문이다.
+ * 최종 계획과 어긋난다. 재검증 전/후 계획을 카드 내용(type + slots)으로
+ * 매칭해, **내용이 그대로 살아남은 카드의 발견만** 그 카드의 최종 위치로
+ * 인덱스를 다시 맞춘다.
+ *
+ * UNC-269 T5 리뷰 반영 (Important, 2차 리뷰): 내용이 바뀐(=degrade/drop된)
+ * 카드의 1차 발견을 **버리지 않는다.** 처음 구현은 그런 발견을 버리고
+ * 2차 스캔 결과로만 대체했는데, 그날의 활동 요약이 깨끗하면 2차 스캔이
+ * 아무것도 찾지 못해 findings가 통째로 비어버린다 — 실제로는 마스킹이
+ * 일어났는데도(원문에 email/local-path/secret이 있었는데도)
+ * safety-report.json이 "safe"로 돌아가는 결과였다(부모 AC2/AC4 위반).
+ * 마스킹이 실제로 있었다는 사실 자체는 그 카드가 나중에 어떻게 바뀌든
+ * 변하지 않으므로, 최종 위치를 못 찾은 발견은 원래 인덱스에 "카드가
+ * 재검증으로 교체됨" 표식을 붙여 그대로 남긴다 — 위치가 정확하지 않을
+ * 수 있다는 사실을 message에 명시하는 편이, 발견 자체가 사라지는 것보다
+ * 낫다. 카드가 실제로 교체됐다면 2차 스캔이 그 카드의 새 내용에서 다시
+ * secret을 찾아 별도 발견으로 덧붙이므로(같은 인덱스에 두 발견이 남을
+ * 수 있다), 정보 손실 없이 두 사실(이전에 무엇이 있었는지 / 지금 무엇이
+ * 나가는지)이 모두 기록된다.
+ *
+ * 이 함수가 지키는 불변식: preRevalidationFindings가 비어있지 않으면
+ * (=마스킹이 뭔가를 바꿨으면) 반환되는 findings도 결코 비지 않는다 —
+ * 재검증이 그 카드에 무슨 일을 했든 상관없이.
  */
 export function rescanStoryCardPlanAfterRevalidation(options: {
   maskedPlan: StoryCardPlan;
@@ -582,15 +597,29 @@ export function rescanStoryCardPlanAfterRevalidation(options: {
 
   const indexMap = mapSurvivingCardIndices(options.maskedPlan, plan);
 
-  const carriedForward = options.preRevalidationFindings.flatMap((finding) => {
+  const carriedForward = options.preRevalidationFindings.map((finding) => {
     const finalIndex = indexMap.get(finding.cardIndex);
 
-    if (finalIndex === undefined) return [];
+    if (finalIndex !== undefined) {
+      return { ...finding, cardIndex: finalIndex };
+    }
 
-    return [{ ...finding, cardIndex: finalIndex }];
+    // 이 카드는 재검증으로 내용이 바뀌었거나 통째로 사라졌다 — 최종
+    // 위치를 신뢰할 수 없다. 그래도 발견 자체는 버리지 않는다.
+    return {
+      ...finding,
+      message: `${finding.message} (card replaced during revalidation; index may not match the shipped plan)`
+    };
   });
 
-  return { plan, findings: [...carriedForward, ...freshFindings] };
+  return {
+    plan,
+    // Minor(2차 리뷰): 발견을 최종 cardIndex 순으로 정렬해 storyCardSlots가
+    // 읽는 사람 기준으로 카드 순서와 어긋나지 않게 한다.
+    findings: [...carriedForward, ...freshFindings].sort(
+      (a, b) => a.cardIndex - b.cardIndex
+    )
+  };
 }
 
 /**
