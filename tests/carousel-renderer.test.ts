@@ -38,10 +38,14 @@ describe("carousel renderer", () => {
       altText: "Story-card visual concept: clean card"
     });
     expect(cards[0]?.visualStyle).toBe("story-card");
-    expect(cards[0]?.html).toContain("class=\"visual-stage\"");
+    // UNC-266: no plan means the render path derives a default card from the
+    // slide's own title through the typo registry kind (see
+    // src/story-card-registry.ts). The legacy generic .visual-stage /
+    // .visual-placeholder markup this test used to assert on is gone —
+    // that's the point of this task.
+    expect(cards[0]?.html).toContain("class=\"card-stage\"");
     expect(cards[0]?.html).toContain("data-carousel-visual-style=\"story-card\"");
-    expect(cards[0]?.html).toContain("data-visual-kind=\"story-card\"");
-    expect(cards[0]?.html).toContain("data-asset-slot-id=\"slide-01-visual\"");
+    expect(cards[0]?.html).toContain("data-story-card-kind=\"typo\"");
   });
 
   it("creates photo-first cards with image-forward markup and no large body copy", () => {
@@ -63,7 +67,10 @@ describe("carousel renderer", () => {
     expect(cards[0]?.html).not.toContain("<p class=\"body\"");
   });
 
-  it("escapes slide and visual treatment content before writing HTML", () => {
+  it("escapes slide title content before writing HTML", () => {
+    // UNC-266: with no plan, the default typo card's headline comes from
+    // slide.title only — body/visualMood are no longer rendered onto the
+    // card, so escaping is asserted on the field that actually reaches HTML.
     const cards = createCarouselHtmlCards(
       createStoryDraft({
         slides: [
@@ -90,10 +97,7 @@ describe("carousel renderer", () => {
     );
 
     expect(cards[0]?.html).toContain("Fix &lt;script&gt;");
-    expect(cards[0]?.html).toContain("Rendered &amp; safe.");
-    expect(cards[0]?.html).toContain("terminal &lt;alert&gt; &amp; sparks");
     expect(cards[0]?.html).not.toContain("Fix <script>");
-    expect(cards[0]?.html).not.toContain("terminal <alert>");
   });
 
   it("parses the existing story.json slide contract for rendering", () => {
@@ -197,9 +201,11 @@ describe("carousel renderer", () => {
       }
     ]);
     expect(renderer.calls).toHaveLength(3);
-    expect(renderer.calls[0]?.html).toContain("data-asset-slot-id=\"slide-01-visual\"");
-    expect(renderer.calls[0]?.html).toContain("data:image/png;base64,");
-    expect(renderer.calls[0]?.html).toContain("class=\"visual-asset\"");
+    // UNC-266: registry story cards are purely typographic (no image slot),
+    // so a visual asset no longer gets composited into story-card mode HTML
+    // the way it does for photo-first cards. The card that actually rendered
+    // is still identifiable via its registry kind.
+    expect(renderer.calls[0]?.html).toContain("data-story-card-kind=\"typo\"");
 
     const firstPng = await readFile(join(revision.outputDir, "carousel", "01.png"));
     expect([...firstPng.subarray(0, 8)]).toEqual([
@@ -590,12 +596,12 @@ describe("story-card fallback korean + short slides (UNC-218)", () => {
     expect(card.html).not.toContain('lang="en"');
   });
 
-  it("truncates the visual concept placeholder to a short, scannable snippet", () => {
-    const [card] = createCarouselHtmlCards(story, { visualStyle: "story-card" });
-    // 원본 장문이 그대로 노출되지 않고 잘린 스니펫(말줄임표)으로 표시된다
-    expect(card.html).not.toContain(longMood);
-    expect(card.html).toContain("…");
-  });
+  // UNC-266: registry story cards no longer render slide.visualMood at all —
+  // the default card derives its headline from slide.title only (see
+  // renderSlideDerivedDefaultCard in src/carousel-renderer.ts), so the long
+  // visualMood text this fixture exercises never reaches the card, and the
+  // legacy truncated-snippet-with-ellipsis behavior this test covered is
+  // gone by design. Removed rather than force-passed.
 });
 
 const fixturePng = Buffer.from(

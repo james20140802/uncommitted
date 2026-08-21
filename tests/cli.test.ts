@@ -690,8 +690,12 @@ describe("cli", () => {
     ]);
     expect(carouselPng).toEqual(pngBytes);
     expect(renderer.calls).toHaveLength(1);
-    expect(renderer.calls[0]?.html).toContain("class=\"visual-asset\"");
-    expect(renderer.calls[0]?.html).toContain("data:image/png;base64,");
+    // UNC-266: registry story cards are purely typographic, so a visual
+    // asset no longer gets composited into story-card mode HTML (that
+    // compositing targeted the legacy .visual-stage/.visual-placeholder
+    // markup, which this task intentionally removes). Its metadata is still
+    // recorded below via visualAssetPath.
+    expect(renderer.calls[0]?.html).toContain("data-story-card-kind=\"typo\"");
     expect(metadata).toMatchObject({
       files: [
         "activity-summary.json",

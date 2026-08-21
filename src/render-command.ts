@@ -226,6 +226,8 @@ function assertDraftIsRenderable(metadata: Record<string, unknown>): void {
   }
 }
 
+// UNC-266: story.json이 실어 온 storyCardPlan은 parseCarouselRenderInput이
+// 보존하므로 여기서 따로 넘기지 않아도 registry 렌더까지 도달한다.
 function createCardsWithStyle(story: unknown, visualStyle: CarouselVisualStyleMode) {
   try {
     return createCarouselHtmlCards(story, { visualStyle });

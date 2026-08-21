@@ -32,6 +32,16 @@ export const storyCardRegistry: readonly StoryCardDefinition[] = [
   diffStoryCard
 ];
 
+// 렌더 경로가 kind id로 정의를 찾는 진입점. 등록 지점은 위의
+// storyCardRegistry 배열 하나뿐이라는 불변식을 깨지 않도록, 여기서도
+// 그 배열에서만 찾는다.
+export function findStoryCardKind(
+  id: string,
+  registry: readonly StoryCardDefinition[] = storyCardRegistry
+): StoryCardDefinition | undefined {
+  return registry.find((kind) => kind.id === id);
+}
+
 export function listStoryCardKindIds(
   registry: readonly StoryCardDefinition[] = storyCardRegistry
 ): string[] {

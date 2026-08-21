@@ -8,6 +8,14 @@ import {
   writeDraftArtifactBinary
 } from "./draft-storage.js";
 import { escapeHtml } from "./html-escape.js";
+import {
+  type StoryCardPlan,
+  type StoryCardPlanCard
+} from "./story-card-plan.js";
+import { findStoryCardKind } from "./story-card-registry.js";
+import { fitSlotText, type StoryCardSlots } from "./story-card-slots.js";
+import { renderStoryCardDocument, type StoryCardChrome } from "./story-card-chrome.js";
+import { TYPO_FALLBACK_HEADLINE } from "./story-card-kind-typo.js";
 
 export type CarouselRenderInputErrorCode = "invalid-story";
 export type CarouselPngRenderErrorCode = "render-failed" | "write-failed";
@@ -37,6 +45,12 @@ export type CarouselRenderInput = {
   targetDate: string;
   projectMarker: string;
   slides: DiarySlide[];
+  /**
+   * UNC-266: story.json이 실어 온 카드 계획. 이전에는 파싱에서 버려져
+   * 렌더가 레거시 제네릭 카드로만 갔다. plan이 없는 pre-UNC-233
+   * 드래프트도 정상이므로 optional이다.
+   */
+  storyCardPlan?: StoryCardPlan;
 };
 
 export type CarouselVisualStyleMode = "photo-first" | "story-card";
@@ -111,6 +125,11 @@ export type RenderCarouselPngsOptions = {
 
 export type CreateCarouselHtmlCardsOptions = {
   visualStyle?: CarouselVisualStyleMode;
+  /**
+   * 명시적으로 넘긴 계획이 story.json 안의 계획을 이긴다. render-command가
+   * 이미 파싱한 계획을 다시 넘길 때 쓴다.
+   */
+  storyCardPlan?: StoryCardPlan;
 };
 
 const invalidStoryMessage =
@@ -139,11 +158,13 @@ export function parseCarouselRenderInput(value: unknown): CarouselRenderInput {
   const slides = value.slides.map((slide, index) =>
     parseDiarySlide(slide, index)
   );
+  const storyCardPlan = parseStoryCardPlan(value.storyCardPlan);
 
   return {
     targetDate: value.targetDate,
     projectMarker: deriveProjectMarker(value),
-    slides
+    slides,
+    ...(storyCardPlan ? { storyCardPlan } : {})
   };
 }
 
@@ -154,6 +175,7 @@ export function createCarouselHtmlCards(
   const input = parseCarouselRenderInput(value);
   const pageCount = input.slides.length;
   const visualStyle = options.visualStyle ?? "story-card";
+  const planCards = (options.storyCardPlan ?? input.storyCardPlan)?.cards ?? [];
 
   return input.slides.map((slide, index) => {
     const pageNumber = index + 1;
@@ -170,6 +192,7 @@ export function createCarouselHtmlCards(
         targetDate: input.targetDate,
         projectMarker: input.projectMarker,
         slide,
+        planCard: planCards[index],
         visualStyle,
         visualTreatment,
         pageNumber,
@@ -432,43 +455,47 @@ function validateRenderedCard(): { ok: true } | { ok: false } {
   }
 
   const card = document.querySelector<HTMLElement>(".card");
-  const visualStage = document.querySelector<HTMLElement>(".visual-stage");
   const footer = document.querySelector<HTMLElement>(".footer");
   const visualImage = document.querySelector<HTMLImageElement>(".visual-asset");
   const visualStyle = card?.dataset.carouselVisualStyle;
 
-  if (!card || !visualStage || !footer) {
+  if (!card || !footer) {
     return { ok: false };
   }
 
   const cardRect = card.getBoundingClientRect();
-  const visualRect = visualStage.getBoundingClientRect();
   const footerRect = footer.getBoundingClientRect();
 
-  if (
-    overflowsOwnBox(card) ||
-    overflowsCard(cardRect, visualRect) ||
-    overflowsCard(cardRect, footerRect)
-  ) {
+  if (overflowsOwnBox(card) || overflowsCard(cardRect, footerRect)) {
     return { ok: false };
   }
 
-  if (visualStyle !== "photo-first") {
-    const content = document.querySelector<HTMLElement>(".content");
-    const title = document.querySelector<HTMLElement>("h1");
-    const body = document.querySelector<HTMLElement>(".body");
+  if (visualStyle === "photo-first") {
+    const visualStage = document.querySelector<HTMLElement>(".visual-stage");
 
-    if (!content || !title || !body) {
+    if (!visualStage) {
+      return { ok: false };
+    }
+
+    const visualRect = visualStage.getBoundingClientRect();
+
+    if (overflowsCard(cardRect, visualRect)) {
+      return { ok: false };
+    }
+  } else {
+    // UNC-266: registry story cards have no .visual-stage/.content — their
+    // single layout region is .card-stage (see story-card-chrome.ts).
+    const content = document.querySelector<HTMLElement>(".card-stage");
+
+    if (!content) {
       return { ok: false };
     }
 
     const contentRect = content.getBoundingClientRect();
 
     if (
-      overflowsOwnBox(title) ||
-      overflowsOwnBox(body) ||
+      overflowsOwnBox(content) ||
       overflowsCard(cardRect, contentRect) ||
-      visualRect.bottom > contentRect.top - 16 ||
       contentRect.bottom > footerRect.top - 16
     ) {
       return { ok: false };
@@ -659,20 +686,11 @@ function parseDiarySlide(value: unknown, index: number): DiarySlide {
   };
 }
 
-const storyCardConceptMaxChars = 48;
-
-function toScannableConcept(concept: string): string {
-  const normalized = concept.replace(/\s+/g, " ").trim();
-  if (normalized.length <= storyCardConceptMaxChars) {
-    return normalized;
-  }
-  return `${normalized.slice(0, storyCardConceptMaxChars).trimEnd()}…`;
-}
-
 function renderCardHtml(options: {
   targetDate: string;
   projectMarker: string;
   slide: DiarySlide;
+  planCard?: StoryCardPlanCard;
   visualStyle: CarouselVisualStyleMode;
   visualTreatment: CarouselVisualTreatment;
   pageNumber: number;
@@ -682,248 +700,78 @@ function renderCardHtml(options: {
     return renderPhotoFirstCardHtml(options);
   }
 
-  const title = escapeHtml(options.slide.title.trim());
-  const body = escapeHtml(options.slide.body.trim());
-  const targetDate = escapeHtml(options.targetDate.trim());
-  const projectMarker = escapeHtml(options.projectMarker.trim());
-  const visualStyle = escapeHtml(options.visualStyle);
-  const visualAssetSlotId = escapeHtml(options.visualTreatment.assetSlotId);
-  const visualKind = escapeHtml(options.visualTreatment.kind);
-  const visualConceptSnippet = escapeHtml(
-    toScannableConcept(options.visualTreatment.prompt)
-  );
-  const visualConceptAriaLabel = escapeHtml(
-    `Story-card visual concept: ${toScannableConcept(options.visualTreatment.prompt)}`
-  );
-  const pageIndicator = `${options.pageNumber} / ${options.pageCount}`;
+  const chrome: StoryCardChrome = {
+    projectMarker: options.projectMarker,
+    targetDate: options.targetDate,
+    pageNumber: options.pageNumber,
+    pageCount: options.pageCount
+  };
 
-  return `<!doctype html>
-<html lang="ko">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=1080, initial-scale=1">
-  <title>${title}</title>
-  <style>
-    :root {
-      color-scheme: light;
-      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      background: #f7f7f5;
-      color: #161616;
-    }
+  return renderStoryCardFromPlan(options.planCard, options.slide, chrome);
+}
 
-    * {
-      box-sizing: border-box;
-    }
+/**
+ * UNC-266: story-card 모드의 유일한 렌더 경로. 계획이 지목한 카드 종류를
+ * 레지스트리에서 찾아 그 종류의 render()로 그린다. 계획이 없거나 종류를
+ * 못 찾으면 그 **슬라이드 자신**에서 파생한 기본 카드로 채운다 — 렌더가
+ * 실패하는 대신 그날의 진짜 내용으로 완주하는 쪽을 고른다.
+ */
+function renderStoryCardFromPlan(
+  planCard: StoryCardPlanCard | undefined,
+  slide: DiarySlide,
+  chrome: StoryCardChrome
+): string {
+  if (planCard) {
+    const definition = findStoryCardKind(planCard.type);
 
-    body {
-      margin: 0;
-      background: #f7f7f5;
+    if (definition) {
+      return definition.render(planCard.slots, chrome);
     }
+  }
 
-    .card {
-      width: 1080px;
-      height: 1350px;
-      display: flex;
-      flex-direction: column;
-      justify-content: space-between;
-      padding: 88px 84px 72px;
-      background: #f7f7f5;
-      color: #161616;
-      overflow: hidden;
-    }
+  return renderSlideDerivedDefaultCard(slide, chrome);
+}
 
-    .topline,
-    .footer {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 32px;
-      font-size: 30px;
-      font-weight: 700;
-      letter-spacing: 0;
-      line-height: 1.2;
-      color: #4b5563;
-    }
+/**
+ * 기본 카드는 typo 한 종류로 고정한다 — typo의 requires()가 무조건 참이라
+ * 어떤 드래프트에서도 유효하고, 슬롯이 headline/kicker 둘뿐이라 슬라이드
+ * 제목만으로 제약을 만족시킬 수 있다.
+ *
+ * 계획의 buildDefaultSlots를 쓰지 않는 이유: 그 경로는 ActivitySummary를
+ * 요구하는데 렌더 입력은 story.json뿐이고, 같은 요약으로 N장을 만들면
+ * N장이 전부 같은 카드가 된다.
+ */
+function renderSlideDerivedDefaultCard(
+  slide: DiarySlide,
+  chrome: StoryCardChrome
+): string {
+  const definition = findStoryCardKind("typo");
 
-    .project-marker {
-      max-width: 640px;
-      overflow-wrap: anywhere;
-    }
+  if (definition === undefined) {
+    // 레지스트리에서 typo가 사라진 상황 — 카드 문법 없이 최소 문서라도 낸다.
+    return renderStoryCardDocument({
+      kindId: "typo",
+      title: TYPO_FALLBACK_HEADLINE,
+      stageStyles: "",
+      stageHtml: `    <p>${escapeHtml(TYPO_FALLBACK_HEADLINE)}</p>`,
+      chrome
+    });
+  }
 
-    .visual-stage {
-      position: relative;
-      min-height: 670px;
-      margin: 54px 0 44px;
-      border: 2px solid #d4d4d8;
-      background:
-        linear-gradient(135deg, rgba(15, 118, 110, 0.16), rgba(15, 23, 42, 0) 42%),
-        linear-gradient(315deg, rgba(251, 191, 36, 0.2), rgba(15, 23, 42, 0) 44%),
-        #eef2f7;
-      overflow: hidden;
-    }
+  const headlineSpec = definition.slots.headline;
+  const kickerSpec = definition.slots.kicker;
+  const rawHeadline = slide.title.trim();
+  const slots: StoryCardSlots = {
+    headline:
+      rawHeadline.length > 0 && headlineSpec !== undefined
+        ? fitSlotText(rawHeadline, headlineSpec)
+        : TYPO_FALLBACK_HEADLINE,
+    ...(kickerSpec === undefined
+      ? {}
+      : { kicker: fitSlotText(chrome.targetDate, kickerSpec) })
+  };
 
-    .visual-stage::before,
-    .visual-stage::after {
-      position: absolute;
-      content: "";
-      border: 2px solid rgba(15, 23, 42, 0.18);
-    }
-
-    .visual-stage::before {
-      width: 430px;
-      height: 430px;
-      right: 28px;
-      top: 70px;
-      border-radius: 999px;
-      background: rgba(255, 255, 255, 0.42);
-    }
-
-    .visual-stage::after {
-      width: 360px;
-      height: 240px;
-      left: 92px;
-      bottom: 92px;
-      background: rgba(255, 255, 255, 0.58);
-      transform: rotate(-7deg);
-    }
-
-    .visual-placeholder {
-      position: absolute;
-      left: 72px;
-      right: 72px;
-      bottom: 58px;
-      z-index: 1;
-      font-size: 30px;
-      font-weight: 700;
-      line-height: 1.25;
-      color: #334155;
-      overflow-wrap: anywhere;
-    }
-
-    .content {
-      display: flex;
-      flex-direction: column;
-      gap: 52px;
-      margin: 0 0 44px;
-    }
-
-    h1 {
-      margin: 0;
-      max-width: 900px;
-      font-size: 90px;
-      line-height: 0.98;
-      letter-spacing: 0;
-      color: #111827;
-    }
-
-    .body {
-      margin: 0;
-      max-width: 860px;
-      font-size: 48px;
-      line-height: 1.22;
-      letter-spacing: 0;
-      color: #1f2937;
-      white-space: pre-wrap;
-      overflow-wrap: anywhere;
-    }
-
-    .card[data-layout-fit="tight"] {
-      padding: 78px 78px 66px;
-    }
-
-    .card[data-layout-fit="tight"] .visual-stage {
-      min-height: 610px;
-      margin: 44px 0 34px;
-    }
-
-    .card[data-layout-fit="tight"] .content {
-      gap: 38px;
-      margin-bottom: 34px;
-    }
-
-    .card[data-layout-fit="tight"] h1 {
-      font-size: 78px;
-      line-height: 0.96;
-    }
-
-    .card[data-layout-fit="tight"] .body {
-      font-size: 42px;
-      line-height: 1.14;
-    }
-
-    .card[data-layout-fit="compact"] {
-      padding: 66px 72px 58px;
-    }
-
-    .card[data-layout-fit="compact"] .topline,
-    .card[data-layout-fit="compact"] .footer {
-      font-size: 28px;
-    }
-
-    .card[data-layout-fit="compact"] .visual-stage {
-      min-height: 520px;
-      margin: 34px 0 28px;
-    }
-
-    .card[data-layout-fit="compact"] .visual-placeholder {
-      left: 56px;
-      right: 56px;
-      bottom: 46px;
-      font-size: 26px;
-      line-height: 1.16;
-    }
-
-    .card[data-layout-fit="compact"] .content {
-      gap: 28px;
-      margin-bottom: 30px;
-    }
-
-    .card[data-layout-fit="compact"] h1 {
-      font-size: 64px;
-      line-height: 0.94;
-    }
-
-    .card[data-layout-fit="compact"] .body {
-      font-size: 34px;
-      line-height: 1.1;
-    }
-
-    .mark {
-      font-size: 34px;
-      font-weight: 800;
-      color: #0f766e;
-    }
-  </style>
-</head>
-<body>
-  <article class="card" aria-label="Uncommitted carousel card ${escapeHtml(
-    pageIndicator
-  )}" data-layout-fit="base" data-carousel-visual-style="${visualStyle}">
-    <header class="topline">
-      <div class="project-marker">${projectMarker}</div>
-      <time datetime="${targetDate}">${targetDate}</time>
-    </header>
-    <section
-      class="visual-stage"
-      data-visual-kind="${visualKind}"
-      data-asset-slot-id="${visualAssetSlotId}"
-      data-visual-prompt="${visualConceptSnippet}"
-      aria-label="${visualConceptAriaLabel}"
-    >
-      <div class="visual-placeholder">${visualConceptSnippet}</div>
-    </section>
-    <main class="content">
-      <h1>${title}</h1>
-      <p class="body">${body}</p>
-    </main>
-    <footer class="footer">
-      <div class="mark">Uncommitted</div>
-      <div>${escapeHtml(pageIndicator)}</div>
-    </footer>
-  </article>
-</body>
-</html>
-`;
+  return definition.render(slots, chrome);
 }
 
 function createVisualTreatment(
@@ -1085,6 +933,48 @@ function renderPhotoFirstCardHtml(options: {
 </body>
 </html>
 `;
+}
+
+/**
+ * plan이 깨져 있어도 렌더를 실패시키지 않는다 — 그 자리는 기본 카드가
+ * 메운다. 드래프트 전체를 죽이는 쪽이 훨씬 나쁜 결과다.
+ */
+function parseStoryCardPlan(value: unknown): StoryCardPlan | undefined {
+  if (!isRecord(value)) return undefined;
+  if (value.schemaVersion !== 1) return undefined;
+  if (!Array.isArray(value.cards)) return undefined;
+
+  const cards: StoryCardPlanCard[] = [];
+
+  for (const raw of value.cards) {
+    if (!isRecord(raw)) continue;
+    if (!isNonEmptyString(raw.type)) continue;
+    if (!isRecord(raw.slots)) continue;
+
+    const slots: Record<string, string | string[]> = {};
+
+    for (const [name, slotValue] of Object.entries(raw.slots)) {
+      if (typeof slotValue === "string") {
+        slots[name] = slotValue;
+        continue;
+      }
+
+      if (
+        Array.isArray(slotValue) &&
+        slotValue.every((line): line is string => typeof line === "string")
+      ) {
+        slots[name] = [...slotValue];
+      }
+    }
+
+    cards.push({
+      type: raw.type,
+      slots,
+      source: raw.source === "degraded" || raw.source === "fallback" ? raw.source : "generated"
+    });
+  }
+
+  return { schemaVersion: 1, cards };
 }
 
 function deriveProjectMarker(value: Record<string, unknown>): string {
