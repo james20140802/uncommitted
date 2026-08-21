@@ -149,3 +149,70 @@ describe("story-card registry dispatch (UNC-266 AC2/AC3/AC4)", () => {
     expect(cards[3].html).toContain("장 4");
   });
 });
+
+// UNC-235 리뷰 반영: story.json의 플랜 슬롯은 계획 검증을 통과한 뒤에도
+// redactArchitectureDisclosureFromDraft(diary-generator.ts:212-214)나
+// local-path 마스킹처럼 검증 이후 단계에서 다시 길어질 수 있다. 렌더
+// 직전에 definition.slots의 선언된 한도로 다시 자르지 않으면, 그 오버사이즈
+// 슬롯이 그대로 render()에 들어가 validateRenderedCard의 오버플로 판정을
+// 거쳐 render-failed(exit 5)로 이어질 수 있다.
+describe("plan slot clamping before render (UNC-235)", () => {
+  it("clamps a text slot exceeding its declared maxLength instead of overflowing it into the card", () => {
+    // typo.slots.headline.maxLength === 40 (src/story-card-kind-typo.ts).
+    const oversizedHeadline = `${"헤".repeat(40)}${"넘친-부분"}`;
+    expect(oversizedHeadline.length).toBeGreaterThan(40);
+
+    const plan = {
+      schemaVersion: 1,
+      cards: [
+        { type: "typo", slots: { headline: oversizedHeadline }, source: "generated" }
+      ]
+    };
+
+    const cards = createCarouselHtmlCards(
+      {
+        schemaVersion: 1,
+        targetDate: "2026-08-22",
+        slides: [sixSlides[0]],
+        storyCardPlan: plan
+      },
+      { visualStyle: "story-card" }
+    );
+
+    expect(cards).toHaveLength(1);
+    expect(cards[0].html).toContain("헤".repeat(40));
+    // 잘려 나간 꼬리는 렌더 산출물 어디에도 남지 않는다.
+    expect(cards[0].html).not.toContain("넘친-부분");
+  });
+
+  it("clamps a lines slot exceeding its declared maxLines instead of overflowing it into the card", () => {
+    // chat.slots.messages.maxLines === 4 (src/story-card-kind-chat.ts,
+    // re-tuned down from 6 in UNC-235 after the 6-line default was measured
+    // to overflow .card-stage by 207px at base fit).
+    const fiveMessages = Array.from({ length: 5 }, (_, index) => `메시지 ${index + 1}`);
+
+    const plan = {
+      schemaVersion: 1,
+      cards: [
+        { type: "chat", slots: { messages: fiveMessages }, source: "generated" }
+      ]
+    };
+
+    const cards = createCarouselHtmlCards(
+      {
+        schemaVersion: 1,
+        targetDate: "2026-08-22",
+        slides: [sixSlides[0]],
+        storyCardPlan: plan
+      },
+      { visualStyle: "story-card" }
+    );
+
+    expect(cards).toHaveLength(1);
+    for (let index = 1; index <= 4; index += 1) {
+      expect(cards[0].html).toContain(`메시지 ${index}`);
+    }
+    // 5번째 줄은 maxLines를 넘어 잘려 나간다.
+    expect(cards[0].html).not.toContain("메시지 5");
+  });
+});

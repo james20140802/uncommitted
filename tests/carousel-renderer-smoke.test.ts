@@ -17,6 +17,8 @@ import {
   type DraftRevision
 } from "../src/draft-storage.js";
 import type { DiaryDraft, DiarySlide } from "../src/diary-generator.js";
+import { storyCardRegistry, type StoryCardSlots } from "../src/story-card-registry.js";
+import type { StoryCardPlan } from "../src/story-card-plan.js";
 
 // Real Chromium launches exceed the default 5s timeout when the full suite
 // runs in parallel; give the Playwright-backed tests an explicit budget.
@@ -70,6 +72,67 @@ describe("carousel renderer smoke coverage", () => {
       { slideIndex: 2, assetSlotId: "slide-02-visual" },
       { slideIndex: 3, assetSlotId: "slide-03-visual" }
     ]);
+  });
+
+  // UNC-235 리뷰 반영: 이전까지 이 파일이 유일하게 실제 Chromium을 띄우는
+  // 테스트인데, story-card 케이스는 storyCardPlan을 넘기지 않아 항상 typo
+  // 폴백만 렌더했다. 여섯 종류의 레지스트리 카드는
+  // tests/carousel-renderer-story-card-registry.test.ts가 HTML 문자열
+  // 매칭으로만 배선을 증명했을 뿐, Playwright로 실제 렌더된 적이 없다.
+  // validateRenderedCard는 .card-stage가 16px 넘게 넘치면 그 카드를
+  // 실패시키고, renderCardWithLayoutFallbacks는 base/tight/compact 세
+  // 번만 시도한다 — 여섯 종류 모두 선언된 maxLength/maxLines까지 채운
+  // 슬롯이 세 번의 fit 전부에서 넘치면 그날 드래프트 전체가 exit 5로
+  // 죽는다. story-card가 기본 모드가 된 지금은 이 경로가 매일 지나가므로,
+  // 여섯 종류를 각 슬롯 스키마의 선언된 최대치로 채워 실제로 1080x1350에
+  // 들어가는지 확인한다. 이 테스트의 첫 실행이 정확히 그 실패를
+  // 잡아냈다 — checkboard/chat/diff는 실측 전 추정치였던 maxLines가
+  // 실제로 넘쳤고(diff는 overflow:hidden 때문에 소리 없이 잘리기까지
+  // 했다), src/story-card-kind-checkboard.ts / -chat.ts / -diff.ts의
+  // 한도를 이 테스트가 통과하는 값으로 재조정했다. 이 테스트는 그
+  // 한도가 계속 정직하게 유지되도록 지키는 회귀 테스트다.
+  it("renders all six story-card registry kinds filled to their declared slot maxima", { timeout: PLAYWRIGHT_TEST_TIMEOUT_MS }, async () => {
+    await assertPlaywrightChromiumAvailable();
+
+    const revision = await createTestRevision("uncommitted-smoke-registry-");
+    const slides: DiarySlide[] = storyCardRegistry.map((kind, index) => ({
+      index: index + 1,
+      title: `Registry slot-max check: ${kind.id}`,
+      body: `Slide ${index + 1} carries the ${kind.id} card filled to its declared slot maxima.`,
+      visualMood: "story-card-like registry coverage"
+    }));
+    const story = createStoryDraft({ slides });
+
+    const plan: StoryCardPlan = {
+      schemaVersion: 1,
+      cards: storyCardRegistry.map((kind) => ({
+        type: kind.id,
+        slots: maxSlotFixtureFor(kind.id),
+        source: "generated" as const
+      }))
+    };
+
+    const cards = createCarouselHtmlCards(story, {
+      visualStyle: "story-card",
+      storyCardPlan: plan
+    });
+    const visualAssets = await writeVisualAssets(revision, cards.length);
+
+    const result = await renderCarouselPngs({
+      revision,
+      cards,
+      visualAssets
+    });
+
+    expect(result.files).toHaveLength(storyCardRegistry.length);
+    await expectCarouselPngs(revision, result.files);
+
+    for (const [index, kind] of storyCardRegistry.entries()) {
+      // 각 카드가 typo 폴백이 아니라 자기 종류의 render()로 실제 그려졌다는
+      // 증거 — data-story-card-kind가 fit fallback을 거쳐도 kindId를
+      // 그대로 실어 나른다(story-card-chrome.ts).
+      expect(cards[index].html).toContain(`data-story-card-kind="${kind.id}"`);
+    }
   });
 
   it("renders a high-activity 8-slide photo-first fixture into expected PNG count", { timeout: PLAYWRIGHT_TEST_TIMEOUT_MS }, async () => {
@@ -174,6 +237,90 @@ const fixturePng = await sharp({
 })
   .png()
   .toBuffer();
+
+// UNC-235: 슬롯을 각 카드 종류의 선언된 한도까지 채우는 픽스처. 값은
+// src/story-card-kind-*.ts의 slots 스키마에서 그대로 읽어왔다 — 임의로
+// 지어내지 않는다.
+//   typo:       headline maxLength 40, kicker maxLength 24
+//   terminal:   prompt maxLength 24, command maxLength 60,
+//               output maxLines 6 / maxLength 60
+//   modal:      title maxLength 32, body maxLength 120,
+//               primaryAction maxLength 16, secondaryAction maxLength 16
+//   checkboard: heading maxLength 32,
+//               done/todo maxLines 2 / maxLength 40
+//               (UNC-235: was maxLines 5 / 5 — that combination overflowed
+//               .card-stage by 704px at base fit and still overflowed by
+//               94px at the most aggressive compact fallback; this test is
+//               what caught it. Re-tuned to maxLines 2 / 2, which leaves
+//               248px of real headroom at base fit for the same worst case
+//               of both lists maxed simultaneously.)
+//   chat:       messages maxLines 4 / maxLength 60
+//               (UNC-235: was maxLines 6 — overflowed by 207px at base fit;
+//               re-tuned to leave 209px of headroom at base fit.)
+//   diff:       filename maxLength 48,
+//               added/removed maxLines 3 / maxLength 56
+//               (UNC-235: was maxLines 5 / 5 — .diff has its own
+//               overflow:hidden, so the overflow didn't surface as a
+//               render failure at all; flex-shrink silently clipped 305px
+//               of content instead. Re-tuned to leave 160px of headroom.)
+const KOREAN_FILLER_UNIT = "카드렌더슬롯최대치검증용문자열입니다";
+
+function koreanFiller(length: number): string {
+  let result = "";
+
+  while (result.length < length) {
+    result += KOREAN_FILLER_UNIT;
+  }
+
+  return result.slice(0, length);
+}
+
+function filledLines(count: number, length: number): string[] {
+  return Array.from({ length: count }, () => koreanFiller(length));
+}
+
+const maxSlotFixtures: Record<string, StoryCardSlots> = {
+  typo: {
+    headline: koreanFiller(40),
+    kicker: koreanFiller(24)
+  },
+  terminal: {
+    prompt: koreanFiller(24),
+    command: koreanFiller(60),
+    output: filledLines(6, 60)
+  },
+  modal: {
+    title: koreanFiller(32),
+    body: koreanFiller(120),
+    primaryAction: koreanFiller(16),
+    secondaryAction: koreanFiller(16)
+  },
+  checkboard: {
+    heading: koreanFiller(32),
+    done: filledLines(2, 40),
+    todo: filledLines(2, 40)
+  },
+  chat: {
+    messages: filledLines(4, 60)
+  },
+  diff: {
+    filename: koreanFiller(48),
+    added: filledLines(3, 56),
+    removed: filledLines(3, 56)
+  }
+};
+
+function maxSlotFixtureFor(kindId: string): StoryCardSlots {
+  const fixture = maxSlotFixtures[kindId];
+
+  if (fixture === undefined) {
+    throw new Error(
+      `No max-slot fixture defined for story-card kind "${kindId}". Add one to maxSlotFixtures.`
+    );
+  }
+
+  return fixture;
+}
 
 let chromiumAvailability: Promise<void> | undefined;
 

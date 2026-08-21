@@ -63,10 +63,14 @@ function splitMessage(line: string): { speaker: string; message: string } {
   };
 }
 
-// 슬롯 한계값(UNC-259): 말풍선은 줄마다 여백을 먹으므로 6줄이 상한.
-// UNC-235에서 재조정될 수 있다.
+// 슬롯 한계값(UNC-259, UNC-235에서 실측 재조정): 원래 6줄은 실측 전
+// 추정치였다. Playwright로 재보니 60자 6줄을 채우면 base fit에서
+// .card-stage보다 207px 더 커서 넘친다 — 그동안 렌더 경로가 배선되지
+// 않아 아무도 이 값을 실제로 그려보지 않았다. 4줄은 base fit에서
+// 209px의 실제 여유를 두고 들어간다(tests/carousel-renderer-smoke
+// .test.ts로 실측).
 const chatSlots = {
-  messages: { type: "lines", required: true, maxLines: 6, maxLength: 60 }
+  messages: { type: "lines", required: true, maxLines: 4, maxLength: 60 }
 } as const satisfies StoryCardSlotSchema;
 
 export const chatStoryCard: StoryCardDefinition = {

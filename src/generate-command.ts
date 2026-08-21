@@ -458,8 +458,28 @@ export async function runGenerateCommand(
   // rescanStoryCardPlanAfterRevalidation으로 **다시** 스캔한다. 이 함수가
   // 최종적으로 내보낼 계획과, 최종 계획 인덱스에 맞춰 재정렬된 발견을
   // 함께 돌려준다(Important 3 — 재검증이 카드를 바꾸거나 떨어뜨리면 1차
-  // 발견의 cardIndex가 어긋나므로, 그 카드의 발견은 버리고 2차 스캔의
-  // 결과로 대체한다).
+  // 발견의 cardIndex가 최종 계획과 어긋난다. 그 발견은 버리지 않는다 —
+  // rescanStoryCardPlanAfterRevalidation은 인덱스를 매핑할 수 있으면
+  // cardIndex만 갱신해 그대로 들고 가고, 매핑할 수 없으면(카드 내용이
+  // 바뀌었거나 사라졌으면) "card replaced during revalidation" 표시를
+  // 붙여서까지 findings에 유지한다. 발견을 버리고 그 자리를 2차 스캔
+  // 결과로만 채우면, 그날 활동 요약이 깨끗할 때 재검증이 문제의 카드를
+  // 흔적 없이 드롭시켜 2차 스캔이 아무 발견도 못 내고 safety-report.json이
+  // 다시 safe로 되돌아간다 — 바로 그 결함을 막으려고 이 함수가 존재한다.
+  // 자세한 계약은 safety-report.ts:585-621 참고. 이 파일을 고치는 사람에게:
+  // 위 문장이 설명하는 "버리고 대체" 동작으로 되돌리는 리팩터는 이 결함을
+  // 재도입한다).
+  //
+  // 아래 guard(`preRevalidationFindings.length > 0`)가 기대는 전제: 이
+  // 조건이 참이라는 것은 곧 마스킹이 실제로 슬롯 값을 바꿨다는 뜻이다.
+  // checkStoryCardPlanSafety는 슬롯마다 checkDraftSafety를 돌려 그
+  // report.risks로부터 findings를 채우는데(safety-report.ts:465-480),
+  // checkDraftSafety 안에서는 텍스트를 다시 쓰는 모든 경로(각
+  // detectionRule 매치, 스크립트성 콘텐츠 마스킹, 아키텍처 공개 마스킹)가
+  // 예외 없이 recordDetection도 함께 호출한다(safety-report.ts:190-226) —
+  // risk 없이 텍스트만 바뀌거나, 텍스트가 그대로인데 risk만 기록되는
+  // 경로는 없다. 그래서 findings가 비어 있으면 마스킹도 슬롯을 하나도
+  // 바꾸지 않았다고 안전하게 가정할 수 있고, 아래 재검증 분기를 건너뛴다.
   let storyCardPlan = rawStoryCardPlan;
   let storyCardSlotFindings = preRevalidationFindings;
 

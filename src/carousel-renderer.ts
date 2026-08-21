@@ -15,7 +15,12 @@ import {
   type StoryCardPlanCard
 } from "./story-card-plan.js";
 import { findStoryCardKind } from "./story-card-registry.js";
-import { fitSlotText, type StoryCardSlots } from "./story-card-slots.js";
+import {
+  fitSlotLines,
+  fitSlotText,
+  type StoryCardSlotSchema,
+  type StoryCardSlots
+} from "./story-card-slots.js";
 import { renderStoryCardDocument, type StoryCardChrome } from "./story-card-chrome.js";
 import { TYPO_FALLBACK_HEADLINE } from "./story-card-kind-typo.js";
 
@@ -827,11 +832,45 @@ function renderStoryCardFromPlan(
     const definition = findStoryCardKind(planCard.type);
 
     if (definition) {
-      return definition.render(planCard.slots, chrome);
+      // UNC-235 리뷰 반영: story.json의 플랜 슬롯은 계획 검증을 통과한
+      // *뒤에도* 다시 길어질 수 있다 — redactArchitectureDisclosureFromDraft가
+      // 검증 이후 단계에서 [redacted-architecture]를 끼워 넣거나(diary-generator
+      // .ts), local-path 마스킹이 매칭된 접두사 뒤에 [redacted-path]를
+      // 덧붙이는 경우다(safety-report.ts). 그 결과가 그대로 render()에
+      // 들어가면 validateRenderedCard가 슬롯 오버플로로 보고
+      // render-failed → exit 5로 떨어질 수 있다. 여기서 선언된 한도로 한
+      // 번 더 잘라 방어한다 — 이것은 정식 검증기가 아니라 마지막 clamp일
+      // 뿐이라, 스키마가 선언하지 않은 슬롯은 건드리지 않는다.
+      const clampedSlots = clampPlanCardSlots(planCard.slots, definition.slots);
+      return definition.render(clampedSlots, chrome);
     }
   }
 
   return renderSlideDerivedDefaultCard(slide, chrome);
+}
+
+/**
+ * 플랜 슬롯을 카드 종류의 선언된 한도(maxLength/maxLines)로 다시 자른다.
+ * text 슬롯은 fitSlotText, lines 슬롯은 fitSlotLines를 그대로 쓴다.
+ * schema에 없는 슬롯 이름은 건드리지 않고 그대로 넘긴다.
+ */
+function clampPlanCardSlots(
+  slots: StoryCardSlots,
+  schema: StoryCardSlotSchema
+): StoryCardSlots {
+  const clamped: Record<string, string | string[]> = { ...slots };
+
+  for (const [name, spec] of Object.entries(schema)) {
+    const value = slots[name];
+
+    if (spec.type === "lines" && Array.isArray(value)) {
+      clamped[name] = fitSlotLines(value, spec);
+    } else if (spec.type === "text" && typeof value === "string") {
+      clamped[name] = fitSlotText(value, spec);
+    }
+  }
+
+  return clamped;
 }
 
 /**
@@ -850,7 +889,10 @@ function renderSlideDerivedDefaultCard(
   const definition = findStoryCardKind("typo");
 
   if (definition === undefined) {
-    // 레지스트리에서 typo가 사라진 상황 — 카드 문법 없이 최소 문서라도 낸다.
+    // 의도적인 안전망: typo는 카드 레지스트리에 항상 등록돼 있으므로 이
+    // 분기는 실제로는 도달하지 않는다. 그래도 레지스트리 구성이 실수로
+    // 바뀌어 typo가 빠지는 경우를 대비해 남겨 둔다 — 카드 문법 없이 최소
+    // 문서라도 낸다.
     return renderStoryCardDocument({
       kindId: "typo",
       title: TYPO_FALLBACK_HEADLINE,
@@ -864,6 +906,10 @@ function renderSlideDerivedDefaultCard(
   const kickerSpec = definition.slots.kicker;
   const rawHeadline = slide.title.trim();
   const slots: StoryCardSlots = {
+    // 의도적인 안전망: parseDiarySlide가 이미 slide.title을 비어 있지
+    // 않게 보장하고, typo는 항상 headline 슬롯을 선언하므로
+    // TYPO_FALLBACK_HEADLINE으로 떨어지는 쪽은 실제로는 도달하지 않는다.
+    // 그 보장이 다른 경로에서 깨지는 경우에 대비한 방어값이다.
     headline:
       rawHeadline.length > 0 && headlineSpec !== undefined
         ? fitSlotText(rawHeadline, headlineSpec)

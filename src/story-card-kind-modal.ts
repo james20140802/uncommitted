@@ -73,9 +73,11 @@ const modalStyles = `
     }
 `;
 
-// 슬롯 한계값(UNC-259): 모달 본문은 버튼 두 개를 아래에 두고도 남는
-// 높이에서 역산. 버튼 라벨은 짧아야 잘리지 않는다.
-// UNC-235에서 재조정될 수 있다.
+// 슬롯 한계값(UNC-259, UNC-235에서 실측 확인): 모달 본문은 버튼 두
+// 개를 아래에 두고도 남는 높이에서 역산한 값. 버튼 라벨은 짧아야
+// 잘리지 않는다. UNC-235 렌더 경로 배선 후 Playwright로 이 값 그대로
+// 재보니 base fit에서 397px의 실제 여유가 있어 그대로 유지한다(tests/
+// carousel-renderer-smoke.test.ts로 실측).
 const modalSlots = {
   title: { type: "text", required: true, maxLength: 32 },
   body: { type: "text", required: true, maxLength: 120 },

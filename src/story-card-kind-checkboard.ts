@@ -73,12 +73,21 @@ function renderItems(lines: string[], checked: boolean): string {
     .join("\n");
 }
 
-// 슬롯 한계값(UNC-259): 체크박스 목록은 done+todo가 한 스테이지를
-// 나눠 쓰므로 각각 5줄까지. UNC-235에서 재조정될 수 있다.
+// 슬롯 한계값(UNC-259, UNC-235에서 실측 재조정): done과 todo가 한
+// 스테이지를 나눠 쓰므로, 둘 다 동시에 한도까지 차는 최악의 경우를
+// 기준으로 재야 한다. 원래 값(각 5줄)은 실측 전 추정치였고, 실제로는
+// base 레이아웃 fit에서 912px 폭 기준 40자짜리 항목이 이미 1줄로
+// 꽉 차기 때문에(maxLength를 더 줄여도 줄 수가 줄지 않는다) 카드 높이는
+// 사실상 항목 "수"에만 좌우된다. done 5 + todo 5(총 10항목)를 채우면
+// .card-stage보다 704px 더 커져 base/tight/compact 세 fit 모두에서
+// 넘친다(Playwright로 실측, tests/carousel-renderer-smoke.test.ts).
+// done=2 / todo=2(최악의 경우 총 4항목)는 base fit에서 248px의 실제
+// 여유를 두고 들어간다 — compact까지 가야만 겨우 맞는 게 아니라, 가장
+// 넓은 fit에서부터 여유가 있다.
 const checkboardSlots = {
   heading: { type: "text", required: true, maxLength: 32 },
-  done: { type: "lines", required: false, maxLines: 5, maxLength: 40 },
-  todo: { type: "lines", required: false, maxLines: 5, maxLength: 40 }
+  done: { type: "lines", required: false, maxLines: 2, maxLength: 40 },
+  todo: { type: "lines", required: false, maxLines: 2, maxLength: 40 }
 } as const satisfies StoryCardSlotSchema;
 
 export const checkboardStoryCard: StoryCardDefinition = {

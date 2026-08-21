@@ -44,9 +44,11 @@ const typoStyles = `
     }
 `;
 
-// 슬롯 한계값(UNC-259): headline은 2.6em 대형 타이포라 4:5 카드 폭에서
-// 두 줄을 넘기지 않는 선이 이 정도다. UNC-235에서 렌더 경로가 배선되면
-// 실측으로 재조정될 가능성이 가장 높은 수치다.
+// 슬롯 한계값(UNC-259, UNC-235에서 실측 확인): headline은 2.6em 대형
+// 타이포라 4:5 카드 폭에서 두 줄을 넘기지 않는 선이 이 정도다. UNC-235
+// 렌더 경로 배선 후 Playwright로 base fit 기준 이 값을 그대로 재보니
+// .card-stage 대비 586px의 실제 여유가 있어 그대로 유지한다(tests/
+// carousel-renderer-smoke.test.ts로 실측).
 const typoSlots = {
   headline: { type: "text", required: true, maxLength: 40 },
   kicker: { type: "text", required: false, maxLength: 24 }

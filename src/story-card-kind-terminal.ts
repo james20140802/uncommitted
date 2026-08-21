@@ -55,8 +55,12 @@ const terminalStyles = `
     }
 `;
 
-// 슬롯 한계값(UNC-259): 등폭 터미널 스테이지 기준 한 줄에 들어가는
-// 문자 수에서 역산. UNC-235에서 재조정될 수 있다.
+// 슬롯 한계값(UNC-259, UNC-235에서 실측 확인): 등폭 터미널 스테이지
+// 기준 한 줄에 들어가는 문자 수에서 역산한 값. UNC-235 렌더 경로 배선
+// 후 Playwright로 이 값 그대로(6줄×60자) 재보니 .terminal 자신에
+// overflow:hidden이 있음에도 flex-shrink로 인한 클리핑 없이(진짜
+// scrollHeight로 확인) base fit에서 126px의 실제 여유가 있어 그대로
+// 유지한다(tests/carousel-renderer-smoke.test.ts로 실측).
 const terminalSlots = {
   prompt: { type: "text", required: true, maxLength: 24 },
   command: { type: "text", required: true, maxLength: 60 },
