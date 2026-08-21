@@ -1,6 +1,8 @@
 import { readFile } from "node:fs/promises";
 import { isAbsolute, normalize, relative, resolve, sep, win32 } from "node:path";
 import { chromium, type Browser } from "playwright";
+import sharp from "sharp";
+import { CAROUSEL_HEIGHT, CAROUSEL_WIDTH } from "./carousel-dimensions.js";
 import type { DiarySlide } from "./diary-generator.js";
 import {
   type DraftRevision,
@@ -134,8 +136,6 @@ export type CreateCarouselHtmlCardsOptions = {
 
 const invalidStoryMessage =
   "story.json must include ordered slides with title and body.";
-const carouselWidth = 1080;
-const carouselHeight = 1350;
 const pngSignature = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 const renderFailureMessage = "Could not render carousel PNGs.";
 const layoutFits = ["base", "tight", "compact"] as const;
@@ -227,6 +227,7 @@ export async function renderCarouselPngs(
           );
 
           assertPng(rawImage);
+          await assertCarouselPngDimensions(rawImage);
           png = rawImage;
         } catch (error) {
           const renderError = toCarouselPngRenderError(error, "render-failed");
@@ -360,8 +361,8 @@ async function renderCardWithLayoutFallbacks(options: {
     try {
       const png = await options.renderer.renderHtmlToPng({
         html: applyLayoutFit(composedHtml, layoutFit),
-        width: carouselWidth,
-        height: carouselHeight
+        width: CAROUSEL_WIDTH,
+        height: CAROUSEL_HEIGHT
       });
 
       assertPng(png);
@@ -624,6 +625,22 @@ function assertPng(value: Uint8Array): void {
   if (!hasPngSignature) {
     throw new CarouselPngRenderError(
       renderFailureMessage,
+      "render-failed"
+    );
+  }
+}
+
+/**
+ * UNC-267: raw-copy 경로로 들어오는 photo-first 자산이 story-card와 같은
+ * 프레임인지 본다. 규격이 어긋난 자산을 그대로 복사하면 한 캐러셀 안에서
+ * 장마다 크기가 달라진다 (부모 AC5 위반).
+ */
+export async function assertCarouselPngDimensions(value: Uint8Array): Promise<void> {
+  const metadata = await sharp(Buffer.from(value)).metadata();
+
+  if (metadata.width !== CAROUSEL_WIDTH || metadata.height !== CAROUSEL_HEIGHT) {
+    throw new CarouselPngRenderError(
+      `Carousel asset must be ${CAROUSEL_WIDTH}x${CAROUSEL_HEIGHT} but is ${metadata.width}x${metadata.height}.`,
       "render-failed"
     );
   }

@@ -11,6 +11,7 @@ import type {
   CarouselHtmlCard,
   CarouselVisualStyleMode
 } from "./carousel-renderer.js";
+import { CAROUSEL_HEIGHT, CAROUSEL_WIDTH } from "./carousel-dimensions.js";
 import {
   type DraftRevision,
   DraftStorageError,
@@ -101,8 +102,10 @@ const openAiImageEnvKey = "OPENAI_API_KEY";
 const openAiImageModel = "gpt-image-1.5";
 const openAiImageRequestSize = "1024x1536";
 const openAiImageRequestHeight = 1536;
-const carouselTargetWidth = 1024;
-const carouselTargetHeight = 1280;
+// 프로바이더 응답(1024x1536)에서 4:5로 잘라낼 중간 규격. 최종 규격은
+// CAROUSEL_WIDTH/HEIGHT 이며 아래에서 resize로 맞춘다.
+const providerCropWidth = 1024;
+const providerCropHeight = 1280;
 const defaultImageProviderTimeoutMs = 300_000;
 const providerTimeoutEnvKey = "UNCOMMITTED_AI_TIMEOUT_MS";
 const placeholderPng = Buffer.from(
@@ -304,7 +307,7 @@ class OpenAiImageAssetProvider implements ImageAssetProvider {
 
       return {
         mimeType: "image/png",
-        data: await cropToInstagramFourFive(
+        data: await normaliseCarouselAsset(
           decodeOpenAiImageResponse(await readResponseJson(response))
         )
       };
@@ -377,18 +380,30 @@ async function readResponseJson(
   }
 }
 
-// OpenAI's image API does not accept 1024x1280 as a `size`; the closest
-// supported 4:5-ish value is 1024x1536. Center-crop the response down to the
-// Instagram 4:5 frame the carousel expects.
-async function cropToInstagramFourFive(png: Uint8Array): Promise<Uint8Array> {
+/**
+ * OpenAI 이미지 API는 1080x1350을 `size`로 받지 않는다. 가장 가까운
+ * 4:5-ish 값이 1024x1536이라 응답을 그 규격으로 받은 뒤,
+ *   ① 4:5로 center-crop (1024x1280)
+ *   ② 목표 규격으로 확대 (1080x1350)
+ * 두 단계로 story-card와 같은 프레임에 맞춘다.
+ *
+ * UNC-267 이전에는 ①만 하고 1024x1280을 그대로 저장해, 같은 캐러셀 안에서
+ * photo-first 장과 story-card 장의 크기가 달랐다.
+ */
+export async function normaliseCarouselAsset(png: Uint8Array): Promise<Uint8Array> {
   try {
-    const top = Math.floor((openAiImageRequestHeight - carouselTargetHeight) / 2);
+    const top = Math.floor((openAiImageRequestHeight - providerCropHeight) / 2);
     const buffer = await sharp(Buffer.from(png))
       .extract({
         left: 0,
         top,
-        width: carouselTargetWidth,
-        height: carouselTargetHeight
+        width: providerCropWidth,
+        height: providerCropHeight
+      })
+      .resize({
+        width: CAROUSEL_WIDTH,
+        height: CAROUSEL_HEIGHT,
+        fit: "fill"
       })
       .png()
       .toBuffer();

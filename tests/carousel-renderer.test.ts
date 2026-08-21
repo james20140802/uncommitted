@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import sharp from "sharp";
 import { describe, expect, it } from "vitest";
 import {
   CarouselRenderInputError,
@@ -604,10 +605,13 @@ describe("story-card fallback korean + short slides (UNC-218)", () => {
   // gone by design. Removed rather than force-passed.
 });
 
-const fixturePng = Buffer.from(
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=",
-  "base64"
-);
+// UNC-267: raw-copy fixtures must be 1080x1350 — assertCarouselPngDimensions
+// now rejects mis-sized assets on the photo-first raw-copy path.
+const fixturePng = await sharp({
+  create: { width: 1080, height: 1350, channels: 3, background: "#123456" }
+})
+  .png()
+  .toBuffer();
 
 class RecordingPngRenderer {
   readonly calls: Array<{ html: string; width: number; height: number }> = [];
