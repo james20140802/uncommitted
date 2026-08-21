@@ -58,6 +58,7 @@ import {
 } from "./story-card-generator.js";
 import {
   assembleStoryCardPlan,
+  revalidateStoryCardPlan,
   type StoryCardEntryOutcome,
   type StoryCardPlan
 } from "./story-card-plan.js";
@@ -70,7 +71,9 @@ import {
   readCaptionProjectionTokenBudget
 } from "./raw-narrative-projection.js";
 import {
+  checkStoryCardPlanSafety,
   createSafetyReport,
+  mergeStoryCardSlotFindings,
   type SafetyReport,
   type SafetyStatus
 } from "./safety-report.js";
@@ -434,10 +437,22 @@ export async function runGenerateCommand(
           };
   }
 
-  const storyCardPlan = assembleStoryCardPlan({
+  const rawStoryCardPlan = assembleStoryCardPlan({
     outcomes: storyCardGeneration?.outcomes ?? [],
     summary: activitySummary
   });
+
+  // UNC-269 / T5: 카드 슬롯의 secret·토큰·로컬 절대경로·이메일을 **여기서**
+  // 마스킹한다. 이 시점 이후로 slots 원문은 어떤 산출물에도 남지 않는다.
+  const { plan: maskedStoryCardPlan, findings: storyCardSlotFindings } =
+    checkStoryCardPlanSafety(rawStoryCardPlan);
+
+  // 마스킹이 실제로 값을 바꿨을 때만 재검증한다. 재조립은 카드의 source
+  // 라벨(generated/degraded/fallback)을 잃으므로 필요할 때만 치른다.
+  const storyCardPlan =
+    storyCardSlotFindings.length === 0
+      ? rawStoryCardPlan
+      : revalidateStoryCardPlan({ plan: maskedStoryCardPlan, summary: activitySummary });
   const storyCardFailures = collectStoryCardFailureRecords(
     storyCardGeneration?.outcomes ?? [],
     storyCardPlan
@@ -571,29 +586,24 @@ export async function runGenerateCommand(
   // 충돌한다. 2026-07-26 사고(자유 텍스트 응답 하나가 그날을 죽인 일)를
   // 다른 문으로 다시 들이는 셈이다.
   //
-  // 대가로 감수한 비대칭: 카드 슬롯은 redaction은 통과하지만
-  // (redactArchitectureDisclosureFromDraft, diary-generator.ts) 검사는
-  // 통과하지 않는다. 그래서 **같은 문자열이 슬라이드 본문에 있으면 warning
-  // 위험으로 기록되는데, 카드 슬롯에 있으면 조용히 정화되고 잔여 위험
-  // 항목이 남지 않는다.** secret·로컬 절대경로·이메일처럼 redaction이
-  // 덮지 않는 범주는 카드 슬롯에서 아예 탐지되지 않는다.
-  //
-  // 올바른 최종 설계는 "카드별로 검사해서 걸린 카드만 degrade시키기"이지만,
-  // 그건 카드 단위 안전 판정과 새 degrade 트리거가 필요한 **새 메커니즘**이고
-  // (block이냐 warn이냐 in-place redaction이냐는 정책 선택이기도 하다),
-  // 이 이슈의 어느 하위 태스크도 그것을 다루지 않는다. 카드가 실제로
-  // 렌더되어 공개 산출물이 되는 **UNC-235에서 렌더 경로를 함께 보고
-  // 결정한다.** 지금은 카드가 저장만 되고 렌더·export되지 않으므로 이
-  // 구멍은 실재하지만 아직 발현되지 않는다.
+  // UNC-269 / T5 (UNC-235): 위 주석이 "UNC-235에서 렌더 경로를 함께 보고
+  // 결정한다"고 미뤄 둔 결정을 이행했다. 결론은 **여기에 붙이지 않는 것**이다.
+  // 대신 카드 슬롯은 위쪽 checkStoryCardPlanSafety에서 별도로 검사해
+  //   ① 슬롯 원문을 in-place 마스킹하고 (공개 산출물에 secret 금지)
+  //   ② 발견을 슬롯 단위 warning으로 기록한다 (export는 계속 허용)
+  // 카드 슬롯 발견은 어떤 경우에도 blocked/exit 6으로 승격되지 않는다.
   //
   // 경고: 이 주석을 읽고 "그냥 storyCardPlan을 붙이면 되겠네"라고 고치지 마라.
   // 위의 exit 6 결과를 먼저 이해해야 한다.
-  const safetyReport = createSafetyReport(
-    buildDraftSafetyText({
-      draft: generatedDraft,
-      caption: preRedactionCaptionText,
-      metadata: baseMetadata
-    })
+  const safetyReport = mergeStoryCardSlotFindings(
+    createSafetyReport(
+      buildDraftSafetyText({
+        draft: generatedDraft,
+        caption: preRedactionCaptionText,
+        metadata: baseMetadata
+      })
+    ),
+    storyCardSlotFindings
   );
   // UNC-206 follow-up: the safety report is computed from the RAW baseMetadata
   // above so architecture-disclosure detail in the provider-generated

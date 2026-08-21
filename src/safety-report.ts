@@ -3,6 +3,7 @@ import {
   ARCHITECTURE_DISCLOSURE_REPLACEMENT,
   redactArchitectureDisclosure
 } from "./architecture-disclosure.js";
+import type { StoryCardPlan, StoryCardPlanCard } from "./story-card-plan.js";
 
 export type SafetyStatus = "safe" | "warning" | "blocked";
 
@@ -38,6 +39,8 @@ export type SafetyReport = {
   redactionsApplied: SafetyRedaction[];
   exportAllowed: boolean;
   message: string;
+  /** UNC-269: 카드 슬롯 단위 발견. 전부 severity "warning"이다. */
+  storyCardSlots?: StoryCardSlotFinding[];
 };
 
 export type SafetyCheckResult = {
@@ -422,4 +425,119 @@ function isSafetyRiskSeverity(value: unknown): value is SafetyRiskSeverity {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+export type StoryCardSlotFinding = {
+  schemaVersion: 1;
+  cardIndex: number;
+  cardType: string;
+  slot: string;
+  category: SafetyRiskCategory;
+  /**
+   * UNC-269 A4(i): 카드 슬롯 발견은 **warning 고정**이다. blocked로
+   * 승격하지 않는다 — 승격하면 카드 한 장의 secret 모양 문자열 하나가
+   * exit 6으로 그날 드래프트 전체를 죽인다(2026-07-26 사고와 같은 모양).
+   */
+  severity: "warning";
+  message: string;
+};
+
+export type StoryCardPlanSafetyResult = {
+  /** 슬롯 원문이 in-place 마스킹된 계획. */
+  plan: StoryCardPlan;
+  findings: StoryCardSlotFinding[];
+};
+
+/**
+ * UNC-269 A4(ii): 마스킹과 warning 기록을 **함께** 한다.
+ * 원문을 그대로 두고 경고만 남기면 export된 PNG에 비밀이 그대로 찍혀
+ * "공개 산출물에 secret 금지"라는 하드 규칙을 위반한다. 반대로 blocked로
+ * 올리면 그날이 죽는다. 둘을 동시에 만족시키는 조합은 이것뿐이다.
+ */
+export function checkStoryCardPlanSafety(
+  plan: StoryCardPlan
+): StoryCardPlanSafetyResult {
+  const findings: StoryCardSlotFinding[] = [];
+
+  const cards: StoryCardPlanCard[] = plan.cards.map((card, cardIndex) => {
+    const slots: Record<string, string | string[]> = {};
+
+    for (const [slotName, value] of Object.entries(card.slots)) {
+      if (typeof value === "string") {
+        const checked = checkDraftSafety(value);
+
+        collectSlotFindings(findings, cardIndex, card.type, slotName, checked.report.risks);
+        slots[slotName] = checked.redactedText;
+        continue;
+      }
+
+      slots[slotName] = value.map((line) => {
+        const checked = checkDraftSafety(line);
+
+        collectSlotFindings(findings, cardIndex, card.type, slotName, checked.report.risks);
+
+        return checked.redactedText;
+      });
+    }
+
+    return { ...card, slots };
+  });
+
+  return { plan: { ...plan, cards }, findings };
+}
+
+function collectSlotFindings(
+  findings: StoryCardSlotFinding[],
+  cardIndex: number,
+  cardType: string,
+  slot: string,
+  risks: readonly SafetyRisk[]
+): void {
+  for (const risk of risks) {
+    const alreadyRecorded = findings.some(
+      (finding) =>
+        finding.cardIndex === cardIndex &&
+        finding.slot === slot &&
+        finding.category === risk.category
+    );
+
+    if (alreadyRecorded) continue;
+
+    findings.push({
+      schemaVersion: 1,
+      cardIndex,
+      cardType,
+      slot,
+      category: risk.category,
+      severity: "warning",
+      message: risk.message
+    });
+  }
+}
+
+/**
+ * UNC-269 A4(iii): 발견은 슬롯 단위로 남기고, 드래프트 종합 등급은
+ * **최대 warning까지만** 올린다. 이미 blocked인 보고서는 그대로 둔다 —
+ * 그 blocked는 카드가 아니라 슬라이드·캡션에서 온 것이고, 카드 발견이
+ * 그 판정을 뒤집어서는 안 된다.
+ */
+export function mergeStoryCardSlotFindings(
+  report: SafetyReport,
+  findings: readonly StoryCardSlotFinding[]
+): SafetyReport {
+  if (findings.length === 0) {
+    return report;
+  }
+
+  const status: SafetyStatus = report.status === "blocked" ? "blocked" : "warning";
+
+  return {
+    ...report,
+    status,
+    // exportAllowed는 원래 보고서의 판정을 그대로 잇는다. 카드 슬롯 발견은
+    // export를 절대 막지 않는다.
+    exportAllowed: report.exportAllowed,
+    message: buildSafetyMessage(status),
+    storyCardSlots: [...findings]
+  };
 }
