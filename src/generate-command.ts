@@ -903,6 +903,16 @@ function isValidDateString(value: string): boolean {
   return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
 }
 
+/**
+ * UNC-268 A5: 키가 없는 **기존** config는 계속 photo-first로 읽는다.
+ * 신규 init만 story-card를 명시적으로 기록한다 (AC1은 쓰기 시점,
+ * AC2는 읽기 시점이라 충돌하지 않는다). 사용자 config는 마이그레이션하지
+ * 않는다 — 어떤 경로로도 건드리지 않는다.
+ */
+export function resolveCarouselVisualStyle(value: unknown): CarouselVisualStyleMode {
+  return value === "story-card" ? "story-card" : "photo-first";
+}
+
 async function readGenerateConfig(
   path: string,
   homeDir: string | undefined
@@ -928,7 +938,7 @@ async function readGenerateConfig(
       draftRoot: parsed.draftRoot
     }).defaultDraftRoot,
     provider: parsed.aiProvider,
-    carouselVisualStyle: parsed.carouselVisualStyle ?? "photo-first",
+    carouselVisualStyle: resolveCarouselVisualStyle(parsed.carouselVisualStyle),
     persona: selectPersona(parsed),
     roastLevel: parsed.roastLevel
   };

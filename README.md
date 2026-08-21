@@ -122,6 +122,19 @@ All commands are run as `uncommitted <command> [subcommand]`. Run `uncommitted -
 
 If you use GitHub-sourced collection, prefer setting the `GITHUB_TOKEN` environment variable over storing a token in `config.json`; `init` does not manage `githubToken`, and storing it as plaintext in config is discouraged. `uncommitted doctor` reports only a masked status (env / config-plaintext / not-set) and never prints the token value.
 
+### Carousel modes
+
+`carouselVisualStyle` in `~/.uncommitted/config.json` picks how carousel slides are drawn.
+
+| Mode | What it does | Image provider |
+| --- | --- | --- |
+| `story-card` (default for new installs) | Draws typographic cards locally with Playwright. | Never called. |
+| `photo-first` | Generates one AI image per slide. | Called once per slide; a failure degrades the whole draft to `story-card`. |
+
+Both modes output 1080x1350 (Instagram's recommended 4:5 frame).
+
+Existing configs are left alone: a config that already says `photo-first`, or that has no `carouselVisualStyle` key at all, keeps running photo-first. Only a fresh `uncommitted init` writes `story-card`.
+
 ## Output
 
 Drafts are written locally to `~/Uncommitted/drafts/<YYYY-MM-DD>/<rev>/` (for example, `rev-001`). Each draft revision contains:

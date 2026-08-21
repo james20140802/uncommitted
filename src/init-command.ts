@@ -3,7 +3,11 @@ import process from "node:process";
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { ensureConfigDirectories, resolveConfigPaths } from "./config-paths.js";
-import { clearGlobalConfigCache, type GlobalConfig } from "./global-config.js";
+import {
+  clearGlobalConfigCache,
+  type CarouselVisualStyleMode,
+  type GlobalConfig
+} from "./global-config.js";
 import {
   DEFAULT_PERSONA_PRESET,
   PERSONA_PRESET_NAMES,
@@ -42,11 +46,21 @@ const githubTokenGuidance: string[] = [
   "init does not manage githubToken; storing it as plaintext in config.json is discouraged — prefer GITHUB_TOKEN."
 ];
 
+/**
+ * UNC-268: 기본값 변경은 사용자 눈에 보이는 변화다. 어떤 모드로 시작하는지
+ * init 출력에서 바로 보이게 한다.
+ */
+function carouselVisualStyleGuidance(style: CarouselVisualStyleMode): string {
+  return style === "story-card"
+    ? "Carousel mode: story-card (default) — cards are drawn locally, no image provider is called."
+    : "Carousel mode: photo-first — an image provider is called per slide; failures degrade to story-card.";
+}
+
 const defaultAnswers = {
   draftRoot: "~/Uncommitted/drafts",
   scheduleTime: "23:30",
   aiProvider: "none",
-  carouselVisualStyle: "photo-first",
+  carouselVisualStyle: "story-card",
   persona: DEFAULT_PERSONA_PRESET,
   rawRetentionDays: "30",
   captionProjectionTokenBudget: "4000"
@@ -111,7 +125,11 @@ export async function runInitCommand(
   await writeJsonIfMissing(paths.projectsFile, { schemaVersion: 1, projects: [] });
   await writeJsonIfMissing(paths.formatHistoryFile, { schemaVersion: 1, formats: [] });
 
-  return { created: true, config, guidance: githubTokenGuidance };
+  return {
+    created: true,
+    config,
+    guidance: [carouselVisualStyleGuidance(carouselVisualStyle), ...githubTokenGuidance]
+  };
 }
 
 function parseInitArgs(args: string[]): boolean {
