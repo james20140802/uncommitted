@@ -91,8 +91,22 @@ export async function runRenderCommand(
   );
 
   const cards = createCardsWithStyle(story, readCarouselVisualStyle(metadata));
-  const visualAssets = readVisualAssets(metadata);
-  assertVisualAssetsCoverCards(cards, visualAssets);
+  // UNC-235 리뷰 반영 (PR #138 Codex): 이전 렌더가 photo-first 자산을 못 써
+  // story-card로 degrade한 드래프트라면, 그 자산은 지금도 여전히 못 쓴다.
+  // 같은 실행 안에서는 renderCarouselPngs가 이미 자산을 떼고 다시 그리지만
+  // (carousel-renderer.ts의 `visualAssets: []`), 그 사실이 다음 실행으로
+  // 이어지지 않았다. 그래서 재렌더는 story-card 카드에 그 못 쓰는 자산을
+  // 다시 붙이려다 composeCardHtml에서 같은 파일을 열고 죽었고, 카드가 이미
+  // story-card라 degrade 경로도 걸리지 않아 render-failed(exit 5)로 끝났다 —
+  // degrade가 살려낸 드래프트가 재렌더에서 죽는 것이다. degrade 뒤에는
+  // 자산을 붙이지 않는다는 규칙을 실행 경계 너머로 이어 붙인다.
+  const visualAssets = hasDegradedFromPhotoFirst(metadata)
+    ? []
+    : readVisualAssets(metadata);
+
+  if (visualAssets.length > 0) {
+    assertVisualAssetsCoverCards(cards, visualAssets);
+  }
 
   try {
     const renderResult = await renderCarouselPngs({
@@ -259,6 +273,20 @@ function readCarouselVisualStyle(
   metadata: Record<string, unknown>
 ): CarouselVisualStyleMode {
   return metadata.carouselVisualStyle === "photo-first" ? "photo-first" : "story-card";
+}
+
+/**
+ * degrade가 일어났음은 두 값의 어긋남으로 드러난다 — 요청된 모드는
+ * requestedCarouselVisualStyle에 그대로 남고, 실제로 그려진 모드만
+ * carouselVisualStyle로 덮어써지기 때문이다(buildRenderedMetadata 참고).
+ * carousel.degraded 기록에 기대지 않는 이유: 그 기록은 렌더 결과마다
+ * 덮어써져서, 재렌더 한 번이면 사라진다.
+ */
+function hasDegradedFromPhotoFirst(metadata: Record<string, unknown>): boolean {
+  return (
+    metadata.requestedCarouselVisualStyle === "photo-first" &&
+    readCarouselVisualStyle(metadata) === "story-card"
+  );
 }
 
 function readVisualAssets(

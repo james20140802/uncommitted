@@ -96,6 +96,42 @@ describe("photo-first render-time degrade (UNC-270 / parent AC4)", () => {
     expect(result.warnings?.[0]).toContain("story-card");
   });
 
+  // PR #138 리뷰(Codex): degrade는 metadata.carouselVisualStyle만 story-card로
+  // 내려놓고 visualAssets는 그대로 둔다. 그래서 다음 `render latest`는
+  // story-card 카드에 여전히 못 쓰는 사진 자산을 붙이려 하고, composeCardHtml이
+  // 같은 파일을 다시 열다 죽는다 — 카드가 이미 story-card라 degrade 경로도
+  // 걸리지 않아 exit 5로 떨어진다. degrade가 살려낸 드래프트는 다시 렌더해도
+  // 살아 있어야 한다.
+  it("re-renders a degraded draft without reopening the unusable photo asset", async () => {
+    const { homeDir, revisionDir } = await writePhotoFirstDraft({
+      missingAssetIndex: 1
+    });
+
+    const first = await runRenderCommand(["latest"], {
+      homeDir,
+      renderer: stubRenderer
+    });
+
+    expect(first.renderResult.degraded?.to).toBe("story-card");
+
+    const second = await runRenderCommand(["latest"], {
+      homeDir,
+      renderer: stubRenderer
+    });
+
+    expect(second.renderResult.status).toBe("rendered");
+    expect(second.renderResult.files).toHaveLength(2);
+    // 이미 story-card로 내려앉은 드래프트라 degrade는 다시 일어나지 않는다.
+    expect(second.renderResult.degraded).toBeUndefined();
+    expect(second.warnings).toBeUndefined();
+
+    const metadata = JSON.parse(
+      await readFile(join(revisionDir, "metadata.json"), "utf8")
+    );
+
+    expect(metadata.carouselVisualStyle).toBe("story-card");
+  });
+
   it("does not degrade when every photo asset is valid", async () => {
     const { homeDir } = await writePhotoFirstDraft({});
 
