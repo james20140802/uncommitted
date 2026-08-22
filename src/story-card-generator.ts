@@ -53,6 +53,16 @@ export type GenerateStoryCardPlanOptions = {
   moodPlan: MoodPlan;
   provider: AiProvider;
   candidates?: readonly StoryCardCandidate[];
+  /**
+   * UNC-235 리뷰 반영 (PR #138 Codex): 만들 카드 장수. 렌더는 카드를
+   * **실제 슬라이드**에 순서대로 맞추므로(carousel-renderer.ts의
+   * planCards[index]), 호출부가 이미 일기를 만들었다면 그 슬라이드 장수를
+   * 넘겨야 한다. moodPlan.pacing.suggestedSlideCount는 일기 생성에서도
+   * 제안일 뿐이라(3-8장 안이면 다른 수도 유효하다) 두 수가 어긋날 수 있고,
+   * 어긋나면 남는 카드가 조용히 버려지거나 뒤쪽 슬라이드가 계획 없이
+   * 기본 카드로 떨어진다. 생략하면 종전대로 suggestedSlideCount를 쓴다.
+   */
+  cardCount?: number;
 };
 
 type StoryCardProviderData = JsonObject & { cards?: JsonValue };
@@ -248,7 +258,7 @@ export async function generateStoryCardPlan(
   const candidates =
     options.candidates ??
     listStoryCardCandidateProjections(options.activitySummary);
-  const cardCount = options.moodPlan.pacing.suggestedSlideCount;
+  const cardCount = options.cardCount ?? options.moodPlan.pacing.suggestedSlideCount;
   const request = createAiGenerationRequest({
     task: "story-card",
     instructions: buildStoryCardInstructions({

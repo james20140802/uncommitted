@@ -417,7 +417,12 @@ export async function runGenerateCommand(
     storyCardGeneration = await generateStoryCardPlan({
       activitySummary,
       moodPlan: storyFormatPlan,
-      provider
+      provider,
+      // UNC-235 리뷰 반영 (PR #138 Codex): 렌더는 계획 카드를 실제
+      // 슬라이드에 순서대로 맞춘다. 일기는 suggestedSlideCount를 제안으로만
+      // 쓰고 3-8장 범위면 다른 장수도 유효하게 내므로, 카드는 제안값이
+      // 아니라 **이미 만들어진 슬라이드 장수**만큼 요청한다.
+      cardCount: generatedDraft.slides.length
     });
   } catch (error) {
     storyCardGeneration = undefined;
