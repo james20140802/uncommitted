@@ -1313,6 +1313,72 @@ describe("generate command", () => {
       code: "ENOENT"
     });
   });
+
+  // PR #138 리뷰(Codex): 카드 계획은 moodPlan의 suggestedSlideCount만큼
+  // 요청되는데, 일기 생성은 그 값을 제안으로만 쓰고 3-8장 범위면 무엇이든
+  // 받는다(diary-generator.ts: "Create N slides when possible, while staying
+  // within 3-8 slides"). 두 수가 어긋나면 렌더가 planCards[index]로 슬라이드에
+  // 카드를 맞추면서 남는 카드를 조용히 버리거나, 뒤쪽 슬라이드가 계획 없이
+  // 슬라이드 파생 기본 카드로 떨어진다. 계획은 **실제로 만들어진 슬라이드
+  // 장수**만큼 요청해야 한다.
+  it("requests as many story cards as the generated draft actually has slides", async () => {
+    const { io, stderr } = createIo();
+    const fixture = await createRegisteredProjectFixture();
+    const slideCount = 5;
+    const provider = new TaskAwareProvider({
+      // 모드 계획은 3장을 제안하지만,
+      plan: createStoryFormatPlan({ suggestedSlideCount: 3 }),
+      // 일기는 유효 범위(3-8) 안에서 5장을 냈다.
+      draft: createProviderDraft({
+        slides: Array.from({ length: slideCount }, (_, index) => ({
+          index: index + 1,
+          title: `Slide ${index + 1}`,
+          body: `Slide ${index + 1} body text for the plan-alignment fixture.`,
+          visualMood: "compact terminal summary"
+        }))
+      }),
+      storyCards: {
+        cards: Array.from({ length: slideCount }, (_, index) => ({
+          type: "typo",
+          slots: [
+            { name: "headline", lines: [`카드 ${index + 1}`] },
+            { name: "kicker", lines: ["uncommitted"] }
+          ]
+        }))
+      }
+    });
+
+    await writeGitEvent(fixture.project, "2026-05-12");
+
+    const exitCode = await runCli(["generate", "today"], io, {
+      homeDir: fixture.homeDir,
+      now: () => "2026-05-12T23:30:00.000Z",
+      aiProvider: provider
+    });
+    const outputDir = join(fixture.draftRoot, "2026-05-12", "rev-001");
+    const story = (await readJson(join(outputDir, "story.json"))) as {
+      slides: unknown[];
+      storyCardPlan: { cards: unknown[] };
+    };
+    const storyCardRequest = provider.requests.find(
+      (request) => request.task === "story-card"
+    );
+
+    expect(exitCode).toBe(0);
+    expect(stderr).toEqual([]);
+    expect(story.slides).toHaveLength(slideCount);
+    // 카드 요청 장수가 슬라이드 장수와 같아야 한다.
+    expect(storyCardRequest?.instructions).toContain(`exactly ${slideCount} cards`);
+    // 장수가 맞으므로 형식 위반(장수 불일치) 재시도도 일어나지 않는다.
+    expect(
+      provider.requests.filter((request) => request.task === "story-card")
+    ).toHaveLength(1);
+    // 계획이 모든 슬라이드를 덮어, 렌더가 버리거나 기본 카드로 때울 자리가 없다.
+    expect(story.storyCardPlan.cards).toHaveLength(slideCount);
+    await expect(readdir(outputDir)).resolves.not.toContain(
+      "story-card-failure.json"
+    );
+  });
 });
 
 class TaskAwareProvider implements AiProvider {

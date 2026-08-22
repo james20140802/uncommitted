@@ -58,6 +58,7 @@ import {
 } from "./story-card-generator.js";
 import {
   assembleStoryCardPlan,
+  revalidateStoryCardPlan,
   type StoryCardEntryOutcome,
   type StoryCardPlan
 } from "./story-card-plan.js";
@@ -70,7 +71,10 @@ import {
   readCaptionProjectionTokenBudget
 } from "./raw-narrative-projection.js";
 import {
+  checkStoryCardPlanSafety,
   createSafetyReport,
+  mergeStoryCardSlotFindings,
+  rescanStoryCardPlanAfterRevalidation,
   type SafetyReport,
   type SafetyStatus
 } from "./safety-report.js";
@@ -413,7 +417,12 @@ export async function runGenerateCommand(
     storyCardGeneration = await generateStoryCardPlan({
       activitySummary,
       moodPlan: storyFormatPlan,
-      provider
+      provider,
+      // UNC-235 리뷰 반영 (PR #138 Codex): 렌더는 계획 카드를 실제
+      // 슬라이드에 순서대로 맞춘다. 일기는 suggestedSlideCount를 제안으로만
+      // 쓰고 3-8장 범위면 다른 장수도 유효하게 내므로, 카드는 제안값이
+      // 아니라 **이미 만들어진 슬라이드 장수**만큼 요청한다.
+      cardCount: generatedDraft.slides.length
     });
   } catch (error) {
     storyCardGeneration = undefined;
@@ -434,10 +443,66 @@ export async function runGenerateCommand(
           };
   }
 
-  const storyCardPlan = assembleStoryCardPlan({
+  const rawStoryCardPlan = assembleStoryCardPlan({
     outcomes: storyCardGeneration?.outcomes ?? [],
     summary: activitySummary
   });
+
+  // UNC-269 / T5: 카드 슬롯의 secret·토큰·로컬 절대경로·이메일을 **여기서**
+  // 마스킹한다. 이 시점 이후로 slots 원문은 어떤 산출물에도 남지 않는다.
+  const { plan: maskedStoryCardPlan, findings: preRevalidationFindings } =
+    checkStoryCardPlanSafety(rawStoryCardPlan);
+
+  // 마스킹이 실제로 값을 바꿨을 때만 재검증한다. 재조립은 카드의 source
+  // 라벨(generated/degraded/fallback)을 잃으므로 필요할 때만 치른다.
+  //
+  // UNC-269 T5 리뷰 반영 (Critical 1): 재검증의 degrade 경로는 그날의
+  // 활동 요약에서 **마스킹을 거치지 않은** 원문(buildDefaultSlots)을 새로
+  // 끌어올 수 있다 — 재검증만 하고 끝내면 그 원문이 마스킹 한 번 없이
+  // story.json / 렌더 산출물로 나간다. 그래서 재검증한 계획은
+  // rescanStoryCardPlanAfterRevalidation으로 **다시** 스캔한다. 이 함수가
+  // 최종적으로 내보낼 계획과, 최종 계획 인덱스에 맞춰 재정렬된 발견을
+  // 함께 돌려준다(Important 3 — 재검증이 카드를 바꾸거나 떨어뜨리면 1차
+  // 발견의 cardIndex가 최종 계획과 어긋난다. 그 발견은 버리지 않는다 —
+  // rescanStoryCardPlanAfterRevalidation은 인덱스를 매핑할 수 있으면
+  // cardIndex만 갱신해 그대로 들고 가고, 매핑할 수 없으면(카드 내용이
+  // 바뀌었거나 사라졌으면) "card replaced during revalidation" 표시를
+  // 붙여서까지 findings에 유지한다. 발견을 버리고 그 자리를 2차 스캔
+  // 결과로만 채우면, 그날 활동 요약이 깨끗할 때 재검증이 문제의 카드를
+  // 흔적 없이 드롭시켜 2차 스캔이 아무 발견도 못 내고 safety-report.json이
+  // 다시 safe로 되돌아간다 — 바로 그 결함을 막으려고 이 함수가 존재한다.
+  // 자세한 계약은 safety-report.ts:585-621 참고. 이 파일을 고치는 사람에게:
+  // 위 문장이 설명하는 "버리고 대체" 동작으로 되돌리는 리팩터는 이 결함을
+  // 재도입한다).
+  //
+  // 아래 guard(`preRevalidationFindings.length > 0`)가 기대는 전제: 이
+  // 조건이 참이라는 것은 곧 마스킹이 실제로 슬롯 값을 바꿨다는 뜻이다.
+  // checkStoryCardPlanSafety는 슬롯마다 checkDraftSafety를 돌려 그
+  // report.risks로부터 findings를 채우는데(safety-report.ts:465-480),
+  // checkDraftSafety 안에서는 텍스트를 다시 쓰는 모든 경로(각
+  // detectionRule 매치, 스크립트성 콘텐츠 마스킹, 아키텍처 공개 마스킹)가
+  // 예외 없이 recordDetection도 함께 호출한다(safety-report.ts:190-226) —
+  // risk 없이 텍스트만 바뀌거나, 텍스트가 그대로인데 risk만 기록되는
+  // 경로는 없다. 그래서 findings가 비어 있으면 마스킹도 슬롯을 하나도
+  // 바꾸지 않았다고 안전하게 가정할 수 있고, 아래 재검증 분기를 건너뛴다.
+  let storyCardPlan = rawStoryCardPlan;
+  let storyCardSlotFindings = preRevalidationFindings;
+
+  if (preRevalidationFindings.length > 0) {
+    const revalidatedStoryCardPlan = revalidateStoryCardPlan({
+      plan: maskedStoryCardPlan,
+      summary: activitySummary
+    });
+    const rescanned = rescanStoryCardPlanAfterRevalidation({
+      maskedPlan: maskedStoryCardPlan,
+      preRevalidationFindings,
+      revalidatedPlan: revalidatedStoryCardPlan
+    });
+
+    storyCardPlan = rescanned.plan;
+    storyCardSlotFindings = rescanned.findings;
+  }
+
   const storyCardFailures = collectStoryCardFailureRecords(
     storyCardGeneration?.outcomes ?? [],
     storyCardPlan
@@ -571,29 +636,24 @@ export async function runGenerateCommand(
   // 충돌한다. 2026-07-26 사고(자유 텍스트 응답 하나가 그날을 죽인 일)를
   // 다른 문으로 다시 들이는 셈이다.
   //
-  // 대가로 감수한 비대칭: 카드 슬롯은 redaction은 통과하지만
-  // (redactArchitectureDisclosureFromDraft, diary-generator.ts) 검사는
-  // 통과하지 않는다. 그래서 **같은 문자열이 슬라이드 본문에 있으면 warning
-  // 위험으로 기록되는데, 카드 슬롯에 있으면 조용히 정화되고 잔여 위험
-  // 항목이 남지 않는다.** secret·로컬 절대경로·이메일처럼 redaction이
-  // 덮지 않는 범주는 카드 슬롯에서 아예 탐지되지 않는다.
-  //
-  // 올바른 최종 설계는 "카드별로 검사해서 걸린 카드만 degrade시키기"이지만,
-  // 그건 카드 단위 안전 판정과 새 degrade 트리거가 필요한 **새 메커니즘**이고
-  // (block이냐 warn이냐 in-place redaction이냐는 정책 선택이기도 하다),
-  // 이 이슈의 어느 하위 태스크도 그것을 다루지 않는다. 카드가 실제로
-  // 렌더되어 공개 산출물이 되는 **UNC-235에서 렌더 경로를 함께 보고
-  // 결정한다.** 지금은 카드가 저장만 되고 렌더·export되지 않으므로 이
-  // 구멍은 실재하지만 아직 발현되지 않는다.
+  // UNC-269 / T5 (UNC-235): 위 주석이 "UNC-235에서 렌더 경로를 함께 보고
+  // 결정한다"고 미뤄 둔 결정을 이행했다. 결론은 **여기에 붙이지 않는 것**이다.
+  // 대신 카드 슬롯은 위쪽 checkStoryCardPlanSafety에서 별도로 검사해
+  //   ① 슬롯 원문을 in-place 마스킹하고 (공개 산출물에 secret 금지)
+  //   ② 발견을 슬롯 단위 warning으로 기록한다 (export는 계속 허용)
+  // 카드 슬롯 발견은 어떤 경우에도 blocked/exit 6으로 승격되지 않는다.
   //
   // 경고: 이 주석을 읽고 "그냥 storyCardPlan을 붙이면 되겠네"라고 고치지 마라.
   // 위의 exit 6 결과를 먼저 이해해야 한다.
-  const safetyReport = createSafetyReport(
-    buildDraftSafetyText({
-      draft: generatedDraft,
-      caption: preRedactionCaptionText,
-      metadata: baseMetadata
-    })
+  const safetyReport = mergeStoryCardSlotFindings(
+    createSafetyReport(
+      buildDraftSafetyText({
+        draft: generatedDraft,
+        caption: preRedactionCaptionText,
+        metadata: baseMetadata
+      })
+    ),
+    storyCardSlotFindings
   );
   // UNC-206 follow-up: the safety report is computed from the RAW baseMetadata
   // above so architecture-disclosure detail in the provider-generated
@@ -903,6 +963,16 @@ function isValidDateString(value: string): boolean {
   return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
 }
 
+/**
+ * UNC-268 A5: 키가 없는 **기존** config는 계속 photo-first로 읽는다.
+ * 신규 init만 story-card를 명시적으로 기록한다 (AC1은 쓰기 시점,
+ * AC2는 읽기 시점이라 충돌하지 않는다). 사용자 config는 마이그레이션하지
+ * 않는다 — 어떤 경로로도 건드리지 않는다.
+ */
+export function resolveCarouselVisualStyle(value: unknown): CarouselVisualStyleMode {
+  return value === "story-card" ? "story-card" : "photo-first";
+}
+
 async function readGenerateConfig(
   path: string,
   homeDir: string | undefined
@@ -928,7 +998,7 @@ async function readGenerateConfig(
       draftRoot: parsed.draftRoot
     }).defaultDraftRoot,
     provider: parsed.aiProvider,
-    carouselVisualStyle: parsed.carouselVisualStyle ?? "photo-first",
+    carouselVisualStyle: resolveCarouselVisualStyle(parsed.carouselVisualStyle),
     persona: selectPersona(parsed),
     roastLevel: parsed.roastLevel
   };

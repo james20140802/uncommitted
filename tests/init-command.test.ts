@@ -181,11 +181,34 @@ describe("init command", () => {
       roastLevel: number;
     };
     expect(config.aiProvider).toBe("none");
-    expect(config.carouselVisualStyle).toBe("photo-first");
+    // UNC-268: story-card is now the default carousel mode for fresh installs.
+    expect(config.carouselVisualStyle).toBe("story-card");
     // No persona answer given: init falls back to DEFAULT_PERSONA_PRESET
     // (preset selection is UNC-210 / Task 2), which currently ships roastLevel 2.
     expect(config.persona).toEqual(resolvePersonaPreset(DEFAULT_PERSONA_PRESET).persona);
     expect(config.roastLevel).toBe(2);
+  });
+
+  it("records story-card as the carousel visual style for a fresh init (UNC-268 AC1)", async () => {
+    const homeDir = await mkTestHome("carousel-default-story-card");
+
+    const result = await runInitCommand([], { homeDir });
+
+    expect(result.config.carouselVisualStyle).toBe("story-card");
+
+    const written = JSON.parse(
+      await readFile(join(homeDir, ".uncommitted", "config.json"), "utf8")
+    );
+
+    expect(written.carouselVisualStyle).toBe("story-card");
+  });
+
+  it("surfaces the selected carousel mode in init guidance (UNC-268)", async () => {
+    const homeDir = await mkTestHome("carousel-mode-guidance");
+
+    const result = await runInitCommand([], { homeDir });
+
+    expect(result.guidance.join("\n")).toContain("story-card");
   });
 
   it("supports Mistral and OpenRouter providers", async () => {

@@ -60,12 +60,27 @@ function renderDiffLines(lines: string[], kind: "added" | "removed"): string {
     .join("\n");
 }
 
-// 슬롯 한계값(UNC-259): added/removed가 스테이지를 나눠 쓰므로 각각
-// 5줄, 등폭 폭에서 줄 길이를 역산. UNC-235에서 재조정될 수 있다.
+// 슬롯 한계값(UNC-259, UNC-235에서 실측 재조정): 원래 5줄은 줄 길이만
+// 등폭 폭에서 역산한 값이고 세로 방향은 실측 전 추정치였다.
+// Playwright로 재보니 두 가지가 겹쳐 있었다: (1) added 5 + removed 5를
+// 채우면 .diff 요소의 실제 콘텐츠 높이(scrollHeight)가 base fit에서
+// 필요한 높이보다 305px 부족했고, (2) .diff는 자기 CSS에 overflow:hidden을
+// 두고 있어서 — .card-stage(단일 자식 flex column, justify-content:center)
+// 아래에서 flex-shrink가 기본값 1이라 min-height:auto가 0으로 풀리고
+// — 넘치는 콘텐츠를 상자 밖으로 밀어내는 대신 상자 **안에서 조용히
+// 잘라낸다. 그 결과 .card-stage의 scrollHeight/clientHeight 비교
+// (validateRenderedCard가 쓰는 바로 그 검사)는 아무 이상도 감지하지
+// 못한다 — 카드가 "성공"으로 렌더되면서 텍스트 일부가 소리 없이
+// 사라지는, render-failed보다 더 나쁜 결과다. 그래서 이 한도는
+// .diff.scrollHeight를 직접 재서(=클리핑에 흔들리지 않는 진짜 콘텐츠
+// 높이) 정했다. added=3/removed=3(최악의 경우 총 6줄)은 base fit에서
+// 160px의 실제 여유를 두고 들어간다(tests/carousel-renderer-smoke
+// .test.ts로 실측). overflow:hidden + flex-shrink 조합 자체는 이
+// 이슈 범위 밖이라 손대지 않았다 — 별도로 보고한다.
 const diffSlots = {
   filename: { type: "text", required: true, maxLength: 48 },
-  added: { type: "lines", required: false, maxLines: 5, maxLength: 56 },
-  removed: { type: "lines", required: false, maxLines: 5, maxLength: 56 }
+  added: { type: "lines", required: false, maxLines: 3, maxLength: 56 },
+  removed: { type: "lines", required: false, maxLines: 3, maxLength: 56 }
 } as const satisfies StoryCardSlotSchema;
 
 export const diffStoryCard: StoryCardDefinition = {

@@ -1,6 +1,9 @@
 import type { ActivitySummary } from "./activity-summary.js";
 import { TYPO_FALLBACK_HEADLINE } from "./story-card-kind-typo.js";
-import { storyCardRegistry } from "./story-card-registry.js";
+import {
+  listStoryCardCandidateProjections,
+  storyCardRegistry
+} from "./story-card-registry.js";
 import type {
   StoryCardCandidate,
   StoryCardDefinition,
@@ -450,4 +453,28 @@ export function assembleStoryCardPlan(options: {
       }
     ]
   };
+}
+
+/**
+ * UNC-269: 마스킹으로 슬롯 텍스트가 바뀌면 그 값이 여전히 자기 종류의
+ * 제약(maxLines/maxLength)을 만족하는지 **같은 검증기로** 다시 본다.
+ * 어긋난 카드는 그 카드만 자기 종류의 기본 슬롯으로 degrade한다 —
+ * 형제 카드에 번지지 않는다.
+ */
+export function revalidateStoryCardPlan(options: {
+  plan: StoryCardPlan;
+  summary: ActivitySummary;
+  registry?: readonly StoryCardDefinition[];
+}): StoryCardPlan {
+  const registry = options.registry ?? storyCardRegistry;
+  const candidates = listStoryCardCandidateProjections(options.summary, registry);
+  const outcomes = validateStoryCardPlanEntries(
+    options.plan.cards.map((card) => ({
+      type: card.type,
+      slots: toWireSlots(card.slots)
+    })),
+    candidates
+  );
+
+  return assembleStoryCardPlan({ outcomes, summary: options.summary, registry });
 }

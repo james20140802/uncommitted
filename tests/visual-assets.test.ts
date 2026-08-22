@@ -23,7 +23,7 @@ import type {
 import { VISUAL_IDENTITY } from "../src/visual-identity.js";
 
 describe("visual asset generation", () => {
-  it("creates an OpenAI image asset provider that requests a supported 1024x1536 source and returns a 1024x1280 Instagram 4:5 crop", async () => {
+  it("creates an OpenAI image asset provider that requests a supported 1024x1536 source and returns a 1080x1350 Instagram 4:5 asset", async () => {
     const sourcePng = await sharp({
       create: {
         width: 1024,
@@ -63,8 +63,8 @@ describe("visual asset generation", () => {
 
     expect(result?.mimeType).toBe("image/png");
     const returnedMeta = await sharp(Buffer.from(result?.data ?? new Uint8Array())).metadata();
-    expect(returnedMeta.width).toBe(1024);
-    expect(returnedMeta.height).toBe(1280);
+    expect(returnedMeta.width).toBe(1080);
+    expect(returnedMeta.height).toBe(1350);
 
     expect(provider?.name).toBe("openai");
     expect(calls).toHaveLength(1);

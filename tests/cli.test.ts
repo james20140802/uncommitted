@@ -690,8 +690,12 @@ describe("cli", () => {
     ]);
     expect(carouselPng).toEqual(pngBytes);
     expect(renderer.calls).toHaveLength(1);
-    expect(renderer.calls[0]?.html).toContain("class=\"visual-asset\"");
-    expect(renderer.calls[0]?.html).toContain("data:image/png;base64,");
+    // UNC-266: registry story cards are purely typographic, so a visual
+    // asset no longer gets composited into story-card mode HTML (that
+    // compositing targeted the legacy .visual-stage/.visual-placeholder
+    // markup, which this task intentionally removes). Its metadata is still
+    // recorded below via visualAssetPath.
+    expect(renderer.calls[0]?.html).toContain("data-story-card-kind=\"typo\"");
     expect(metadata).toMatchObject({
       files: [
         "activity-summary.json",
@@ -803,6 +807,47 @@ describe("cli", () => {
     await expect(
       access(join(fixture.revision.outputDir, "carousel", "01.png"))
     ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  // UNC-270 / parent AC4: a missing photo-first asset must not sink the
+  // whole render the way the story-card case above does — it degrades the
+  // draft to story-card, completes with exit 0, and surfaces a stderr
+  // warning instead of a render-failed error.
+  it("degrades a photo-first draft with a missing asset to story-card and exits 0 with a stderr warning", async () => {
+    const { io, stdout, stderr } = createIo();
+    const fixture = await createLatestDraftFixture({
+      metadata: {
+        ...createDraftMetadata(),
+        carouselVisualStyle: "photo-first",
+        requestedCarouselVisualStyle: "photo-first"
+      },
+      writeVisualAsset: false
+    });
+
+    const exitCode = await runCli(["render", "latest"], io, {
+      homeDir: fixture.homeDir,
+      carouselRenderer: new RecordingPngRenderer()
+    });
+
+    expect(exitCode).toBe(0);
+    expect(stdout.join("\n")).toContain(
+      `Rendered carousel for ${fixture.revision.targetDate}: ${fixture.revision.outputDir}`
+    );
+    expect(stderr).toHaveLength(1);
+    expect(stderr[0]).toMatch(/^Warning: /);
+    expect(stderr[0]).toContain("story-card");
+
+    const carouselPng = await readFile(
+      join(fixture.revision.outputDir, "carousel", "01.png")
+    );
+    const metadata = (await readJson(
+      join(fixture.revision.outputDir, "metadata.json")
+    )) as Record<string, unknown>;
+
+    // Carousel still completes despite the missing asset.
+    expect(carouselPng).toEqual(pngBytes);
+    expect(metadata.carouselVisualStyle).toBe("story-card");
+    expect(metadata.requestedCarouselVisualStyle).toBe("photo-first");
   });
 
   it("returns rendering exit code when the PNG renderer fails", async () => {

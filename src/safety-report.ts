@@ -3,6 +3,7 @@ import {
   ARCHITECTURE_DISCLOSURE_REPLACEMENT,
   redactArchitectureDisclosure
 } from "./architecture-disclosure.js";
+import type { StoryCardPlan, StoryCardPlanCard } from "./story-card-plan.js";
 
 export type SafetyStatus = "safe" | "warning" | "blocked";
 
@@ -38,6 +39,8 @@ export type SafetyReport = {
   redactionsApplied: SafetyRedaction[];
   exportAllowed: boolean;
   message: string;
+  /** UNC-269: 카드 슬롯 단위 발견. 전부 severity "warning"이다. */
+  storyCardSlots?: StoryCardSlotFinding[];
 };
 
 export type SafetyCheckResult = {
@@ -422,4 +425,235 @@ function isSafetyRiskSeverity(value: unknown): value is SafetyRiskSeverity {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+export type StoryCardSlotFinding = {
+  schemaVersion: 1;
+  cardIndex: number;
+  cardType: string;
+  slot: string;
+  category: SafetyRiskCategory;
+  /**
+   * UNC-269 A4(i): 카드 슬롯 발견은 **warning 고정**이다. blocked로
+   * 승격하지 않는다 — 승격하면 카드 한 장의 secret 모양 문자열 하나가
+   * exit 6으로 그날 드래프트 전체를 죽인다(2026-07-26 사고와 같은 모양).
+   */
+  severity: "warning";
+  message: string;
+};
+
+export type StoryCardPlanSafetyResult = {
+  /** 슬롯 원문이 in-place 마스킹된 계획. */
+  plan: StoryCardPlan;
+  findings: StoryCardSlotFinding[];
+};
+
+/**
+ * UNC-269 A4(ii): 마스킹과 warning 기록을 **함께** 한다.
+ * 원문을 그대로 두고 경고만 남기면 export된 PNG에 비밀이 그대로 찍혀
+ * "공개 산출물에 secret 금지"라는 하드 규칙을 위반한다. 반대로 blocked로
+ * 올리면 그날이 죽는다. 둘을 동시에 만족시키는 조합은 이것뿐이다.
+ */
+export function checkStoryCardPlanSafety(
+  plan: StoryCardPlan
+): StoryCardPlanSafetyResult {
+  const findings: StoryCardSlotFinding[] = [];
+
+  const cards: StoryCardPlanCard[] = plan.cards.map((card, cardIndex) => {
+    const slots: Record<string, string | string[]> = {};
+
+    for (const [slotName, value] of Object.entries(card.slots)) {
+      if (typeof value === "string") {
+        const checked = checkDraftSafety(value);
+
+        collectSlotFindings(findings, cardIndex, card.type, slotName, checked.report.risks);
+        slots[slotName] = checked.redactedText;
+        continue;
+      }
+
+      slots[slotName] = value.map((line) => {
+        const checked = checkDraftSafety(line);
+
+        collectSlotFindings(findings, cardIndex, card.type, slotName, checked.report.risks);
+
+        return checked.redactedText;
+      });
+    }
+
+    return { ...card, slots };
+  });
+
+  return { plan: { ...plan, cards }, findings };
+}
+
+function collectSlotFindings(
+  findings: StoryCardSlotFinding[],
+  cardIndex: number,
+  cardType: string,
+  slot: string,
+  risks: readonly SafetyRisk[]
+): void {
+  for (const risk of risks) {
+    const alreadyRecorded = findings.some(
+      (finding) =>
+        finding.cardIndex === cardIndex &&
+        finding.slot === slot &&
+        finding.category === risk.category
+    );
+
+    if (alreadyRecorded) continue;
+
+    findings.push({
+      schemaVersion: 1,
+      cardIndex,
+      cardType,
+      slot,
+      category: risk.category,
+      severity: "warning",
+      message: risk.message
+    });
+  }
+}
+
+/**
+ * UNC-269 A4(iii): 발견은 슬롯 단위로 남기고, 드래프트 종합 등급은
+ * **최대 warning까지만** 올린다. 이미 blocked인 보고서는 그대로 둔다 —
+ * 그 blocked는 카드가 아니라 슬라이드·캡션에서 온 것이고, 카드 발견이
+ * 그 판정을 뒤집어서는 안 된다.
+ */
+export function mergeStoryCardSlotFindings(
+  report: SafetyReport,
+  findings: readonly StoryCardSlotFinding[]
+): SafetyReport {
+  if (findings.length === 0) {
+    return report;
+  }
+
+  const status: SafetyStatus = report.status === "blocked" ? "blocked" : "warning";
+
+  return {
+    ...report,
+    status,
+    // exportAllowed는 원래 보고서의 판정을 그대로 잇는다. 카드 슬롯 발견은
+    // export를 절대 막지 않는다.
+    exportAllowed: report.exportAllowed,
+    message: buildSafetyMessage(status),
+    storyCardSlots: [...findings]
+  };
+}
+
+export type StoryCardPlanRescanResult = {
+  /** 재검증 뒤 다시 마스킹까지 끝낸, 실제로 내보낼 계획. */
+  plan: StoryCardPlan;
+  findings: StoryCardSlotFinding[];
+};
+
+/**
+ * UNC-269 T5 리뷰 반영 (Critical 1): `revalidateStoryCardPlan`의 degrade
+ * 경로(`degradeToDefaults` → `buildDefaultSlots`)는 그날의 활동 요약에서
+ * **마스킹을 거치지 않은** 원문을 새로 끌어온다 — 터미널 카드의
+ * command/output이 커밋 subject·smallWins 원문 그대로인 것이 그 예다.
+ * 그 원문이 secret 모양이면 재검증을 거친 계획에 마스킹되지 않은 채로
+ * 남아 story.json / 렌더 산출물로 나간다. 그래서 재검증 뒤 계획은
+ * **한 번 더** checkStoryCardPlanSafety를 통과해야 한다 — 이 두 번째
+ * 통과는 그 자체로 다시 캐스케이드되지 않는다: buildDefaultSlots의
+ * 결과는 이미 fitSlotText/fitSlotLines로 슬롯 길이에 맞춰져 있고,
+ * degradeToDefaults가 그 결과를 다시 검증기로 재검사한 뒤에만 채택하기
+ * 때문이다.
+ *
+ * UNC-269 T5 리뷰 반영 (Important 3): 재검증이 카드를 통째로 바꾸거나
+ * (degrade) 떨어뜨리면(drop) 1차 마스킹 때 기록한 발견의 cardIndex가
+ * 최종 계획과 어긋난다. 재검증 전/후 계획을 카드 내용(type + slots)으로
+ * 매칭해, **내용이 그대로 살아남은 카드의 발견만** 그 카드의 최종 위치로
+ * 인덱스를 다시 맞춘다.
+ *
+ * UNC-269 T5 리뷰 반영 (Important, 2차 리뷰): 내용이 바뀐(=degrade/drop된)
+ * 카드의 1차 발견을 **버리지 않는다.** 처음 구현은 그런 발견을 버리고
+ * 2차 스캔 결과로만 대체했는데, 그날의 활동 요약이 깨끗하면 2차 스캔이
+ * 아무것도 찾지 못해 findings가 통째로 비어버린다 — 실제로는 마스킹이
+ * 일어났는데도(원문에 email/local-path/secret이 있었는데도)
+ * safety-report.json이 "safe"로 돌아가는 결과였다(부모 AC2/AC4 위반).
+ * 마스킹이 실제로 있었다는 사실 자체는 그 카드가 나중에 어떻게 바뀌든
+ * 변하지 않으므로, 최종 위치를 못 찾은 발견은 원래 인덱스에 "카드가
+ * 재검증으로 교체됨" 표식을 붙여 그대로 남긴다 — 위치가 정확하지 않을
+ * 수 있다는 사실을 message에 명시하는 편이, 발견 자체가 사라지는 것보다
+ * 낫다. 카드가 실제로 교체됐다면 2차 스캔이 그 카드의 새 내용에서 다시
+ * secret을 찾아 별도 발견으로 덧붙이므로(같은 인덱스에 두 발견이 남을
+ * 수 있다), 정보 손실 없이 두 사실(이전에 무엇이 있었는지 / 지금 무엇이
+ * 나가는지)이 모두 기록된다.
+ *
+ * 이 함수가 지키는 불변식: preRevalidationFindings가 비어있지 않으면
+ * (=마스킹이 뭔가를 바꿨으면) 반환되는 findings도 결코 비지 않는다 —
+ * 재검증이 그 카드에 무슨 일을 했든 상관없이.
+ */
+export function rescanStoryCardPlanAfterRevalidation(options: {
+  maskedPlan: StoryCardPlan;
+  preRevalidationFindings: readonly StoryCardSlotFinding[];
+  revalidatedPlan: StoryCardPlan;
+}): StoryCardPlanRescanResult {
+  const { plan, findings: freshFindings } = checkStoryCardPlanSafety(
+    options.revalidatedPlan
+  );
+
+  const indexMap = mapSurvivingCardIndices(options.maskedPlan, plan);
+
+  const carriedForward = options.preRevalidationFindings.map((finding) => {
+    const finalIndex = indexMap.get(finding.cardIndex);
+
+    if (finalIndex !== undefined) {
+      return { ...finding, cardIndex: finalIndex };
+    }
+
+    // 이 카드는 재검증으로 내용이 바뀌었거나 통째로 사라졌다 — 최종
+    // 위치를 신뢰할 수 없다. 그래도 발견 자체는 버리지 않는다.
+    return {
+      ...finding,
+      message: `${finding.message} (card replaced during revalidation; index may not match the shipped plan)`
+    };
+  });
+
+  return {
+    plan,
+    // Minor(2차 리뷰): 발견을 최종 cardIndex 순으로 정렬해 storyCardSlots가
+    // 읽는 사람 기준으로 카드 순서와 어긋나지 않게 한다.
+    findings: [...carriedForward, ...freshFindings].sort(
+      (a, b) => a.cardIndex - b.cardIndex
+    )
+  };
+}
+
+/**
+ * 재검증 전 계획의 각 카드가 재검증 뒤 계획의 어느 인덱스로 살아남았는지
+ * (type + slots가 완전히 그대로인 경우에만) 매핑한다. 위치가 아니라
+ * **내용**으로 매칭하므로 앞쪽 카드가 drop되어 뒤쪽 카드들이 통째로
+ * 한 칸씩 당겨지는 경우에도 올바른 최종 인덱스를 찾는다. 이미 매칭된
+ * 최종 카드는 다시 매칭되지 않도록 소비한다 — 내용이 우연히 같은 카드가
+ * 여럿이어도 1:1로만 대응시키기 위해서다.
+ */
+function mapSurvivingCardIndices(
+  before: StoryCardPlan,
+  after: StoryCardPlan
+): Map<number, number> {
+  const availableAfterIndices = after.cards.map((_, index) => index);
+  const indexMap = new Map<number, number>();
+
+  for (const [beforeIndex, beforeCard] of before.cards.entries()) {
+    const matchPosition = availableAfterIndices.findIndex((afterIndex) =>
+      isSameCardContent(beforeCard, after.cards[afterIndex])
+    );
+
+    if (matchPosition === -1) continue;
+
+    indexMap.set(beforeIndex, availableAfterIndices[matchPosition]);
+    availableAfterIndices.splice(matchPosition, 1);
+  }
+
+  return indexMap;
+}
+
+function isSameCardContent(
+  a: StoryCardPlanCard,
+  b: StoryCardPlanCard
+): boolean {
+  return a.type === b.type && JSON.stringify(a.slots) === JSON.stringify(b.slots);
 }
