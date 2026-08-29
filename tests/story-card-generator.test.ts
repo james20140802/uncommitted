@@ -8,6 +8,7 @@ import type {
 import type { MoodPlan } from "../src/story-format-plan.js";
 import { listStoryCardCandidateProjections } from "../src/story-card-registry.js";
 import { STORY_CARD_VIOLATIONS } from "../src/story-card-plan.js";
+import { RECURRING_THREAD_INSTRUCTIONS } from "../src/recurring-thread-instructions.js";
 import {
   STORY_CARD_MAX_ATTEMPTS,
   buildStoryCardInstructions,
@@ -480,5 +481,59 @@ describe("generateStoryCardPlan", () => {
     });
 
     expect(seen).toContain("6");
+  });
+});
+
+describe("카드 슬롯 누적 대비 지시문 (UNC-278 / T6)", () => {
+  const recurring = [
+    { note: "flaky timeout again", occurrenceCount: 3, lastSeenDate: "2026-08-29" }
+  ];
+
+  it("adds nothing when there are no recurring threads (AC2)", () => {
+    const without = buildStoryCardInstructions({
+      quiet: false,
+      cardCount: 4,
+      candidates: listStoryCardCandidateProjections(createSummary())
+    });
+    const withEmpty = buildStoryCardInstructions({
+      quiet: false,
+      cardCount: 4,
+      candidates: listStoryCardCandidateProjections(createSummary()),
+      recurringThreads: []
+    });
+
+    expect(withEmpty).toBe(without);
+    expect(without).not.toContain(RECURRING_THREAD_INSTRUCTIONS.useCumulative);
+    expect(without).not.toContain(RECURRING_THREAD_INSTRUCTIONS.noInventedCount);
+    expect(without).not.toContain(RECURRING_THREAD_INSTRUCTIONS.noStreak);
+    expect(without).not.toContain(RECURRING_THREAD_INSTRUCTIONS.notNewMaterial);
+  });
+
+  it("adds the same four constraint sentences the caption uses (AC4)", () => {
+    const instructions = buildStoryCardInstructions({
+      quiet: false,
+      cardCount: 4,
+      candidates: listStoryCardCandidateProjections(createSummary()),
+      recurringThreads: recurring
+    });
+
+    expect(instructions).toContain(RECURRING_THREAD_INSTRUCTIONS.useCumulative);
+    expect(instructions).toContain(RECURRING_THREAD_INSTRUCTIONS.noInventedCount);
+    expect(instructions).toContain(RECURRING_THREAD_INSTRUCTIONS.noStreak);
+    expect(instructions).toContain(RECURRING_THREAD_INSTRUCTIONS.notNewMaterial);
+  });
+
+  it("keeps the quiet-day constraint intact when recurring threads exist (AC5)", () => {
+    const instructions = buildStoryCardInstructions({
+      quiet: true,
+      cardCount: 4,
+      candidates: listStoryCardCandidateProjections(createSummary()),
+      recurringThreads: recurring
+    });
+
+    expect(instructions).toContain(
+      "Do not manufacture activity to fill the cards."
+    );
+    expect(instructions).toContain(RECURRING_THREAD_INSTRUCTIONS.noInventedCount);
   });
 });

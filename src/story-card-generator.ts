@@ -7,8 +7,10 @@ import {
   type AiProvider,
   type JsonObject,
   type JsonValue,
-  type SafeActivitySummary
+  type SafeActivitySummary,
+  type SafeRecurringThread
 } from "./ai-provider.js";
+import { buildRecurringThreadInstructionLines } from "./recurring-thread-instructions.js";
 import {
   STORY_CARD_VIOLATIONS,
   validateStoryCardPlanEntries,
@@ -87,6 +89,7 @@ export function buildStoryCardInstructions(options: {
   quiet: boolean;
   cardCount: number;
   candidates: readonly StoryCardCandidate[];
+  recurringThreads?: SafeRecurringThread[];
 }): string {
   const lines = [
     `Choose exactly ${options.cardCount} cards for today's carousel and fill in their slots.`,
@@ -105,7 +108,9 @@ export function buildStoryCardInstructions(options: {
     "- The same card type may be used more than once if it genuinely fits.",
     options.quiet
       ? "Today is a quiet day. Say so honestly — a quiet day is valid content. Do not manufacture activity to fill the cards."
-      : "Anchor each card in the actual activity given in the input summary."
+      : "Anchor each card in the actual activity given in the input summary.",
+    // UNC-229 / T6: 캡션(T5)과 **같은 모듈이 소유한 같은 문장**을 붙인다.
+    ...buildRecurringThreadInstructionLines(options.recurringThreads)
   ];
 
   return lines.join("\n");
@@ -212,7 +217,7 @@ function emptyCardListOutcome(): StoryCardEntryOutcome {
 function buildSafeStoryCardInput(summary: ActivitySummary): SafeActivitySummary {
   const quiet = summary.activityLevel === "none";
 
-  return {
+  const safeInput: SafeActivitySummary = {
     schemaVersion: 1,
     targetDate: summary.targetDate,
     quiet,
@@ -242,6 +247,15 @@ function buildSafeStoryCardInput(summary: ActivitySummary): SafeActivitySummary 
     unfinishedThreads: summary.unfinishedThreads,
     possibleJokes: summary.possibleJokes
   };
+
+  // UNC-229 / T6: 반복이 있는 날에만 계약 필드를 싣는다.
+  const recurringThreads = summary.recurringThreads ?? [];
+
+  if (recurringThreads.length > 0) {
+    safeInput.recurringThreads = recurringThreads;
+  }
+
+  return safeInput;
 }
 
 /**
@@ -264,7 +278,8 @@ export async function generateStoryCardPlan(
     instructions: buildStoryCardInstructions({
       quiet: options.activitySummary.activityLevel === "none",
       cardCount,
-      candidates
+      candidates,
+      recurringThreads: options.activitySummary.recurringThreads
     }),
     summary: buildSafeStoryCardInput(options.activitySummary)
   });
