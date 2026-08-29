@@ -22,6 +22,12 @@ export type MemoryThread = {
   note: string;
   status: ThreadStatus;
   decay: number;
+  /**
+   * UNC-229 / T1: 이 스레드가 등장한 **날짜 수**의 누적 카운터. 신호 횟수가
+   * 아니라 날짜 수다(같은 날 여러 신호는 1회). 기존 `threads.jsonl` 레코드에는
+   * 이 필드가 없으므로 optional이며, `readThreads`가 읽기 시 1로 정규화한다.
+   */
+  occurrenceCount?: number;
 };
 
 export const THREAD_MAX_ENTRIES = 50;
@@ -79,7 +85,9 @@ export async function readThreads(projectRoot: string): Promise<MemoryThread[]> 
       const parsed = JSON.parse(trimmed) as unknown;
 
       if (isMemoryThread(parsed)) {
-        threads.push(parsed);
+        // UNC-229 / T1: 파일을 재작성하지 않고 읽기 시점에만 정규화한다.
+        // 필드가 없는 레거시 레코드 = 최소 1회 관측이므로 1이 사실을 왜곡하지 않는다.
+        threads.push({ ...parsed, occurrenceCount: parsed.occurrenceCount ?? 1 });
       }
     } catch {
       // Skip malformed JSONL lines instead of failing the whole read.
@@ -175,6 +183,7 @@ export function isMemoryThread(value: unknown): value is MemoryThread {
     isThreadKind(value.kind) &&
     typeof value.note === "string" &&
     isThreadStatus(value.status) &&
-    typeof value.decay === "number"
+    typeof value.decay === "number" &&
+    (value.occurrenceCount === undefined || typeof value.occurrenceCount === "number")
   );
 }
