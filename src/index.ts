@@ -10,6 +10,7 @@ export type {
   ActivityTheme,
   CommitSignals,
   ManualContextSummary,
+  RecurringThreadSummary,
   UncommittedChangeSummary
 } from "./activity-summary.js";
 export { getHelpText, runCli } from "./cli.js";
@@ -116,7 +117,8 @@ export type {
   LoadAiProviderConfigOptions,
   MockAiProviderOptions,
   SafeActivitySummary,
-  SafeProjectSummary
+  SafeProjectSummary,
+  SafeRecurringThread
 } from "./ai-provider.js";
 export {
   generateStoryFormatPlan,

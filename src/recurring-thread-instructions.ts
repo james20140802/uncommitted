@@ -17,7 +17,7 @@ export const RECURRING_THREAD_INSTRUCTIONS = {
   noStreak:
     "- Do not claim consecutive days or an unbroken streak. The input carries a cumulative count and a last-seen date only — never phrase it as 'N days in a row'.",
   notNewMaterial:
-    "- Items in recurringThreads are metadata about work that is already represented elsewhere in this input — the same subject seen again, not new material. Do not treat a recurring item as an additional topic, and do not cover the same item twice."
+    "- Items in recurringThreads describe work you may already be covering under a different anchor — treat them as a pointer to old material, not a new topic. Do not treat a recurring item as an additional topic, and do not cover the same item twice."
 } as const;
 
 /**
