@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { reflectThreads, deriveThreadNote } from "../src/reflection.js";
 import type { ActivitySignal } from "../src/event-source.js";
+import type { MemoryThread } from "../src/memory-store.js";
 
 function signal(overrides: Partial<ActivitySignal> = {}): ActivitySignal {
   return {
@@ -125,5 +126,74 @@ describe("reflection", () => {
     });
 
     expect(out).toEqual([]);
+  });
+});
+
+describe("occurrenceCount 누적 (UNC-274 / T2)", () => {
+  it("counts multiple same-day signals for one thread as a single occurrence", () => {
+    const day1 = new Date("2026-08-10T09:00:00.000Z");
+
+    const first = reflectThreads({
+      threads: [],
+      signals: [signal({ summary: "flaky timeout again" })],
+      now: day1
+    });
+
+    expect(first).toHaveLength(1);
+    expect(first[0]?.occurrenceCount).toBe(1);
+
+    // 같은 날, 같은 스레드로 접히는 신호가 하나 더 들어온다
+    const sameDay = reflectThreads({
+      threads: first,
+      signals: [signal({ summary: "flaky timeout again" })],
+      now: new Date("2026-08-10T21:00:00.000Z")
+    });
+
+    expect(sameDay).toHaveLength(1);
+    expect(sameDay[0]?.occurrenceCount).toBe(1);
+  });
+
+  it("increments the counter when the thread reappears on a later date", () => {
+    const first = reflectThreads({
+      threads: [],
+      signals: [signal({ summary: "flaky timeout again" })],
+      now: new Date("2026-08-10T09:00:00.000Z")
+    });
+
+    const nextDay = reflectThreads({
+      threads: first,
+      signals: [signal({ summary: "flaky timeout again" })],
+      now: new Date("2026-08-11T09:00:00.000Z")
+    });
+
+    expect(nextDay).toHaveLength(1);
+    expect(nextDay[0]?.occurrenceCount).toBe(2);
+  });
+
+  it("increments a legacy thread that carries no occurrenceCount to 2 on its next day", () => {
+    // signal()'s default kind is "commit", and "flaky timeout again" matches
+    // JOKE_PATTERN (not BUG_PATTERN), so it classifies as "running-joke" —
+    // the legacy fixture's kind must match that or threadKey() won't merge
+    // it with the incoming signal and this test would (wrongly) pass by
+    // creating a second thread instead of exercising the merge path.
+    const legacy: MemoryThread = {
+      id: "running-joke:flaky-timeout-again",
+      firstSeen: "2026-08-09T00:00:00.000Z",
+      lastSeen: "2026-08-10T00:00:00.000Z",
+      kind: "running-joke",
+      note: "flaky timeout again",
+      status: "active",
+      decay: 1
+      // occurrenceCount 없음 — 레거시 레코드
+    };
+
+    const merged = reflectThreads({
+      threads: [legacy],
+      signals: [signal({ summary: "flaky timeout again" })],
+      now: new Date("2026-08-11T09:00:00.000Z")
+    });
+
+    expect(merged).toHaveLength(1);
+    expect(merged[0]?.occurrenceCount).toBe(2);
   });
 });

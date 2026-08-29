@@ -118,6 +118,24 @@ function threadId(kind: ThreadKind, note: string): string {
   return `${kind}:${slug(note)}`;
 }
 
+/** ISO 타임스탬프의 날짜부(`YYYY-MM-DD`). 새 타임존 정책을 도입하지 않는다. */
+function isoDatePart(iso: string): string {
+  return iso.slice(0, 10);
+}
+
+/**
+ * UNC-229 / T2: 카운터는 "신호 횟수"가 아니라 "등장한 날짜 수"를 센다.
+ * 같은 날 여러 신호로 접히면 그대로, 날짜가 바뀌어 재등장할 때만 +1.
+ * 레거시 스레드(필드 부재)는 1로 간주하고 시작한다.
+ */
+function nextOccurrenceCount(existing: MemoryThread, nowIso: string): number {
+  const current = existing.occurrenceCount ?? 1;
+
+  return isoDatePart(existing.lastSeen) === isoDatePart(nowIso)
+    ? current
+    : current + 1;
+}
+
 /**
  * Pure core: fold `signals` into `threads`, matching existing threads by the
  * normalized `(kind, note)` key. A match bumps `lastSeen` to `now` (keeping
@@ -161,7 +179,11 @@ export function reflectThreads(input: {
     const existing = byKey.get(key);
 
     if (existing) {
-      byKey.set(key, { ...existing, lastSeen: nowIso });
+      byKey.set(key, {
+        ...existing,
+        lastSeen: nowIso,
+        occurrenceCount: nextOccurrenceCount(existing, nowIso)
+      });
       continue;
     }
 
@@ -172,7 +194,8 @@ export function reflectThreads(input: {
       kind,
       note,
       status: "active",
-      decay: 1
+      decay: 1,
+      occurrenceCount: 1
     });
   }
 
