@@ -38,7 +38,19 @@ export type SafeProjectSummary = {
   };
 };
 
-export type SafeActivitySummary = {
+/**
+ * UNC-229 / T4: `ActivitySummary.recurringThreads`와 **필드명·형태가 동일한**
+ * AI 입력 계약용 타입. activity-summary.ts를 import하지 않고 구조만 맞춘다
+ * (모듈 의존 방향을 늘리지 않기 위해). 두 타입은 구조적으로 호환되므로
+ * 대입에 변환이 필요 없다.
+ */
+export type SafeRecurringThread = {
+  note: string;
+  occurrenceCount: number;
+  lastSeenDate: string;
+};
+
+type SafeActivitySummaryBase = {
   schemaVersion: 1;
   targetDate: string;
   quiet: boolean;
@@ -46,6 +58,15 @@ export type SafeActivitySummary = {
   highlights: string[];
   projectSummaries: SafeProjectSummary[];
   [key: string]: JsonValue;
+};
+
+/**
+ * optional 필드는 교차 타입으로 붙인다. base에 직접 선언하면 인덱스
+ * 시그니처(`[key: string]: JsonValue`)와 충돌해 TS2411로 컴파일이 깨진다
+ * (`SafeRecurringThread[] | undefined`가 `JsonValue`에 대입 불가).
+ */
+export type SafeActivitySummary = SafeActivitySummaryBase & {
+  recurringThreads?: SafeRecurringThread[];
 };
 
 export type AiGenerationRequestOptions = {
@@ -1151,7 +1172,7 @@ function isAiConfigFile(value: unknown): value is {
   );
 }
 
-function isSafeActivitySummary(value: JsonValue): value is SafeActivitySummary {
+export function isSafeActivitySummary(value: JsonValue): value is SafeActivitySummary {
   return (
     isRecord(value) &&
     value.schemaVersion === 1 &&
@@ -1161,7 +1182,19 @@ function isSafeActivitySummary(value: JsonValue): value is SafeActivitySummary {
     Array.isArray(value.highlights) &&
     value.highlights.every((item) => typeof item === "string") &&
     Array.isArray(value.projectSummaries) &&
-    value.projectSummaries.every(isSafeProjectSummary)
+    value.projectSummaries.every(isSafeProjectSummary) &&
+    (value.recurringThreads === undefined ||
+      (Array.isArray(value.recurringThreads) &&
+        value.recurringThreads.every(isSafeRecurringThread)))
+  );
+}
+
+function isSafeRecurringThread(value: unknown): value is SafeRecurringThread {
+  return (
+    isRecord(value) &&
+    typeof value.note === "string" &&
+    typeof value.occurrenceCount === "number" &&
+    typeof value.lastSeenDate === "string"
   );
 }
 

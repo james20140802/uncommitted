@@ -9,6 +9,7 @@ import {
   createMoodPlanSchema,
   generateStructured,
   generateStructuredWithRetry,
+  isSafeActivitySummary,
   loadAiProviderConfig,
   MockAiProvider
 } from "../src/ai-provider.js";
@@ -1365,6 +1366,42 @@ describe("createMoodPlanSchema", () => {
     expect(schema.required).toContain("mood");
     expect(schema.required).toContain("angle");
     expect(schema.required).toContain("pacing");
+  });
+});
+
+describe("SafeActivitySummary.recurringThreads (UNC-276 / T4)", () => {
+  function baseSafeSummary(): SafeActivitySummary {
+    return {
+      schemaVersion: 1,
+      targetDate: "2026-08-30",
+      quiet: false,
+      overview: "moderate day.",
+      highlights: ["did a thing"],
+      projectSummaries: []
+    };
+  }
+
+  it("accepts a payload without recurringThreads", () => {
+    expect(isSafeActivitySummary(baseSafeSummary())).toBe(true);
+  });
+
+  it("accepts a payload carrying recurringThreads", () => {
+    const summary: SafeActivitySummary = {
+      ...baseSafeSummary(),
+      recurringThreads: [
+        { note: "flaky timeout again", occurrenceCount: 3, lastSeenDate: "2026-08-29" }
+      ]
+    };
+
+    expect(isSafeActivitySummary(summary)).toBe(true);
+    // 타입 있는 읽기가 가능하다 (인덱스 시그니처로 뭉개지지 않는다)
+    expect(summary.recurringThreads?.[0]?.occurrenceCount).toBe(3);
+  });
+
+  it("rejects a payload whose recurringThreads is not an array", () => {
+    const bad = { ...baseSafeSummary(), recurringThreads: "nope" };
+
+    expect(isSafeActivitySummary(bad)).toBe(false);
   });
 });
 
