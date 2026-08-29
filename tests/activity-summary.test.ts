@@ -55,7 +55,7 @@ describe("activity summary", () => {
 
     expect(isActivitySummary(summary)).toBe(true);
     expect(summary).toMatchObject({
-      schemaVersion: 1,
+      schemaVersion: 2,
       targetDate: "2026-05-12",
       generatedAt: "2026-05-12T23:30:00.000Z",
       activityLevel: "high",

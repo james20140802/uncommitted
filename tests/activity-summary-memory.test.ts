@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildActivitySummary } from "../src/activity-summary.js";
+import { buildActivitySummary, isActivitySummary } from "../src/activity-summary.js";
 import type { ActivitySummaryInput } from "../src/activity-summary.js";
 import type { MemoryThread } from "../src/memory-store.js";
 
@@ -111,5 +111,107 @@ describe("activity-summary memory injection", () => {
 
     expect(Array.isArray(withFields.unfinishedThreads)).toBe(true);
     expect(withFields).toEqual(withoutFieldsAgain);
+  });
+});
+
+describe("recurringThreads (UNC-275 / T3)", () => {
+  it("exposes occurrenceCount and lastSeenDate for repeating threads (AC1)", () => {
+    const summary = buildActivitySummary({
+      ...baseInput(),
+      memoryThreads: [
+        thread({
+          id: "bug:flaky",
+          note: "flaky timeout again",
+          occurrenceCount: 3,
+          lastSeen: "2026-07-15T08:00:00.000Z"
+        })
+      ]
+    });
+
+    expect(summary.recurringThreads).toEqual([
+      {
+        note: "flaky timeout again",
+        occurrenceCount: 3,
+        lastSeenDate: "2026-07-15"
+      }
+    ]);
+  });
+
+  it("returns no recurring threads when nothing has occurred more than once (AC2 판정 기준)", () => {
+    const summary = buildActivitySummary({
+      ...baseInput(),
+      memoryThreads: [
+        thread({ id: "a", note: "one-off thing", occurrenceCount: 1 }),
+        thread({ id: "b", note: "another one-off", occurrenceCount: 1 })
+      ]
+    });
+
+    expect(summary.recurringThreads ?? []).toEqual([]);
+  });
+
+  it("treats a thread with no occurrenceCount as non-recurring", () => {
+    const summary = buildActivitySummary({
+      ...baseInput(),
+      memoryThreads: [thread({ id: "legacy", note: "legacy thread" })]
+    });
+
+    expect(summary.recurringThreads ?? []).toEqual([]);
+  });
+
+  it("caps recurring threads at 2", () => {
+    const summary = buildActivitySummary({
+      ...baseInput(),
+      memoryThreads: [
+        thread({ id: "r1", note: "r1", occurrenceCount: 5, lastSeen: "2026-07-15T00:00:00.000Z" }),
+        thread({ id: "r2", note: "r2", occurrenceCount: 4, lastSeen: "2026-07-14T00:00:00.000Z" }),
+        thread({ id: "r3", note: "r3", occurrenceCount: 3, lastSeen: "2026-07-13T00:00:00.000Z" })
+      ]
+    });
+
+    expect(summary.recurringThreads).toHaveLength(2);
+    expect(summary.recurringThreads?.map((t) => t.note)).toEqual(["r1", "r2"]);
+  });
+
+  it("never surfaces a high-count thread that fell outside the recency top-K (랭킹 제약, 결정 ④)", () => {
+    // top-K = 5. recencyDecay 순으로 앞선 5개는 모두 비반복(count 1)이고,
+    // 6번째로 밀려난 스레드만 카운트가 높다 → recurringThreads는 비어야 한다.
+    const recentNonRecurring = Array.from({ length: 5 }, (_, index) =>
+      thread({
+        id: `recent-${index}`,
+        note: `recent ${index}`,
+        occurrenceCount: 1,
+        lastSeen: `2026-07-${String(15 - index).padStart(2, "0")}T00:00:00.000Z`
+      })
+    );
+    const staleButFrequent = thread({
+      id: "stale",
+      note: "stale but frequent",
+      occurrenceCount: 9,
+      lastSeen: "2026-07-05T00:00:00.000Z"
+    });
+
+    const summary = buildActivitySummary({
+      ...baseInput(),
+      memoryThreads: [...recentNonRecurring, staleButFrequent]
+    });
+
+    expect(summary.recurringThreads ?? []).toEqual([]);
+    expect(summary.unfinishedThreads).not.toContain("stale but frequent");
+  });
+
+  it("stamps schemaVersion 2 on newly built summaries", () => {
+    const summary = buildActivitySummary(baseInput());
+
+    expect(summary.schemaVersion).toBe(2);
+  });
+
+  it("still accepts a stored v1 activity-summary.json through the guard (하위 호환)", () => {
+    const v1 = {
+      ...buildActivitySummary(baseInput()),
+      schemaVersion: 1
+    };
+    delete (v1 as { recurringThreads?: unknown }).recurringThreads;
+
+    expect(isActivitySummary(v1)).toBe(true);
   });
 });
