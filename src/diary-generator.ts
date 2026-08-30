@@ -9,11 +9,13 @@ import type {
   AiProvider,
   JsonObject,
   JsonValue,
-  SafeActivitySummary
+  SafeActivitySummary,
+  SafeRecurringThread
 } from "./ai-provider.js";
 import { redactArchitectureDisclosure } from "./architecture-disclosure.js";
 import type { Persona, PersonaLangMix } from "./persona.js";
 import { emailPattern } from "./redaction.js";
+import { buildRecurringThreadInstructionLines } from "./recurring-thread-instructions.js";
 import type { StoryCardPlan, StoryCardPlanCard } from "./story-card-plan.js";
 import type { StoryCardSlots } from "./story-card-slots.js";
 import { isMood } from "./story-format-plan.js";
@@ -455,6 +457,7 @@ export function buildCaptionInstructions(options: {
   quiet: boolean;
   persona: Persona;
   moodPlan: MoodPlan;
+  recurringThreads?: SafeRecurringThread[];
 }): string {
   const quietInstruction = options.quiet
     ? "This is a quiet day with no recorded Git activity. Acknowledge the absence of recorded work honestly. Write a caption about the quiet — the narrator observed little activity and says so plainly. Do not invent work. A 조용한 날 caption is valid and honest content."
@@ -539,7 +542,8 @@ export function buildCaptionInstructions(options: {
     "Do not explain the joke or signal that a line is meant to be funny.",
     "Do not expose secrets, local paths, credentials, code snippets, private URLs, or emails.",
     "Do not imply the draft was automatically posted or exported.",
-    "Each hashtag must start with # and contain no spaces."
+    "Each hashtag must start with # and contain no spaces.",
+    ...buildRecurringThreadInstructionLines(options.recurringThreads)
   ].join("\n");
 }
 
@@ -595,6 +599,14 @@ function buildSafeCaptionInput(options: {
     safeInput.rawNarrativeProjection = toJsonValue(
       options.rawNarrativeProjection
     );
+  }
+
+  // UNC-229 / T5: 지시문이 참조할 누적 사실을 계약에 싣는다. 반복이 없는 날은
+  // 필드를 아예 붙이지 않아 프롬프트 입력도 이전과 동일하게 유지된다.
+  const recurringThreads = summary.recurringThreads ?? [];
+
+  if (recurringThreads.length > 0) {
+    safeInput.recurringThreads = recurringThreads;
   }
 
   return safeInput;
@@ -677,7 +689,8 @@ export async function generateCaption(
     instructions: buildCaptionInstructions({
       quiet: options.activitySummary.activityLevel === "none",
       persona: options.persona,
-      moodPlan: options.moodPlan
+      moodPlan: options.moodPlan,
+      recurringThreads: options.activitySummary.recurringThreads
     }),
     summary: buildSafeCaptionInput({
       activitySummary: options.activitySummary,

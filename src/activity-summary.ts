@@ -101,8 +101,25 @@ export type ManualContextSummary = {
   }[];
 };
 
+/**
+ * UNC-229 / T3: 반복 중인 스레드의 **누적 사실**만 담는다. 표현 계약은
+ * "누적 N번 + 최근 등장일"이며 "연속 N일"은 계약에서 영구 제외다.
+ */
+export type RecurringThreadSummary = {
+  note: string;
+  occurrenceCount: number;
+  lastSeenDate: string;
+};
+
+/** 이 값 이상 등장한 스레드만 "반복 중"으로 본다 (AC2 판정 기준). */
+export const RECURRING_THREAD_MIN_OCCURRENCES = 2;
+
+/** 노출 상한. 전부 노출하면 다시 태스크 나열로 돌아간다. */
+export const RECURRING_THREAD_MAX = 2;
+
 export type ActivitySummary = {
-  schemaVersion: 1;
+  // v1 파일도 계속 읽히므로 `2` 리터럴이 아니라 `1 | 2`다. 새로 만드는 요약은 항상 2.
+  schemaVersion: 1 | 2;
   targetDate: string;
   generatedAt: string;
   activityLevel: ActivityLevel;
@@ -118,6 +135,8 @@ export type ActivitySummary = {
   publicSafetyNotes: string[];
   privateItemsToAvoid: string[];
   uncertaintyNotes: string[];
+  /** UNC-229 / T3: 반복 중인 top-K 부분집합 (최대 `RECURRING_THREAD_MAX`개). */
+  recurringThreads?: RecurringThreadSummary[];
 };
 
 type ProjectAccumulator = {
@@ -307,7 +326,7 @@ export function buildActivitySummary(
     hasUncommittedChanges: uncommittedFiles.length > 0
   });
 
-  const { unfinishedThreadNotes, jokeNotes } = selectTopMemoryThreads(
+  const { unfinishedThreadNotes, jokeNotes, recurringThreads } = selectTopMemoryThreads(
     input.memoryThreads,
     new Date(input.generatedAt)
   );
@@ -325,7 +344,7 @@ export function buildActivitySummary(
   ];
 
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     targetDate: input.targetDate,
     generatedAt: input.generatedAt,
     activityLevel,
@@ -354,7 +373,8 @@ export function buildActivitySummary(
     possibleJokes,
     publicSafetyNotes,
     privateItemsToAvoid: sortPrivateItems(privateItems),
-    uncertaintyNotes
+    uncertaintyNotes,
+    recurringThreads
   };
 }
 
@@ -420,7 +440,8 @@ export function isActivitySummary(value: unknown): value is ActivitySummary {
   }
 
   return (
-    value.schemaVersion === 1 &&
+    // v1 파일 읽기 경로를 살려 둔다 — 저장된 드래프트를 재생성 대상으로 만들지 않는다.
+    (value.schemaVersion === 1 || value.schemaVersion === 2) &&
     typeof value.targetDate === "string" &&
     typeof value.generatedAt === "string" &&
     isActivityLevel(value.activityLevel) &&
@@ -435,7 +456,8 @@ export function isActivitySummary(value: unknown): value is ActivitySummary {
     Array.isArray(value.possibleJokes) &&
     Array.isArray(value.publicSafetyNotes) &&
     Array.isArray(value.privateItemsToAvoid) &&
-    Array.isArray(value.uncertaintyNotes)
+    Array.isArray(value.uncertaintyNotes) &&
+    (value.recurringThreads === undefined || Array.isArray(value.recurringThreads))
   );
 }
 
@@ -581,14 +603,20 @@ function buildUncertaintyNotes(
  * `recencyDecay(thread, now)` descending, then split their notes by kind:
  * `running-joke`/`win` go to the joke slot, everything else goes to the
  * unfinished-thread slot. Threads with `status !== "active"` are excluded
- * before ranking.
+ * before ranking. The same recency-ranked scan (no re-sort) also picks out
+ * up to `RECURRING_THREAD_MAX` threads with `occurrenceCount >=
+ * RECURRING_THREAD_MIN_OCCURRENCES` for `recurringThreads` (UNC-229 / T3).
  */
 function selectTopMemoryThreads(
   memoryThreads: MemoryThread[] | undefined,
   now: Date
-): { unfinishedThreadNotes: string[]; jokeNotes: string[] } {
+): {
+  unfinishedThreadNotes: string[];
+  jokeNotes: string[];
+  recurringThreads: RecurringThreadSummary[];
+} {
   if (!memoryThreads || memoryThreads.length === 0) {
-    return { unfinishedThreadNotes: [], jokeNotes: [] };
+    return { unfinishedThreadNotes: [], jokeNotes: [], recurringThreads: [] };
   }
 
   const topThreads = memoryThreads
@@ -598,6 +626,10 @@ function selectTopMemoryThreads(
 
   const unfinishedThreadNotes: string[] = [];
   const jokeNotes: string[] = [];
+  // 결정 ④ 랭킹 제약: recencyDecay 정렬을 그대로 두고 앞에서부터 훑는다.
+  // occurrenceCount로 재정렬하면 top-K 밖 스레드가 recurringThreads에만 등장해
+  // "평탄화 슬롯에 없는 새 소재"가 되어 중복 금지 지시문이 무력화된다.
+  const recurringThreads: RecurringThreadSummary[] = [];
 
   for (const thread of topThreads) {
     if (thread.kind === "running-joke" || thread.kind === "win") {
@@ -605,9 +637,24 @@ function selectTopMemoryThreads(
     } else {
       unfinishedThreadNotes.push(thread.note);
     }
+
+    const occurrenceCount = thread.occurrenceCount ?? 1;
+
+    if (
+      recurringThreads.length < RECURRING_THREAD_MAX &&
+      occurrenceCount >= RECURRING_THREAD_MIN_OCCURRENCES
+    ) {
+      recurringThreads.push({
+        // note는 unfinishedThreadNotes/jokeNotes와 같은 출처다 —
+        // 기존 memory-safety-gate 처리를 그대로 물려받는다.
+        note: thread.note,
+        occurrenceCount,
+        lastSeenDate: thread.lastSeen.slice(0, 10)
+      });
+    }
   }
 
-  return { unfinishedThreadNotes, jokeNotes };
+  return { unfinishedThreadNotes, jokeNotes, recurringThreads };
 }
 
 function buildPossibleJokes(

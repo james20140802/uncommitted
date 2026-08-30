@@ -1,10 +1,12 @@
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   applyThreadBounds,
+  isMemoryThread,
   isThreadExpired,
+  memoryDir,
   readThreads,
   recencyDecay,
   threadsFilePath,
@@ -33,7 +35,10 @@ describe("memory-store", () => {
     expect(await readThreads(root)).toEqual([]);
     const threads = [thread(), thread({ id: "t2", kind: "refactor" })];
     await writeThreads(root, threads);
-    expect(await readThreads(root)).toEqual(threads);
+    // readThreads normalizes the absent occurrenceCount to 1 (UNC-273 / T1).
+    expect(await readThreads(root)).toEqual(
+      threads.map((t) => ({ ...t, occurrenceCount: 1 }))
+    );
     // path invariant
     expect(threadsFilePath(root).endsWith("/.uncommitted/memory/threads.jsonl")).toBe(true);
   });
@@ -71,5 +76,73 @@ describe("memory-store", () => {
     expect(bounded.length).toBeLessThanOrEqual(THREAD_MAX_ENTRIES);
     expect(bounded.some((t) => t.id === "old")).toBe(false);
     expect(bounded.every((t) => t.status === "active")).toBe(true);
+  });
+});
+
+describe("occurrenceCount (UNC-273 / T1)", () => {
+  it("accepts a legacy record with no occurrenceCount and normalizes it to 1 on read", async () => {
+    const root = await mkdtemp(join(tmpdir(), "unc-mem-"));
+    const legacyLine = JSON.stringify({
+      id: "bug:flaky-timeout",
+      firstSeen: "2026-08-01T00:00:00.000Z",
+      lastSeen: "2026-08-03T00:00:00.000Z",
+      kind: "bug",
+      note: "flaky timeout again",
+      status: "active",
+      decay: 1
+    });
+
+    await mkdir(memoryDir(root), { recursive: true });
+    await writeFile(threadsFilePath(root), `${legacyLine}\n`, "utf8");
+
+    const threads = await readThreads(root);
+
+    expect(threads).toHaveLength(1);
+    expect(threads[0]?.occurrenceCount).toBe(1);
+    // 무손실: 기존 필드가 하나도 유실되지 않는다
+    expect(threads[0]?.id).toBe("bug:flaky-timeout");
+    expect(threads[0]?.firstSeen).toBe("2026-08-01T00:00:00.000Z");
+    expect(threads[0]?.lastSeen).toBe("2026-08-03T00:00:00.000Z");
+    expect(threads[0]?.kind).toBe("bug");
+    expect(threads[0]?.note).toBe("flaky timeout again");
+    expect(threads[0]?.status).toBe("active");
+    expect(threads[0]?.decay).toBe(1);
+  });
+
+  it("round-trips an explicit occurrenceCount through write and read", async () => {
+    const root = await mkdtemp(join(tmpdir(), "unc-mem-"));
+
+    await writeThreads(root, [
+      {
+        id: "bug:flaky-timeout",
+        firstSeen: "2026-08-01T00:00:00.000Z",
+        lastSeen: "2026-08-03T00:00:00.000Z",
+        kind: "bug",
+        note: "flaky timeout again",
+        status: "active",
+        decay: 1,
+        occurrenceCount: 4
+      }
+    ]);
+
+    const threads = await readThreads(root);
+
+    expect(threads[0]?.occurrenceCount).toBe(4);
+  });
+
+  it("isMemoryThread accepts a missing occurrenceCount and rejects a non-number one", () => {
+    const base = {
+      id: "bug:x",
+      firstSeen: "2026-08-01T00:00:00.000Z",
+      lastSeen: "2026-08-03T00:00:00.000Z",
+      kind: "bug",
+      note: "n",
+      status: "active",
+      decay: 1
+    };
+
+    expect(isMemoryThread(base)).toBe(true);
+    expect(isMemoryThread({ ...base, occurrenceCount: 3 })).toBe(true);
+    expect(isMemoryThread({ ...base, occurrenceCount: "3" })).toBe(false);
   });
 });

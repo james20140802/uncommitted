@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { reflectThreads, deriveThreadNote } from "../src/reflection.js";
 import type { ActivitySignal } from "../src/event-source.js";
+import type { MemoryThread } from "../src/memory-store.js";
 
 function signal(overrides: Partial<ActivitySignal> = {}): ActivitySignal {
   return {
@@ -125,5 +126,113 @@ describe("reflection", () => {
     });
 
     expect(out).toEqual([]);
+  });
+});
+
+describe("occurrenceCount 누적 (UNC-274 / T2)", () => {
+  it("counts multiple same-day signals for one thread as a single occurrence", () => {
+    const day1 = new Date("2026-08-10T09:00:00.000Z");
+
+    const first = reflectThreads({
+      threads: [],
+      signals: [signal({ summary: "flaky timeout again" })],
+      now: day1
+    });
+
+    expect(first).toHaveLength(1);
+    expect(first[0]?.occurrenceCount).toBe(1);
+
+    // 같은 날, 같은 스레드로 접히는 신호가 하나 더 들어온다
+    const sameDay = reflectThreads({
+      threads: first,
+      signals: [signal({ summary: "flaky timeout again" })],
+      now: new Date("2026-08-10T21:00:00.000Z")
+    });
+
+    expect(sameDay).toHaveLength(1);
+    expect(sameDay[0]?.occurrenceCount).toBe(1);
+  });
+
+  it("increments the counter when the thread reappears on a later date", () => {
+    const first = reflectThreads({
+      threads: [],
+      signals: [signal({ summary: "flaky timeout again" })],
+      now: new Date("2026-08-10T09:00:00.000Z")
+    });
+
+    const nextDay = reflectThreads({
+      threads: first,
+      signals: [signal({ summary: "flaky timeout again" })],
+      now: new Date("2026-08-11T09:00:00.000Z")
+    });
+
+    expect(nextDay).toHaveLength(1);
+    expect(nextDay[0]?.occurrenceCount).toBe(2);
+  });
+
+  it("increments a legacy thread that carries no occurrenceCount to 2 on its next day", () => {
+    // signal()'s default kind is "commit", and "flaky timeout again" matches
+    // JOKE_PATTERN (not BUG_PATTERN), so it classifies as "running-joke" —
+    // the legacy fixture's kind must match that or threadKey() won't merge
+    // it with the incoming signal and this test would (wrongly) pass by
+    // creating a second thread instead of exercising the merge path.
+    const legacy: MemoryThread = {
+      id: "running-joke:flaky-timeout-again",
+      firstSeen: "2026-08-09T00:00:00.000Z",
+      lastSeen: "2026-08-10T00:00:00.000Z",
+      kind: "running-joke",
+      note: "flaky timeout again",
+      status: "active",
+      decay: 1
+      // occurrenceCount 없음 — 레거시 레코드
+    };
+
+    const merged = reflectThreads({
+      threads: [legacy],
+      signals: [signal({ summary: "flaky timeout again" })],
+      now: new Date("2026-08-11T09:00:00.000Z")
+    });
+
+    expect(merged).toHaveLength(1);
+    expect(merged[0]?.occurrenceCount).toBe(2);
+  });
+});
+
+describe("occurrenceCount out-of-order 날짜 (backfill)", () => {
+  it("does not double-count a date when an earlier date is backfilled in between", () => {
+    // 8/10 → 8/11 순서로 두 날 등장한 스레드(카운트 2).
+    const seenTwice = reflectThreads({
+      threads: reflectThreads({
+        threads: [],
+        signals: [signal({ summary: "flaky timeout again" })],
+        now: new Date("2026-08-10T09:00:00.000Z")
+      }),
+      signals: [signal({ summary: "flaky timeout again" })],
+      now: new Date("2026-08-11T09:00:00.000Z")
+    });
+
+    expect(seenTwice[0]?.occurrenceCount).toBe(2);
+
+    // `generate --date 2026-08-09` 백필: 이미 센 8/11보다 과거 날짜다.
+    // 카운터가 늘어서도 안 되고, lastSeen이 과거로 되감겨서도 안 된다.
+    const backfilled = reflectThreads({
+      threads: seenTwice,
+      signals: [signal({ summary: "flaky timeout again" })],
+      now: new Date("2026-08-09T23:59:59.999Z")
+    });
+
+    expect(backfilled).toHaveLength(1);
+    expect(backfilled[0]?.occurrenceCount).toBe(2);
+    expect(backfilled[0]?.lastSeen).toBe("2026-08-11T09:00:00.000Z");
+
+    // 백필 뒤 8/11을 다시 생성해도 그 날짜가 두 번 세어지지 않는다.
+    const regenerated = reflectThreads({
+      threads: backfilled,
+      signals: [signal({ summary: "flaky timeout again" })],
+      now: new Date("2026-08-11T21:00:00.000Z")
+    });
+
+    expect(regenerated).toHaveLength(1);
+    expect(regenerated[0]?.occurrenceCount).toBe(2);
   });
 });

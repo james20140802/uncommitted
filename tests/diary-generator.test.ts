@@ -20,6 +20,7 @@ import {
 } from "../src/diary-generator.js";
 import { PERSONA_PRESETS, type Persona } from "../src/persona.js";
 import type { MoodPlan, StoryFormatPlan } from "../src/story-format-plan.js";
+import { RECURRING_THREAD_INSTRUCTIONS } from "../src/recurring-thread-instructions.js";
 
 const captionTestPersona: Persona = PERSONA_PRESETS["시니컬한 관찰자"].persona;
 const captionTestMoodPlan: MoodPlan = createStoryFormatPlan({
@@ -2587,6 +2588,80 @@ describe("caption generator", () => {
     const inputJson = JSON.stringify(provider.requests[0]?.input);
     expect(inputJson).toContain("Reviewed the onboarding docs.");
     expect(inputJson).toContain("Updated the API reference.");
+  });
+});
+
+describe("캡션 누적 대비 지시문 (UNC-277 / T5)", () => {
+  const recurring = [
+    { note: "flaky timeout again", occurrenceCount: 3, lastSeenDate: "2026-08-29" }
+  ];
+
+  it("adds nothing when there are no recurring threads (AC2)", () => {
+    const without = buildCaptionInstructions({
+      quiet: false,
+      persona: captionTestPersona,
+      moodPlan: captionTestMoodPlan
+    });
+    const withEmpty = buildCaptionInstructions({
+      quiet: false,
+      persona: captionTestPersona,
+      moodPlan: captionTestMoodPlan,
+      recurringThreads: []
+    });
+
+    expect(withEmpty).toBe(without);
+    expect(without).not.toContain(RECURRING_THREAD_INSTRUCTIONS.header);
+    expect(without).not.toContain(RECURRING_THREAD_INSTRUCTIONS.useCumulative);
+    expect(without).not.toContain(RECURRING_THREAD_INSTRUCTIONS.noInventedCount);
+    expect(without).not.toContain(RECURRING_THREAD_INSTRUCTIONS.noStreak);
+    expect(without).not.toContain(RECURRING_THREAD_INSTRUCTIONS.notNewMaterial);
+  });
+
+  it("adds all four constraint sentences when recurring threads exist (AC4)", () => {
+    const instructions = buildCaptionInstructions({
+      quiet: false,
+      persona: captionTestPersona,
+      moodPlan: captionTestMoodPlan,
+      recurringThreads: recurring
+    });
+
+    expect(instructions).toContain(RECURRING_THREAD_INSTRUCTIONS.useCumulative);
+    expect(instructions).toContain(RECURRING_THREAD_INSTRUCTIONS.noInventedCount);
+    expect(instructions).toContain(RECURRING_THREAD_INSTRUCTIONS.noStreak);
+    expect(instructions).toContain(RECURRING_THREAD_INSTRUCTIONS.notNewMaterial);
+  });
+
+  it("keeps the quiet-day constraint intact when recurring threads exist (AC5)", () => {
+    const quietWithRecurring = buildCaptionInstructions({
+      quiet: true,
+      persona: captionTestPersona,
+      moodPlan: captionTestMoodPlan,
+      recurringThreads: recurring
+    });
+
+    // 조용한 날 문장이 사라지지 않는다 — 반복 스레드가 활동 날조의 근거가 되면 안 된다
+    expect(quietWithRecurring).toContain("Do not invent work.");
+    expect(quietWithRecurring).toContain(RECURRING_THREAD_INSTRUCTIONS.noInventedCount);
+  });
+
+  it("projects recurringThreads into the safe caption input", async () => {
+    const provider = new MockAiProvider({
+      response: {
+        caption: "이 버그 오늘도 또 만났습니다",
+        hashtags: ["#Uncommitted", "#버그"]
+      }
+    });
+
+    await generateCaption({
+      activitySummary: createActivitySummary({ recurringThreads: recurring }),
+      provider,
+      persona: captionTestPersona,
+      roastLevel: 2,
+      moodPlan: captionTestMoodPlan
+    });
+
+    const request = provider.requests[0]!;
+    expect(request.input.recurringThreads).toEqual(recurring);
   });
 });
 

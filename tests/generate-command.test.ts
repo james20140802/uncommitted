@@ -98,7 +98,7 @@ describe("generate command", () => {
       "caption"
     ]);
     expect(activitySummary).toMatchObject({
-      schemaVersion: 1,
+      schemaVersion: 2,
       targetDate: "2026-05-12",
       activityLevel: "medium",
       commitSignals: {
