@@ -197,3 +197,42 @@ describe("occurrenceCount 누적 (UNC-274 / T2)", () => {
     expect(merged[0]?.occurrenceCount).toBe(2);
   });
 });
+
+describe("occurrenceCount out-of-order 날짜 (backfill)", () => {
+  it("does not double-count a date when an earlier date is backfilled in between", () => {
+    // 8/10 → 8/11 순서로 두 날 등장한 스레드(카운트 2).
+    const seenTwice = reflectThreads({
+      threads: reflectThreads({
+        threads: [],
+        signals: [signal({ summary: "flaky timeout again" })],
+        now: new Date("2026-08-10T09:00:00.000Z")
+      }),
+      signals: [signal({ summary: "flaky timeout again" })],
+      now: new Date("2026-08-11T09:00:00.000Z")
+    });
+
+    expect(seenTwice[0]?.occurrenceCount).toBe(2);
+
+    // `generate --date 2026-08-09` 백필: 이미 센 8/11보다 과거 날짜다.
+    // 카운터가 늘어서도 안 되고, lastSeen이 과거로 되감겨서도 안 된다.
+    const backfilled = reflectThreads({
+      threads: seenTwice,
+      signals: [signal({ summary: "flaky timeout again" })],
+      now: new Date("2026-08-09T23:59:59.999Z")
+    });
+
+    expect(backfilled).toHaveLength(1);
+    expect(backfilled[0]?.occurrenceCount).toBe(2);
+    expect(backfilled[0]?.lastSeen).toBe("2026-08-11T09:00:00.000Z");
+
+    // 백필 뒤 8/11을 다시 생성해도 그 날짜가 두 번 세어지지 않는다.
+    const regenerated = reflectThreads({
+      threads: backfilled,
+      signals: [signal({ summary: "flaky timeout again" })],
+      now: new Date("2026-08-11T21:00:00.000Z")
+    });
+
+    expect(regenerated).toHaveLength(1);
+    expect(regenerated[0]?.occurrenceCount).toBe(2);
+  });
+});
