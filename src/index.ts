@@ -175,6 +175,11 @@ export {
 export type { ArchitectureDisclosureMatch } from "./architecture-disclosure.js";
 export { buildCaptionCardGist } from "./caption-card-gist.js";
 export {
+  buildCaptionCardRoleLines,
+  buildCaptionLengthLine,
+  buildCaptionSkeletonLines
+} from "./caption-card-role.js";
+export {
   buildLaunchAgentPlist,
   captureProviderEnv,
   getLaunchdLabel,

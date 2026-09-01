@@ -2089,6 +2089,36 @@ describe("caption generator", () => {
     );
   });
 
+  it("카드가 있는 날 캡션 지시문이 짧은 부연을 요구한다 (UNC-236 AC1)", () => {
+    const instructions = buildCaptionInstructions({
+      quiet: false,
+      persona: captionTestPersona,
+      moodPlan: captionTestMoodPlan,
+      storyCardGist: [{ cardType: "modal", lines: ["좋은 UX 팁 ①"] }]
+    });
+
+    expect(instructions).toContain("1 to 2 short sentences");
+    expect(instructions).not.toContain("4 to 8 short lines");
+    expect(instructions).toContain("storyCardGist");
+    expect(instructions).toContain("2 to 5 hashtags");
+  });
+
+  it("카드가 없는 날 캡션 지시문이 기존과 한 글자도 다르지 않다 (UNC-236 AC3)", () => {
+    const base = {
+      quiet: false,
+      persona: captionTestPersona,
+      moodPlan: captionTestMoodPlan
+    };
+
+    const withoutField = buildCaptionInstructions({ ...base });
+    const withEmptyGist = buildCaptionInstructions({ ...base, storyCardGist: [] });
+
+    expect(withEmptyGist).toBe(withoutField);
+    expect(withoutField).toContain("4 to 8 short lines");
+    expect(withoutField).toContain("Opening beat");
+    expect(withoutField).not.toContain("storyCardGist");
+  });
+
   it("generateCaption sends commitSubjects as caption anchor in prompt input", async () => {
     const provider = new MockAiProvider({
       response: {
