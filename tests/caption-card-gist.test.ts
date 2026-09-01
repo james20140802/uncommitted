@@ -2,17 +2,21 @@ import { describe, expect, it } from "vitest";
 
 import { ARCHITECTURE_DISCLOSURE_REPLACEMENT } from "../src/architecture-disclosure.js";
 import { buildCaptionCardGist } from "../src/caption-card-gist.js";
-import type { StoryCardPlan } from "../src/story-card-plan.js";
+import type { StoryCardPlan, StoryCardPlanCardSource } from "../src/story-card-plan.js";
 
 function planOf(
-  cards: { type: string; slots: Record<string, string | string[]> }[]
+  cards: {
+    type: string;
+    slots: Record<string, string | string[]>;
+    source?: StoryCardPlanCardSource;
+  }[]
 ): StoryCardPlan {
   return {
     schemaVersion: 1,
     cards: cards.map((card) => ({
       type: card.type,
       slots: card.slots,
-      source: "generated" as const
+      source: card.source ?? ("generated" as const)
     }))
   };
 }
@@ -77,5 +81,46 @@ describe("buildCaptionCardGist (UNC-236)", () => {
   it("계획이 없거나 카드가 없으면 빈 배열을 돌려준다", () => {
     expect(buildCaptionCardGist(undefined)).toEqual([]);
     expect(buildCaptionCardGist({ schemaVersion: 1, cards: [] })).toEqual([]);
+  });
+
+  it("fallback 카드만 있는 날은 빈 배열을 돌려준다 (고정 문구는 농담을 지지 않는다)", () => {
+    const gist = buildCaptionCardGist(
+      planOf([
+        {
+          type: "typo",
+          slots: { headline: "오늘은 쉬어가는 날" },
+          source: "fallback"
+        }
+      ])
+    );
+
+    expect(gist).toEqual([]);
+  });
+
+  it("generated·degraded 카드는 남기고 fallback 카드만 제외한다", () => {
+    const gist = buildCaptionCardGist(
+      planOf([
+        {
+          type: "modal",
+          slots: { headline: "좋은 UX 팁 ①" },
+          source: "generated"
+        },
+        {
+          type: "chat",
+          slots: { turns: ["말이 남은 카드"] },
+          source: "degraded"
+        },
+        {
+          type: "typo",
+          slots: { headline: "오늘은 쉬어가는 날" },
+          source: "fallback"
+        }
+      ])
+    );
+
+    expect(gist).toEqual([
+      { cardType: "modal", lines: ["좋은 UX 팁 ①"] },
+      { cardType: "chat", lines: ["말이 남은 카드"] }
+    ]);
   });
 });

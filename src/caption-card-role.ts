@@ -49,7 +49,8 @@ const CARD_ROLE_LINES = [
   "- The cards carry the joke. The caption is the coworker's aside — the thing the cards did not say.",
   "- Do not repeat, rephrase, or explain any line that already appears in storyCardGist. If the caption would say what a card already said, say something else instead.",
   "- Do not describe the cards, refer to them as cards or images, or narrate what the reader is looking at.",
-  "- storyCardGist is a record of what has already been said, not a list of new topics. Do not treat it as extra work to cover."
+  "- storyCardGist is a record of what has already been said, not a list of new topics. Do not treat it as extra work to cover.",
+  "- If a card in storyCardGist already states a recurring thread's cumulative count (how many times, when last seen), do not restate that count in the caption — pick a different angle instead. This takes precedence over any recurring-thread instruction elsewhere that says to work the cumulative count into the writing."
 ];
 
 function hasCards(gist: SafeStoryCardGist[] | undefined): boolean {

@@ -46,6 +46,17 @@ describe("caption card role lines (UNC-236)", () => {
     expect(buildCaptionCardRoleLines([])).toEqual([]);
   });
 
+  it("카드가 이미 누적 횟수를 말했다면 캡션은 되풀이하지 않는다 (반복 스레드 지시문보다 우선)", () => {
+    const withCards = buildCaptionCardRoleLines(gist).join("\n");
+
+    expect(withCards).toMatch(/recurring/i);
+    expect(withCards).toMatch(/cumulative count/i);
+    expect(withCards).toMatch(/precedence|takes priority|overrides/i);
+
+    expect(buildCaptionCardRoleLines(undefined).join("\n")).not.toMatch(/cumulative count/i);
+    expect(buildCaptionCardRoleLines([]).join("\n")).not.toMatch(/cumulative count/i);
+  });
+
   it("카드가 있을 때 스켈레톤이 4~8줄 리듬을 남겨 두지 않는다", () => {
     const withCards = buildCaptionSkeletonLines(gist).join("\n");
 

@@ -63,6 +63,7 @@ describe("caption card gist integration (UNC-236)", () => {
 
     const captured = provider.requests[0];
 
+    expect(captured).toBeDefined();
     expect(captured?.input).not.toHaveProperty("storyCardGist");
     expect(captured?.instructions).toContain("4 to 8 short lines");
     expect(result.caption.trim().length).toBeGreaterThan(0);
