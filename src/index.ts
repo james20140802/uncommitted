@@ -118,7 +118,8 @@ export type {
   MockAiProviderOptions,
   SafeActivitySummary,
   SafeProjectSummary,
-  SafeRecurringThread
+  SafeRecurringThread,
+  SafeStoryCardGist
 } from "./ai-provider.js";
 export {
   generateStoryFormatPlan,
@@ -172,6 +173,7 @@ export {
   redactArchitectureDisclosure
 } from "./architecture-disclosure.js";
 export type { ArchitectureDisclosureMatch } from "./architecture-disclosure.js";
+export { buildCaptionCardGist } from "./caption-card-gist.js";
 export {
   buildLaunchAgentPlist,
   captureProviderEnv,

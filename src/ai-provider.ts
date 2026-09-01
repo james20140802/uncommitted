@@ -50,6 +50,16 @@ export type SafeRecurringThread = {
   lastSeenDate: string;
 };
 
+/**
+ * UNC-236: 캡션이 카드와 같은 농담을 반복하지 않도록, 그날 카드에 이미
+ * 찍힌 문구를 캡션 입력에 실어 보낸다. 슬롯 이름 같은 내부 식별자는
+ * 계약에서 제외한다 — 중복 회피에 필요한 것은 문구뿐이다.
+ */
+export type SafeStoryCardGist = {
+  cardType: string;
+  lines: string[];
+};
+
 type SafeActivitySummaryBase = {
   schemaVersion: 1;
   targetDate: string;
@@ -67,6 +77,7 @@ type SafeActivitySummaryBase = {
  */
 export type SafeActivitySummary = SafeActivitySummaryBase & {
   recurringThreads?: SafeRecurringThread[];
+  storyCardGist?: SafeStoryCardGist[];
 };
 
 export type AiGenerationRequestOptions = {
@@ -1185,7 +1196,10 @@ export function isSafeActivitySummary(value: JsonValue): value is SafeActivitySu
     value.projectSummaries.every(isSafeProjectSummary) &&
     (value.recurringThreads === undefined ||
       (Array.isArray(value.recurringThreads) &&
-        value.recurringThreads.every(isSafeRecurringThread)))
+        value.recurringThreads.every(isSafeRecurringThread))) &&
+    (value.storyCardGist === undefined ||
+      (Array.isArray(value.storyCardGist) &&
+        value.storyCardGist.every(isSafeStoryCardGist)))
   );
 }
 
@@ -1195,6 +1209,15 @@ function isSafeRecurringThread(value: unknown): value is SafeRecurringThread {
     typeof value.note === "string" &&
     typeof value.occurrenceCount === "number" &&
     typeof value.lastSeenDate === "string"
+  );
+}
+
+function isSafeStoryCardGist(value: unknown): value is SafeStoryCardGist {
+  return (
+    isRecord(value) &&
+    typeof value.cardType === "string" &&
+    Array.isArray(value.lines) &&
+    value.lines.every((line) => typeof line === "string")
   );
 }
 
