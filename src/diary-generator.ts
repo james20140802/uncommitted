@@ -96,6 +96,7 @@ export type GenerateCaptionOptions = {
   persona: Persona;
   roastLevel: number;
   rawNarrativeProjection?: RawNarrativeProjection;
+  storyCardGist?: SafeStoryCardGist[];
 };
 
 type DiaryDraftProviderData = JsonObject & {
@@ -550,6 +551,7 @@ function buildSafeCaptionInput(options: {
   moodPlan: MoodPlan;
   roastLevel: number;
   rawNarrativeProjection?: RawNarrativeProjection;
+  storyCardGist?: SafeStoryCardGist[];
 }): SafeActivitySummary {
   const summary = options.activitySummary;
   const quiet = summary.activityLevel === "none";
@@ -604,6 +606,14 @@ function buildSafeCaptionInput(options: {
 
   if (recurringThreads.length > 0) {
     safeInput.recurringThreads = recurringThreads;
+  }
+
+  // UNC-236: 카드가 있는 날에만 필드를 붙인다. 없는 날은 프로바이더에
+  // 가는 입력이 이전과 바이트 단위로 동일하다 (AC3).
+  const storyCardGist = options.storyCardGist ?? [];
+
+  if (storyCardGist.length > 0) {
+    safeInput.storyCardGist = storyCardGist;
   }
 
   return safeInput;
@@ -687,14 +697,16 @@ export async function generateCaption(
       quiet: options.activitySummary.activityLevel === "none",
       persona: options.persona,
       moodPlan: options.moodPlan,
-      recurringThreads: options.activitySummary.recurringThreads
+      recurringThreads: options.activitySummary.recurringThreads,
+      storyCardGist: options.storyCardGist
     }),
     summary: buildSafeCaptionInput({
       activitySummary: options.activitySummary,
       persona: options.persona,
       moodPlan: options.moodPlan,
       roastLevel: options.roastLevel,
-      rawNarrativeProjection: options.rawNarrativeProjection
+      rawNarrativeProjection: options.rawNarrativeProjection,
+      storyCardGist: options.storyCardGist
     })
   });
 
