@@ -1,8 +1,14 @@
 import { describe, expect, it } from "vitest";
 
+import type { ActivitySummary } from "../src/activity-summary.js";
 import { ARCHITECTURE_DISCLOSURE_REPLACEMENT } from "../src/architecture-disclosure.js";
 import { buildCaptionCardGist } from "../src/caption-card-gist.js";
-import type { StoryCardPlan, StoryCardPlanCardSource } from "../src/story-card-plan.js";
+import { TYPO_FALLBACK_HEADLINE } from "../src/story-card-kind-typo.js";
+import {
+  assembleStoryCardPlan,
+  type StoryCardPlan,
+  type StoryCardPlanCardSource
+} from "../src/story-card-plan.js";
 
 function planOf(
   cards: {
@@ -18,6 +24,47 @@ function planOf(
       slots: card.slots,
       source: card.source ?? ("generated" as const)
     }))
+  };
+}
+
+function createSummary(overrides: Partial<ActivitySummary> = {}): ActivitySummary {
+  return {
+    schemaVersion: 1,
+    targetDate: "2026-08-17",
+    generatedAt: "2026-08-17T00:00:00.000Z",
+    activityLevel: "none",
+    dominantTheme: "quiet",
+    projects: [],
+    commitSignals: {
+      totalCommits: 0,
+      filesChanged: 0,
+      insertions: 0,
+      deletions: 0,
+      subjects: [],
+      themes: []
+    },
+    uncommittedChanges: {
+      totalFiles: 0,
+      byStatus: {
+        modified: 0,
+        added: 0,
+        deleted: 0,
+        renamed: 0,
+        copied: 0,
+        untracked: 0,
+        other: 0
+      },
+      files: []
+    },
+    manualContext: { noteCount: 0, notes: [] },
+    smallWins: [],
+    blockersOrConfusion: [],
+    unfinishedThreads: [],
+    possibleJokes: [],
+    publicSafetyNotes: [],
+    privateItemsToAvoid: [],
+    uncertaintyNotes: [],
+    ...overrides
   };
 }
 
@@ -122,5 +169,46 @@ describe("buildCaptionCardGist (UNC-236)", () => {
       { cardType: "modal", lines: ["좋은 UX 팁 ①"] },
       { cardType: "chat", lines: ["말이 남은 카드"] }
     ]);
+  });
+  it("활동에서 나온 문구를 실은 fallback 카드는 요지에 남긴다", () => {
+    const gist = buildCaptionCardGist(
+      planOf([
+        {
+          type: "typo",
+          slots: { headline: "리팩터링이라 쓰고 되돌리기라 읽는다", kicker: "2026-08-17" },
+          source: "fallback"
+        }
+      ])
+    );
+
+    expect(gist).toEqual([
+      {
+        cardType: "typo",
+        lines: ["리팩터링이라 쓰고 되돌리기라 읽는다", "2026-08-17"]
+      }
+    ]);
+  });
+
+  it("최후의 한 장이 그날의 농담을 실으면 캡션 요지도 그 문구를 받는다", () => {
+    const plan = assembleStoryCardPlan({
+      outcomes: [],
+      summary: createSummary({ possibleJokes: ["리팩터링이라 쓰고 되돌리기라 읽는다"] })
+    });
+
+    expect(plan.cards.map((card) => card.source)).toEqual(["fallback"]);
+
+    const gist = buildCaptionCardGist(plan);
+
+    expect(gist.flatMap((card) => card.lines)).toContain(
+      "리팩터링이라 쓰고 되돌리기라 읽는다"
+    );
+  });
+
+  it("최후의 한 장이 고정 문구뿐인 조용한 날은 요지가 비어 있다", () => {
+    const plan = assembleStoryCardPlan({ outcomes: [], summary: createSummary() });
+
+    expect(plan.cards.map((card) => card.source)).toEqual(["fallback"]);
+    expect(plan.cards[0].slots.headline).toBe(TYPO_FALLBACK_HEADLINE);
+    expect(buildCaptionCardGist(plan)).toEqual([]);
   });
 });
