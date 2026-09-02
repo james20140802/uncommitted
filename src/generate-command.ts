@@ -18,6 +18,7 @@ import {
 } from "./carousel-renderer.js";
 import type { GitActivityEvent } from "./collect-git-command.js";
 import { redactArchitectureDisclosure } from "./architecture-disclosure.js";
+import { buildCaptionCardGist } from "./caption-card-gist.js";
 import { isActivitySignal, type ActivitySignal } from "./event-source.js";
 import { resolveConfigPaths } from "./config-paths.js";
 import type { MemoryThread } from "./memory-store.js";
@@ -527,6 +528,11 @@ export async function runGenerateCommand(
     }
   }
 
+  // UNC-236: 캡션이 카드와 같은 농담을 반복하지 않도록, 안전 검증을 마친
+  // 카드 계획의 문구를 캡션 입력에 싣는다. 이 지점의 storyCardPlan은 이미
+  // 마스킹·재검증을 통과한 값이다.
+  const storyCardGist = buildCaptionCardGist(storyCardPlan);
+
   let captionResult;
 
   try {
@@ -536,7 +542,8 @@ export async function runGenerateCommand(
       provider,
       persona: config.persona,
       roastLevel: config.roastLevel,
-      rawNarrativeProjection
+      rawNarrativeProjection,
+      storyCardGist
     });
   } catch (error) {
     // UNC-253 / T2: 실패 종료 경로가 돌기 전에 미완성 표시를 남긴다.

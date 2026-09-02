@@ -118,7 +118,8 @@ export type {
   MockAiProviderOptions,
   SafeActivitySummary,
   SafeProjectSummary,
-  SafeRecurringThread
+  SafeRecurringThread,
+  SafeStoryCardGist
 } from "./ai-provider.js";
 export {
   generateStoryFormatPlan,

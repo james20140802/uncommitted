@@ -10,9 +10,15 @@ import type {
   JsonObject,
   JsonValue,
   SafeActivitySummary,
-  SafeRecurringThread
+  SafeRecurringThread,
+  SafeStoryCardGist
 } from "./ai-provider.js";
 import { redactArchitectureDisclosure } from "./architecture-disclosure.js";
+import {
+  buildCaptionCardRoleLines,
+  buildCaptionLengthLine,
+  buildCaptionSkeletonLines
+} from "./caption-card-role.js";
 import type { Persona, PersonaLangMix } from "./persona.js";
 import { emailPattern } from "./redaction.js";
 import { buildRecurringThreadInstructionLines } from "./recurring-thread-instructions.js";
@@ -90,6 +96,7 @@ export type GenerateCaptionOptions = {
   persona: Persona;
   roastLevel: number;
   rawNarrativeProjection?: RawNarrativeProjection;
+  storyCardGist?: SafeStoryCardGist[];
 };
 
 type DiaryDraftProviderData = JsonObject & {
@@ -458,6 +465,7 @@ export function buildCaptionInstructions(options: {
   persona: Persona;
   moodPlan: MoodPlan;
   recurringThreads?: SafeRecurringThread[];
+  storyCardGist?: SafeStoryCardGist[];
 }): string {
   const quietInstruction = options.quiet
     ? "This is a quiet day with no recorded Git activity. Acknowledge the absence of recorded work honestly. Write a caption about the quiet — the narrator observed little activity and says so plainly. Do not invent work. A 조용한 날 caption is valid and honest content."
@@ -479,7 +487,7 @@ export function buildCaptionInstructions(options: {
     "This is NOT the user's diary. This is NOT a work report. This is NOT product marketing copy.",
     "Write in Korean. Instagram-native, readable, in the voice described above.",
     "First-person AI coworker perspective. You may say '우리 개발자', '인간', '제가 봄', '저는 옆에서 봤습니다', or similar.",
-    "4 to 8 short lines. Blank lines are allowed. Add 2 to 5 hashtags (each starting with #).",
+    buildCaptionLengthLine(options.storyCardGist),
     "Mild roast is allowed toward situations, workflow, bugs, TODOs, vague requirements, or developer habits. Never insult ability, worth, personality, identity, mental health, or real life.",
     quietInstruction,
     "If rawNarrativeProjection is present, you may use its turns as concrete anchors for what actually happened today; it is already safety-filtered. Never copy it verbatim and never invent work it does not support.",
@@ -487,18 +495,7 @@ export function buildCaptionInstructions(options: {
     ...ALTITUDE_RULE_LINES,
     ...DEADPAN_FRAME_LINES,
     ...KOREAN_SURFACE_LINES,
-    "",
-    "=== STRUCTURE SKELETON (illustrates rhythm and anchor count only, NOT voice) ===",
-    "",
-    "Opening beat: one concrete anchor stated plainly (1-2 lines).",
-    "(blank line)",
-    "Turn: a reaction, consequence, or observation building on that anchor (1-3 lines).",
-    "(optional blank line, optional second beat)",
-    "Landing line: a short closing thought (1 line).",
-    "",
-    "2 to 5 hashtags at the end.",
-    "",
-    "This skeleton shows line rhythm and anchor count ONLY. The actual voice, tone, humor, and emotional register must come from the persona voice lines above and today's mood guidance — never from any fixed example wording.",
+    ...buildCaptionSkeletonLines(options.storyCardGist),
     "",
     "=== BAD EXAMPLES (do not write like these) ===",
     "",
@@ -543,6 +540,7 @@ export function buildCaptionInstructions(options: {
     "Do not expose secrets, local paths, credentials, code snippets, private URLs, or emails.",
     "Do not imply the draft was automatically posted or exported.",
     "Each hashtag must start with # and contain no spaces.",
+    ...buildCaptionCardRoleLines(options.storyCardGist),
     ...buildRecurringThreadInstructionLines(options.recurringThreads)
   ].join("\n");
 }
@@ -553,6 +551,7 @@ function buildSafeCaptionInput(options: {
   moodPlan: MoodPlan;
   roastLevel: number;
   rawNarrativeProjection?: RawNarrativeProjection;
+  storyCardGist?: SafeStoryCardGist[];
 }): SafeActivitySummary {
   const summary = options.activitySummary;
   const quiet = summary.activityLevel === "none";
@@ -607,6 +606,14 @@ function buildSafeCaptionInput(options: {
 
   if (recurringThreads.length > 0) {
     safeInput.recurringThreads = recurringThreads;
+  }
+
+  // UNC-236: 카드가 있는 날에만 필드를 붙인다. 없는 날은 프로바이더에
+  // 가는 입력이 이전과 바이트 단위로 동일하다 (AC3).
+  const storyCardGist = options.storyCardGist ?? [];
+
+  if (storyCardGist.length > 0) {
+    safeInput.storyCardGist = storyCardGist;
   }
 
   return safeInput;
@@ -690,14 +697,16 @@ export async function generateCaption(
       quiet: options.activitySummary.activityLevel === "none",
       persona: options.persona,
       moodPlan: options.moodPlan,
-      recurringThreads: options.activitySummary.recurringThreads
+      recurringThreads: options.activitySummary.recurringThreads,
+      storyCardGist: options.storyCardGist
     }),
     summary: buildSafeCaptionInput({
       activitySummary: options.activitySummary,
       persona: options.persona,
       moodPlan: options.moodPlan,
       roastLevel: options.roastLevel,
-      rawNarrativeProjection: options.rawNarrativeProjection
+      rawNarrativeProjection: options.rawNarrativeProjection,
+      storyCardGist: options.storyCardGist
     })
   });
 
