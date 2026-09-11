@@ -553,6 +553,31 @@ function buildPersonaCaptionLines(
   return lines;
 }
 
+/**
+ * UNC-282: 최근 윈도에서 쓴 마무리 줄을 캡션 지시문의 회피 목록으로 싣는다.
+ * 착지 형태를 분류하지 않고, 실제 문장을 보여 주고 문장 모양까지 피하게 한다.
+ * 기록이 없으면 아무것도 싣지 않는다 (히스토리가 빈 날 지시문은 이전과 동일).
+ */
+function buildRecentLandingLineAvoidanceLines(
+  captionHistory?: CaptionHistoryContext
+): string[] {
+  const landingLines = [
+    ...new Set(
+      selectCaptionHistoryWindow(captionHistory)
+        .map((format) => format.captionSurface?.landingLine?.trim() ?? "")
+        .filter((line) => line.length > 0)
+    )
+  ];
+
+  if (landingLines.length === 0) {
+    return [];
+  }
+
+  return [
+    `Recently used closing lines: ${landingLines.map((line) => `"${line}"`).join(" / ")}. Do not end today's caption with any of these lines or a near-copy of their sentence shape; land on a different kind of final line.`
+  ];
+}
+
 export function buildCaptionInstructions(options: {
   quiet: boolean;
   persona: Persona;
@@ -635,7 +660,8 @@ export function buildCaptionInstructions(options: {
     "Do not imply the draft was automatically posted or exported.",
     "Each hashtag must start with # and contain no spaces.",
     ...buildCaptionCardRoleLines(options.storyCardGist),
-    ...buildRecurringThreadInstructionLines(options.recurringThreads)
+    ...buildRecurringThreadInstructionLines(options.recurringThreads),
+    ...buildRecentLandingLineAvoidanceLines(options.captionHistory)
   ].join("\n");
 }
 

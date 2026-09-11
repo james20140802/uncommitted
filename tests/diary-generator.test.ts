@@ -2842,6 +2842,57 @@ describe("caption verbalTic rotation (UNC-281)", () => {
   });
 });
 
+describe("caption landing-line avoidance (UNC-282)", () => {
+  const entry = (date: string, landingLine?: string): RecentStoryFormat => ({
+    date,
+    mood: "grind",
+    captionSurface: landingLine === undefined ? { usedTics: [] } : { usedTics: [], landingLine }
+  });
+  const avoidanceLine = (instructions: string): string | undefined =>
+    instructions.split("\n").find((line) => line.startsWith("Recently used closing lines"));
+
+  it("lists recent landing lines from the 3-day window as avoidance targets", () => {
+    const instructions = buildCaptionInstructions({
+      quiet: false,
+      persona: captionTestPersona,
+      moodPlan: captionTestMoodPlan,
+      captionHistory: {
+        targetDate: "2026-05-12",
+        recentFormats: [
+          entry("2026-05-11", "그렇군. 오늘도 테스트가 이겼다."),
+          entry("2026-05-10", "내일은 조금 빠르길."),
+          entry("2026-05-10", "내일은 조금 빠르길."),
+          entry("2026-05-07", "창밖만 봤음.")
+        ]
+      }
+    });
+    const line = avoidanceLine(instructions);
+
+    expect(line).toBeDefined();
+    expect(line).toContain("\"그렇군. 오늘도 테스트가 이겼다.\"");
+    expect(line).toContain("\"내일은 조금 빠르길.\"");
+    expect(line?.match(/내일은 조금 빠르길/g)).toHaveLength(1);
+    expect(line).not.toContain("창밖만 봤음.");
+  });
+
+  it("emits nothing and keeps the instructions byte-identical when no landing lines are in the window (AC5)", () => {
+    const baseline = buildCaptionInstructions({
+      quiet: false,
+      persona: captionTestPersona,
+      moodPlan: captionTestMoodPlan
+    });
+
+    expect(
+      buildCaptionInstructions({
+        quiet: false,
+        persona: captionTestPersona,
+        moodPlan: captionTestMoodPlan,
+        captionHistory: { targetDate: "2026-05-12", recentFormats: [entry("2026-05-11")] }
+      })
+    ).toBe(baseline);
+  });
+});
+
 function createProviderDraft(
   overrides: Partial<ReturnType<typeof baseProviderDraft>> = {}
 ): ReturnType<typeof baseProviderDraft> {
