@@ -11,15 +11,22 @@ import {
   buildCaptionInstructions,
   CAPTION_FORMAT_VIOLATIONS,
   CAPTION_MAX_ATTEMPTS,
+  CAPTION_REPETITION_WINDOW_DAYS,
   deriveCaptionText,
   generateCaption,
   generateDiaryDraft,
   redactArchitectureDisclosureFromCaption,
   redactArchitectureDisclosureFromDraft,
+  selectCaptionHistoryWindow,
+  selectRotatedVerbalTics,
   type DiaryDraft
 } from "../src/diary-generator.js";
 import { PERSONA_PRESETS, type Persona } from "../src/persona.js";
-import type { MoodPlan, StoryFormatPlan } from "../src/story-format-plan.js";
+import type {
+  MoodPlan,
+  RecentStoryFormat,
+  StoryFormatPlan
+} from "../src/story-format-plan.js";
 import { RECURRING_THREAD_INSTRUCTIONS } from "../src/recurring-thread-instructions.js";
 
 const captionTestPersona: Persona = PERSONA_PRESETS["시니컬한 관찰자"].persona;
@@ -2692,6 +2699,146 @@ describe("캡션 누적 대비 지시문 (UNC-277 / T5)", () => {
 
     const request = provider.requests[0]!;
     expect(request.input.recurringThreads).toEqual(recurring);
+  });
+});
+
+describe("caption verbalTic rotation (UNC-281)", () => {
+  const twoTicPersona: Persona = {
+    ...captionTestPersona,
+    voice: { ...captionTestPersona.voice, verbalTics: ["...음.", "그렇군."] }
+  };
+  const threeTicPersona: Persona = {
+    ...captionTestPersona,
+    voice: { ...captionTestPersona.voice, verbalTics: ["...음.", "그렇군.", "역시나."] }
+  };
+  const entry = (date: string, usedTics: string[], landingLine?: string): RecentStoryFormat => ({
+    date,
+    mood: "grind",
+    captionSurface: landingLine === undefined ? { usedTics } : { usedTics, landingLine }
+  });
+  const signatureLine = (instructions: string): string | undefined =>
+    instructions.split("\n").find((line) => line.startsWith("Signature phrases"));
+
+  it("uses a 3-day window", () => {
+    expect(CAPTION_REPETITION_WINDOW_DAYS).toBe(3);
+  });
+
+  it("excludes tics used in the last 3 days from the signature phrases line", () => {
+    const instructions = buildCaptionInstructions({
+      quiet: false,
+      persona: threeTicPersona,
+      moodPlan: captionTestMoodPlan,
+      captionHistory: {
+        targetDate: "2026-05-12",
+        recentFormats: [entry("2026-05-11", ["그렇군."]), entry("2026-05-09", ["...음."])]
+      }
+    });
+
+    expect(signatureLine(instructions)).toBe(
+      "Signature phrases you may use naturally (do not force every line): 역시나.."
+    );
+  });
+
+  it("ignores tics used outside the window (4+ days ago) and on the target date itself", () => {
+    const window = selectCaptionHistoryWindow({
+      targetDate: "2026-05-12",
+      recentFormats: [
+        entry("2026-05-12", ["그렇군."]),
+        entry("2026-05-11", []),
+        entry("2026-05-08", ["...음."])
+      ]
+    });
+
+    expect(window.map((format) => format.date)).toEqual(["2026-05-11"]);
+    expect(selectRotatedVerbalTics(["...음.", "그렇군."], window)).toEqual(["...음.", "그렇군."]);
+  });
+
+  it("merges every record in the window, including two records on the same date", () => {
+    const window = selectCaptionHistoryWindow({
+      targetDate: "2026-05-12",
+      recentFormats: [entry("2026-05-11", ["그렇군."]), entry("2026-05-11", ["역시나."])]
+    });
+
+    expect(selectRotatedVerbalTics(["...음.", "그렇군.", "역시나."], window)).toEqual(["...음."]);
+  });
+
+  it("revives exactly the least-recently used tic when every tic was used recently (boundary)", () => {
+    const instructions = buildCaptionInstructions({
+      quiet: false,
+      persona: twoTicPersona,
+      moodPlan: captionTestMoodPlan,
+      captionHistory: {
+        targetDate: "2026-05-12",
+        recentFormats: [entry("2026-05-11", ["그렇군."]), entry("2026-05-10", ["...음."])]
+      }
+    });
+
+    expect(signatureLine(instructions)).toBe(
+      "Signature phrases you may use naturally (do not force every line): ...음.."
+    );
+  });
+
+  it("breaks a least-recently-used tie by persona order", () => {
+    expect(
+      selectRotatedVerbalTics(["...음.", "그렇군."], [entry("2026-05-11", ["그렇군.", "...음."])])
+    ).toEqual(["...음."]);
+  });
+
+  it("produces byte-identical instructions when history is empty or carries no captionSurface (AC5)", () => {
+    const baseline = buildCaptionInstructions({
+      quiet: false,
+      persona: twoTicPersona,
+      moodPlan: captionTestMoodPlan
+    });
+
+    expect(
+      buildCaptionInstructions({
+        quiet: false,
+        persona: twoTicPersona,
+        moodPlan: captionTestMoodPlan,
+        captionHistory: { targetDate: "2026-05-12", recentFormats: [] }
+      })
+    ).toBe(baseline);
+    expect(
+      buildCaptionInstructions({
+        quiet: false,
+        persona: twoTicPersona,
+        moodPlan: captionTestMoodPlan,
+        captionHistory: {
+          targetDate: "2026-05-12",
+          recentFormats: [{ date: "2026-05-11", mood: "grind", angle: "legacy" }]
+        }
+      })
+    ).toBe(baseline);
+  });
+
+  it("generateCaption relays recentFormats with the activity summary's targetDate", async () => {
+    // createActivitySummary()'s default targetDate is "2026-05-12" (see the
+    // helper at the bottom of this file), so the window entry one day
+    // earlier is "2026-05-11".
+    const provider = new MockAiProvider({
+      response: {
+        caption: "오늘도 조용히 지나갔습니다",
+        hashtags: ["#Uncommitted", "#개발일기"]
+      }
+    });
+
+    await generateCaption({
+      activitySummary: createActivitySummary(),
+      provider,
+      persona: twoTicPersona,
+      roastLevel: 2,
+      moodPlan: captionTestMoodPlan,
+      recentFormats: [entry("2026-05-11", ["그렇군."])]
+    });
+
+    const request = provider.requests[0]!;
+    expect(request.instructions).toContain(
+      "Signature phrases you may use naturally (do not force every line): ...음.."
+    );
+    expect(request.instructions).not.toContain(
+      "Signature phrases you may use naturally (do not force every line): 그렇군.."
+    );
   });
 });
 

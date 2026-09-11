@@ -28,7 +28,8 @@ import { isMood } from "./story-format-plan.js";
 import type {
   ProjectPersonaHint,
   MoodPlan,
-  Mood
+  Mood,
+  RecentStoryFormat
 } from "./story-format-plan.js";
 import type { RawNarrativeProjection } from "./raw-narrative-projection.js";
 
@@ -97,7 +98,91 @@ export type GenerateCaptionOptions = {
   roastLevel: number;
   rawNarrativeProjection?: RawNarrativeProjection;
   storyCardGist?: SafeStoryCardGist[];
+  recentFormats?: RecentStoryFormat[];
 };
+
+/**
+ * UNC-281: 표층 문구 반복 회피 윈도 (일).
+ * 실측(2026-07-22~24)에서 같은 추임새가 3일 연속 반복된 것이 가장 눈에
+ * 띄었으므로, 최소 3일은 같은 tic·마무리 줄을 피한다.
+ */
+export const CAPTION_REPETITION_WINDOW_DAYS = 3;
+
+const MS_PER_DAY = 86_400_000;
+
+export type CaptionHistoryContext = {
+  targetDate: string;
+  recentFormats: readonly RecentStoryFormat[];
+};
+
+/**
+ * targetDate 이전 1..N일(달력 기준)의 엔트리만 날짜 내림차순으로 돌려준다.
+ * 같은 날짜의 여러 레코드(다른 mood로 재생성)는 전부 포함한다. 오늘 날짜
+ * 엔트리(같은 날 재생성)는 "지난 며칠"이 아니므로 제외한다.
+ */
+export function selectCaptionHistoryWindow(
+  captionHistory?: CaptionHistoryContext
+): RecentStoryFormat[] {
+  if (captionHistory === undefined) {
+    return [];
+  }
+
+  const target = Date.parse(`${captionHistory.targetDate}T00:00:00Z`);
+
+  if (Number.isNaN(target)) {
+    return [];
+  }
+
+  return captionHistory.recentFormats
+    .filter((format) => {
+      const entry = Date.parse(`${format.date}T00:00:00Z`);
+
+      if (Number.isNaN(entry)) {
+        return false;
+      }
+
+      const daysAgo = Math.round((target - entry) / MS_PER_DAY);
+
+      return daysAgo >= 1 && daysAgo <= CAPTION_REPETITION_WINDOW_DAYS;
+    })
+    .sort((a, b) => b.date.localeCompare(a.date));
+}
+
+/**
+ * UNC-281: 윈도 안에서 쓰인 tic을 뺀 나머지를 돌려준다. 전부 쓰였으면
+ * signature phrases 줄이 사라지지 않도록 가장 오래 전에 쓴 tic 1개만
+ * 되살린다 (동률은 persona 순서상 앞의 것).
+ */
+export function selectRotatedVerbalTics(
+  verbalTics: readonly string[],
+  windowEntries: readonly RecentStoryFormat[]
+): string[] {
+  const lastUseIndex = new Map<string, number>();
+
+  windowEntries.forEach((format, index) => {
+    for (const tic of format.captionSurface?.usedTics ?? []) {
+      if (!lastUseIndex.has(tic)) {
+        lastUseIndex.set(tic, index);
+      }
+    }
+  });
+
+  const unused = verbalTics.filter((tic) => !lastUseIndex.has(tic));
+
+  if (unused.length > 0 || verbalTics.length === 0) {
+    return unused;
+  }
+
+  let revived = verbalTics[0] as string;
+
+  for (const tic of verbalTics) {
+    if ((lastUseIndex.get(tic) ?? 0) > (lastUseIndex.get(revived) ?? 0)) {
+      revived = tic;
+    }
+  }
+
+  return [revived];
+}
 
 type DiaryDraftProviderData = JsonObject & {
   title?: JsonValue;
@@ -435,7 +520,10 @@ function buildDiaryInstructions(options: {
  * they stay as fixed lines in `buildCaptionInstructions` regardless of
  * persona.
  */
-function buildPersonaCaptionLines(persona: Persona): string[] {
+function buildPersonaCaptionLines(
+  persona: Persona,
+  captionHistory?: CaptionHistoryContext
+): string[] {
   const { identity, voice, humor } = persona;
 
   const lines = [
@@ -445,9 +533,14 @@ function buildPersonaCaptionLines(persona: Persona): string[] {
     `Humor style: ${humor.style}. Roast targets when appropriate: ${humor.targets.join(", ")}.`
   ];
 
-  if (voice.verbalTics.length > 0) {
+  const verbalTics = selectRotatedVerbalTics(
+    voice.verbalTics,
+    selectCaptionHistoryWindow(captionHistory)
+  );
+
+  if (verbalTics.length > 0) {
     lines.push(
-      `Signature phrases you may use naturally (do not force every line): ${voice.verbalTics.join(", ")}.`
+      `Signature phrases you may use naturally (do not force every line): ${verbalTics.join(", ")}.`
     );
   }
 
@@ -466,6 +559,7 @@ export function buildCaptionInstructions(options: {
   moodPlan: MoodPlan;
   recurringThreads?: SafeRecurringThread[];
   storyCardGist?: SafeStoryCardGist[];
+  captionHistory?: CaptionHistoryContext;
 }): string {
   const quietInstruction = options.quiet
     ? "This is a quiet day with no recorded Git activity. Acknowledge the absence of recorded work honestly. Write a caption about the quiet — the narrator observed little activity and says so plainly. Do not invent work. A 조용한 날 caption is valid and honest content."
@@ -479,7 +573,7 @@ export function buildCaptionInstructions(options: {
 
   return [
     "Return JSON with exactly two fields: caption (string) and hashtags (array of strings).",
-    ...buildPersonaCaptionLines(options.persona),
+    ...buildPersonaCaptionLines(options.persona, options.captionHistory),
     `Today's mood is "${options.moodPlan.mood}" — let it color the caption's emotional register and pacing on top of the persona voice described above.`,
     `Caption style guidance for today: ${options.moodPlan.captionStyle}.`,
     `The coworker's fixation today: ${options.moodPlan.angle}. Use it as a natural anchor when it fits.`,
@@ -698,7 +792,14 @@ export async function generateCaption(
       persona: options.persona,
       moodPlan: options.moodPlan,
       recurringThreads: options.activitySummary.recurringThreads,
-      storyCardGist: options.storyCardGist
+      storyCardGist: options.storyCardGist,
+      captionHistory:
+        options.recentFormats === undefined
+          ? undefined
+          : {
+              targetDate: options.activitySummary.targetDate,
+              recentFormats: options.recentFormats
+            }
     }),
     summary: buildSafeCaptionInput({
       activitySummary: options.activitySummary,

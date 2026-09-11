@@ -543,7 +543,8 @@ export async function runGenerateCommand(
       persona: config.persona,
       roastLevel: config.roastLevel,
       rawNarrativeProjection,
-      storyCardGist
+      storyCardGist,
+      recentFormats
     });
   } catch (error) {
     // UNC-253 / T2: 실패 종료 경로가 돌기 전에 미완성 표시를 남긴다.
