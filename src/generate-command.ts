@@ -734,7 +734,9 @@ export async function runGenerateCommand(
   await recordStoryFormatHistory({
     homeDir: options.homeDir,
     targetDate,
-    storyFormatPlan
+    storyFormatPlan,
+    caption,
+    verbalTics: config.persona.voice.verbalTics
   });
 
   return {

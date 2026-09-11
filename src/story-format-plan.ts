@@ -1,5 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { resolveConfigPaths } from "./config-paths.js";
+import { sanitizeText } from "./redaction.js";
 import type { ActivitySummary } from "./activity-summary.js";
 import {
   AiGenerationError,
@@ -114,6 +115,16 @@ function isStoryPacing(value: unknown): value is StoryPacing {
   );
 }
 
+/**
+ * UNC-280: 그날 최종 캡션에서 실제로 쓰인 표층 문구. 캡션 전문이 아니라
+ * 짧은 추출물만 남겨 히스토리 비대화를 막는다. 다음 날 캡션 지시문이 최근
+ * 쓴 tic·마무리 줄을 피하는 근거가 된다 (UNC-281/282).
+ */
+export type CaptionSurface = {
+  usedTics: string[];
+  landingLine?: string;
+};
+
 export type RecentStoryFormat = {
   date: string;
   mood?: Mood;
@@ -123,6 +134,7 @@ export type RecentStoryFormat = {
    * `formatName` instead of `mood`. Never written for new entries (UNC-214).
    */
   formatName?: string;
+  captionSurface?: CaptionSurface;
 };
 
 export type ProjectPersonaHint = {
@@ -151,6 +163,10 @@ export type RecordStoryFormatHistoryOptions = {
   targetDate: string;
   storyFormatPlan: MoodPlan;
   limit?: number;
+  /** redaction을 마친 최종 캡션 텍스트. 주면 captionSurface를 함께 기록한다. */
+  caption?: string;
+  /** 그날 persona의 verbalTics. 사용 여부는 caption에 대한 사후 부분일치로 판정한다. */
+  verbalTics?: readonly string[];
 };
 
 type StoryFormatHistoryFile = {
@@ -258,6 +274,14 @@ export async function recordStoryFormatHistory(
     mood: options.storyFormatPlan.mood,
     angle: options.storyFormatPlan.angle
   };
+
+  if (options.caption !== undefined) {
+    nextFormat.captionSurface = extractCaptionSurface(
+      options.caption,
+      options.verbalTics ?? []
+    );
+  }
+
   const formats = [nextFormat, ...existingFormats]
     .filter((format, index, allFormats) => {
       return (
@@ -276,6 +300,40 @@ export async function recordStoryFormatHistory(
     schemaVersion: 1,
     formats
   });
+}
+
+/**
+ * UNC-280: 캡션 표층 문구 추출.
+ * - 마무리 줄: 마지막 비어있지 않은 줄 중 해시태그 전용 줄이 아닌 것.
+ *   (저장되는 캡션은 deriveCaptionText 결과라 마지막 줄이 해시태그다.)
+ * - 사용 tic: 끝 구두점만 뗀 tic이 캡션에 부분일치하면 사용한 것으로 본다
+ *   ("그렇군." ↔ "그렇군.."). 앞쪽 말줄임은 떼지 않는다 — "...음."을 "음"으로
+ *   줄이면 "이었음" 같은 어미에도 걸린다. "…"는 "..."로 정규화해 비교한다.
+ *   저장은 persona의 tic 원문으로 한다.
+ * 저장 전 sanitizeText를 거친다 — 캡션 문구도 히스토리 파일에 남는 데이터다.
+ */
+export function extractCaptionSurface(
+  caption: string,
+  verbalTics: readonly string[]
+): CaptionSurface {
+  const sanitized = sanitizeText(caption).value;
+  const comparable = sanitized.replace(/…/gu, "...");
+  const usedTics = verbalTics.filter((tic) => {
+    const core = tic.replace(/…/gu, "...").trim().replace(/[.!?~,]+$/u, "");
+
+    return core.length > 0 && comparable.includes(core);
+  });
+  const landingLine = sanitized
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !isHashtagOnlyLine(line))
+    .at(-1);
+
+  return landingLine === undefined ? { usedTics } : { usedTics, landingLine };
+}
+
+function isHashtagOnlyLine(line: string): boolean {
+  return line.split(/\s+/u).every((token) => token.startsWith("#"));
 }
 
 function buildSafeStoryFormatInput(options: {
@@ -318,7 +376,9 @@ function buildSafeStoryFormatInput(options: {
       ]
     },
     projectPersonaHints: options.projectPersonaHints,
-    recentFormats: options.recentFormats,
+    // UNC-280: captionSurface는 캡션 지시문 전용이다. story-plan 프로바이더
+    // 입력은 이전과 동일하게 다양성 키만 싣는다.
+    recentFormats: options.recentFormats.map(toStoryPlanRecentFormat),
     activitySignals: {
       activityLevel: summary.activityLevel,
       dominantTheme: summary.dominantTheme,
@@ -336,6 +396,24 @@ function buildSafeStoryFormatInput(options: {
       uncertaintyNotes: summary.uncertaintyNotes
     }
   };
+}
+
+function toStoryPlanRecentFormat(format: RecentStoryFormat): RecentStoryFormat {
+  const diversityKeys: RecentStoryFormat = { date: format.date };
+
+  if (format.mood !== undefined) {
+    diversityKeys.mood = format.mood;
+  }
+
+  if (format.angle !== undefined) {
+    diversityKeys.angle = format.angle;
+  }
+
+  if (format.formatName !== undefined) {
+    diversityKeys.formatName = format.formatName;
+  }
+
+  return diversityKeys;
 }
 
 function buildHighlights(summary: ActivitySummary, quiet: boolean): string[] {
@@ -451,6 +529,8 @@ function uniqueDefinedStrings(values: (string | undefined)[]): string[] {
  * Legacy-tolerant projection (UNC-226): older entries may still carry the
  * removed rotating-costume fields `voice`/`tone`. They load without error but
  * are dropped here, so they never reach prompts or get written back.
+ * UNC-280: also projects `captionSurface`, dropping only that field (not the
+ * whole entry) when it is malformed.
  */
 function pickRecentStoryFormatFields(
   entry: Record<string, unknown>
@@ -469,7 +549,25 @@ function pickRecentStoryFormatFields(
     recent.formatName = entry.formatName;
   }
 
+  if (isCaptionSurface(entry.captionSurface)) {
+    recent.captionSurface = {
+      usedTics: [...entry.captionSurface.usedTics],
+      ...(entry.captionSurface.landingLine !== undefined
+        ? { landingLine: entry.captionSurface.landingLine }
+        : {})
+    };
+  }
+
   return recent;
+}
+
+function isCaptionSurface(value: unknown): value is CaptionSurface {
+  return (
+    isRecord(value) &&
+    Array.isArray(value.usedTics) &&
+    value.usedTics.every((tic) => typeof tic === "string") &&
+    (value.landingLine === undefined || typeof value.landingLine === "string")
+  );
 }
 
 /**

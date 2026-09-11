@@ -973,6 +973,33 @@ describe("generate command", () => {
     expect(storedFormats[0]).not.toHaveProperty("tone");
   });
 
+  it("records the caption's used tics and landing line into formats.json (UNC-280)", async () => {
+    const { io, stderr } = createIo();
+    const fixture = await createRegisteredProjectFixture();
+
+    await writeGitEvent(fixture.project, "2026-05-12");
+
+    await runCli(["generate", "today"], io, {
+      homeDir: fixture.homeDir,
+      now: () => "2026-05-12T23:30:00.000Z",
+      aiProvider: new TaskAwareProvider({
+        caption: createProviderCaption({
+          caption: "오늘은 버그 하나를 잡았다. 그렇군.\n내일은 테스트가 먼저 웃겠지."
+        })
+      })
+    });
+
+    const formats = (await readJson(
+      join(fixture.homeDir, ".uncommitted", "history", "formats.json")
+    )) as { formats: { captionSurface?: unknown }[] };
+
+    expect(stderr).toEqual([]);
+    expect(formats.formats[0]?.captionSurface).toEqual({
+      usedTics: ["그렇군."],
+      landingLine: "내일은 테스트가 먼저 웃겠지."
+    });
+  });
+
   it("returns a config error when no projects are registered", async () => {
     const { io, stdout, stderr } = createIo();
     const directory = await mkdtemp(join(tmpdir(), "uncommitted-generate-empty-"));
