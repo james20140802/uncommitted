@@ -23,7 +23,6 @@ export const PERSONA_PRESET_NAMES = [
 
 export type PersonaPresetName = (typeof PERSONA_PRESET_NAMES)[number];
 
-/** UNC-283: 3일 로테이션 윈도(CAPTION_REPETITION_WINDOW_DAYS)보다 많은 tic을 둬야 소진 fallback이 일상이 되지 않는다. 기존 두 tic은 톤 기준점이라 앞에 그대로 둔다. */
 export type PersonaRelationship = "senior" | "peer" | "junior" | "observer";
 export type PersonaRegister = "formal" | "casual" | "mixed";
 export type PersonaSentenceLength = "terse" | "medium" | "long";
@@ -76,6 +75,7 @@ export interface PersonaPresetBundle {
   persona: Persona;
 }
 
+// UNC-283: 3일 로테이션 윈도(CAPTION_REPETITION_WINDOW_DAYS)보다 많은 tic을 둬야 소진 fallback이 일상이 되지 않는다. 기존 두 tic은 톤 기준점이라 앞에 그대로 둔다.
 export const PERSONA_PRESETS: Record<PersonaPresetName, PersonaPresetBundle> = {
   "까칠한 시니어": {
     roastLevel: 4,
