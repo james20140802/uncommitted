@@ -625,6 +625,12 @@ describe("caption surface history (UNC-280)", () => {
     });
   });
 
+  it("does not count a tic that only appears inside the hashtag line (UNC-227)", () => {
+    expect(
+      extractCaptionSurface("오늘은 조용했다.\n\n#대박 #Uncommitted\n", ["대박"]).usedTics
+    ).toEqual([]);
+  });
+
   it("sanitizes the landing line before it is stored", () => {
     const surface = extractCaptionSurface(
       "마지막 줄에 me@example.com 과 /Users/me/secret 이 섞였다.",

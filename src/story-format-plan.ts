@@ -311,23 +311,25 @@ export async function recordStoryFormatHistory(
  *   줄이면 "이었음" 같은 어미에도 걸린다. "…"는 "..."로 정규화해 비교한다.
  *   저장은 persona의 tic 원문으로 한다.
  * 저장 전 sanitizeText를 거친다 — 캡션 문구도 히스토리 파일에 남는 데이터다.
+ * UNC-227: tic 매칭도 해시태그 줄을 뺀 나머지 줄에서만 본다. "#대박" 같은
+ * 해시태그가 tic "대박"과 우연히 겹쳐 사용한 것으로 오판되는 것을 막는다.
  */
 export function extractCaptionSurface(
   caption: string,
   verbalTics: readonly string[]
 ): CaptionSurface {
   const sanitized = sanitizeText(caption).value;
-  const comparable = sanitized.replace(/…/gu, "...");
+  const nonHashtagLines = sanitized
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !isHashtagOnlyLine(line));
+  const comparable = nonHashtagLines.join("\n").replace(/…/gu, "...");
   const usedTics = verbalTics.filter((tic) => {
     const core = tic.replace(/…/gu, "...").trim().replace(/[.!?~,]+$/u, "");
 
     return core.length > 0 && comparable.includes(core);
   });
-  const landingLine = sanitized
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0 && !isHashtagOnlyLine(line))
-    .at(-1);
+  const landingLine = nonHashtagLines.at(-1);
 
   return landingLine === undefined ? { usedTics } : { usedTics, landingLine };
 }

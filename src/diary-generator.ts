@@ -554,9 +554,20 @@ function buildPersonaCaptionLines(
 }
 
 /**
+ * UNC-227: 회피 목록에 얼마나 많은 마무리 줄을 실을지의 상한. captionHistory의
+ * limit이 커지면(UNC-227 fix 1) 윈도 안 엔트리 수도 늘어날 수 있어, 프롬프트가
+ * 계속 불어나지 않도록 최근 것부터 최대 5개만 남긴다. tic 제외는 별도이며
+ * 이 상한의 영향을 받지 않는다 — 윈도의 모든 레코드를 계속 합친다.
+ */
+const MAX_AVOIDED_LANDING_LINES = 5;
+
+/**
  * UNC-282: 최근 윈도에서 쓴 마무리 줄을 캡션 지시문의 회피 목록으로 싣는다.
  * 착지 형태를 분류하지 않고, 실제 문장을 보여 주고 문장 모양까지 피하게 한다.
  * 기록이 없으면 아무것도 싣지 않는다 (히스토리가 빈 날 지시문은 이전과 동일).
+ * UNC-227: 바로 위 블록(카드/반복 스레드 지시)과 붙어 보이지 않도록 앞에
+ * 빈 줄을 하나 둔다. 빈 목록일 때는 여전히 []를 돌려줘 AC5의 바이트 동일성이
+ * 유지된다.
  */
 function buildRecentLandingLineAvoidanceLines(
   captionHistory?: CaptionHistoryContext
@@ -567,13 +578,14 @@ function buildRecentLandingLineAvoidanceLines(
         .map((format) => format.captionSurface?.landingLine?.trim() ?? "")
         .filter((line) => line.length > 0)
     )
-  ];
+  ].slice(0, MAX_AVOIDED_LANDING_LINES);
 
   if (landingLines.length === 0) {
     return [];
   }
 
   return [
+    "",
     `Recently used closing lines: ${landingLines.map((line) => `"${line}"`).join(" / ")}. Do not end today's caption with any of these lines or a near-copy of their sentence shape; land on a different kind of final line.`
   ];
 }
