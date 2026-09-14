@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- 작업 디렉터리는 **`/Users/drchasekim/Developer/uncommitted-UNC-227`** (브랜치 `claude/UNC-227-verbaltics-rotation`) 한 곳뿐. `using-git-worktrees` 실행 금지, main 체크아웃·새 worktree 작업 금지.
+- 작업 디렉터리는 **`../uncommitted-UNC-227`** (브랜치 `claude/UNC-227-verbaltics-rotation`) 한 곳뿐. `using-git-worktrees` 실행 금지, main 체크아웃·새 worktree 작업 금지.
 - 수정 금지 파일: `pnpm-lock.yaml`, `package-lock.json`, `yarn.lock`, `.env*`, `**/secrets/*`, `**/credentials/*`, `AGENTS.md`, `CLAUDE.md`.
 - 새 의존성 추가 금지. 자동 publish(SNS 업로드) 코드 추가 금지. macOS-first 유지.
 - 테스트는 vitest (`pnpm vitest run <file>`), 전체 검증은 `pnpm check` (lint → typecheck → test → build).
