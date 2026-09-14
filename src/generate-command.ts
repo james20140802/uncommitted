@@ -389,6 +389,15 @@ export async function runGenerateCommand(
   const recentFormats = await loadRecentStoryFormatHistory({
     homeDir: options.homeDir
   });
+  // UNC-227: the caption's tic/landing-line exclusion (UNC-281/282) needs its
+  // own, larger history load. `recentFormats` above is cut to 7 records for
+  // the story-plan diversity prompt, but dedupe is by date+mood+angle — every
+  // rerun on a day adds a record — so a few reruns push a real 2-3-day-old
+  // entry past that cut, silently narrowing the caption's 3-day window.
+  const captionHistoryFormats = await loadRecentStoryFormatHistory({
+    homeDir: options.homeDir,
+    limit: 30
+  });
   const storyFormatPlan = await generateStoryFormatPlan({
     activitySummary,
     provider,
@@ -543,7 +552,8 @@ export async function runGenerateCommand(
       persona: config.persona,
       roastLevel: config.roastLevel,
       rawNarrativeProjection,
-      storyCardGist
+      storyCardGist,
+      recentFormats: captionHistoryFormats
     });
   } catch (error) {
     // UNC-253 / T2: 실패 종료 경로가 돌기 전에 미완성 표시를 남긴다.
@@ -734,7 +744,9 @@ export async function runGenerateCommand(
   await recordStoryFormatHistory({
     homeDir: options.homeDir,
     targetDate,
-    storyFormatPlan
+    storyFormatPlan,
+    caption,
+    verbalTics: config.persona.voice.verbalTics
   });
 
   return {

@@ -973,6 +973,104 @@ describe("generate command", () => {
     expect(storedFormats[0]).not.toHaveProperty("tone");
   });
 
+  it("records the caption's used tics and landing line into formats.json (UNC-280)", async () => {
+    const { io, stderr } = createIo();
+    const fixture = await createRegisteredProjectFixture();
+
+    await writeGitEvent(fixture.project, "2026-05-12");
+
+    await runCli(["generate", "today"], io, {
+      homeDir: fixture.homeDir,
+      now: () => "2026-05-12T23:30:00.000Z",
+      aiProvider: new TaskAwareProvider({
+        caption: createProviderCaption({
+          caption: "오늘은 버그 하나를 잡았다. 그렇군.\n내일은 테스트가 먼저 웃겠지."
+        })
+      })
+    });
+
+    const formats = (await readJson(
+      join(fixture.homeDir, ".uncommitted", "history", "formats.json")
+    )) as { formats: { captionSurface?: unknown }[] };
+
+    expect(stderr).toEqual([]);
+    expect(formats.formats[0]?.captionSurface).toEqual({
+      usedTics: ["그렇군."],
+      landingLine: "내일은 테스트가 먼저 웃겠지."
+    });
+  });
+
+  it("keeps a 2-day-old caption's tics/landing line excluded even after several reruns cut the 7-record limit (UNC-227)", async () => {
+    const { io, stderr } = createIo();
+    const fixture = await createRegisteredProjectFixture();
+
+    await writeGitEvent(fixture.project, "2026-05-12");
+
+    // Overwrite the fixture's empty formats.json: 7 reruns already recorded
+    // today (same targetDate, distinct free-text angles — this is how
+    // dedupe-by-date+mood+angle lets a single day accumulate many records),
+    // plus one real entry from 2 days ago that must still exclude "그렇군."
+    // and avoid its landing line even though it falls outside the 7-record
+    // cut of the story-plan history load.
+    const formatsPath = join(
+      fixture.homeDir,
+      ".uncommitted",
+      "history",
+      "formats.json"
+    );
+    const sameDayReruns = Array.from({ length: 7 }, (_, index) => ({
+      date: "2026-05-12",
+      mood: "quiet",
+      angle: `오늘 재실행 각도 ${index + 1}`,
+      captionSurface: { usedTics: [] }
+    }));
+    const twoDaysAgoEntry = {
+      date: "2026-05-10",
+      mood: "grind",
+      angle: "그저께의 앵글",
+      captionSurface: {
+        usedTics: ["그렇군."],
+        landingLine: "그저께의 마무리 줄."
+      }
+    };
+
+    await writeFile(
+      formatsPath,
+      `${JSON.stringify(
+        { schemaVersion: 1, formats: [...sameDayReruns, twoDaysAgoEntry] },
+        null,
+        2
+      )}\n`,
+      "utf8"
+    );
+
+    const provider = new TaskAwareProvider();
+
+    const exitCode = await runCli(["generate", "today"], io, {
+      homeDir: fixture.homeDir,
+      now: () => "2026-05-12T23:30:00.000Z",
+      aiProvider: provider
+    });
+
+    expect(exitCode).toBe(0);
+    expect(stderr).toEqual([]);
+
+    const captionRequest = provider.requests.find(
+      (request) => request.task === "caption"
+    );
+    const instructionLines = captionRequest?.instructions.split("\n") ?? [];
+    const signatureLine = instructionLines.find((line) =>
+      line.startsWith("Signature phrases")
+    );
+    const closingLine = instructionLines.find((line) =>
+      line.startsWith("Recently used closing lines")
+    );
+
+    expect(signatureLine).toBeDefined();
+    expect(signatureLine).not.toContain("그렇군.");
+    expect(closingLine).toContain("\"그저께의 마무리 줄.\"");
+  });
+
   it("returns a config error when no projects are registered", async () => {
     const { io, stdout, stderr } = createIo();
     const directory = await mkdtemp(join(tmpdir(), "uncommitted-generate-empty-"));

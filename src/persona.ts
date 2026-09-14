@@ -75,6 +75,7 @@ export interface PersonaPresetBundle {
   persona: Persona;
 }
 
+// UNC-283: 3일 로테이션 윈도(CAPTION_REPETITION_WINDOW_DAYS)보다 많은 tic을 둬야 소진 fallback이 일상이 되지 않는다. 기존 두 tic은 톤 기준점이라 앞에 그대로 둔다.
 export const PERSONA_PRESETS: Record<PersonaPresetName, PersonaPresetBundle> = {
   "까칠한 시니어": {
     roastLevel: 4,
@@ -88,7 +89,7 @@ export const PERSONA_PRESETS: Record<PersonaPresetName, PersonaPresetBundle> = {
       voice: {
         register: "formal",
         sentenceLength: "terse",
-        verbalTics: ["정확히 말하면", "그건 좀..."],
+        verbalTics: ["정확히 말하면", "그건 좀...", "근거는요?", "일단 짚고 넘어가죠", "다시 봅시다"],
         emoji: "none",
         koreanEnglishMix: "low",
         registerVariety: true
@@ -116,7 +117,7 @@ export const PERSONA_PRESETS: Record<PersonaPresetName, PersonaPresetBundle> = {
       voice: {
         register: "casual",
         sentenceLength: "medium",
-        verbalTics: ["괜찮아요", "같이 해봐요"],
+        verbalTics: ["괜찮아요", "같이 해봐요", "천천히 해요", "오 좋은데요?", "여기까지 온 게 어디예요"],
         emoji: "light",
         koreanEnglishMix: "medium",
         registerVariety: true
@@ -144,7 +145,7 @@ export const PERSONA_PRESETS: Record<PersonaPresetName, PersonaPresetBundle> = {
       voice: {
         register: "mixed",
         sentenceLength: "medium",
-        verbalTics: ["...음.", "그렇군."],
+        verbalTics: ["...음.", "그렇군.", "역시나.", "뭐, 그럴 수 있지.", "기록해 둡니다."],
         emoji: "none",
         koreanEnglishMix: "medium",
         registerVariety: true
@@ -172,7 +173,7 @@ export const PERSONA_PRESETS: Record<PersonaPresetName, PersonaPresetBundle> = {
       voice: {
         register: "casual",
         sentenceLength: "medium",
-        verbalTics: ["대박", "미쳤다"],
+        verbalTics: ["대박", "미쳤다", "와 이게 되네", "레전드", "실화임?"],
         emoji: "heavy",
         koreanEnglishMix: "high",
         registerVariety: true

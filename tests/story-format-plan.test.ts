@@ -8,6 +8,7 @@ import {
   generateStoryFormatPlan,
   loadRecentStoryFormatHistory,
   recordStoryFormatHistory,
+  extractCaptionSurface,
   isMood,
   isMoodPlan,
   MOOD_VOCABULARY
@@ -593,6 +594,278 @@ describe("mood vocabulary and MoodPlan contract", () => {
         doNotMention: []
       })
     ).toBe(true);
+  });
+});
+
+describe("caption surface history (UNC-280)", () => {
+  it("extracts used tics by substring match and the last non-hashtag line as the landing line", () => {
+    const surface = extractCaptionSurface(
+      "오늘은 테스트가 먼저 넘어졌다. 그렇군..\n\n그래도 저녁엔 초록불이었음.\n\n#Uncommitted #개발일기\n",
+      ["...음.", "그렇군."]
+    );
+
+    expect(surface).toEqual({
+      usedTics: ["그렇군."],
+      landingLine: "그래도 저녁엔 초록불이었음."
+    });
+  });
+
+  it("does not treat a tic's bare last syllable inside an ordinary word as usage", () => {
+    expect(extractCaptionSurface("오늘은 조용했음.", ["...음."]).usedTics).toEqual([]);
+    expect(extractCaptionSurface("…음. 조용했음.", ["...음."]).usedTics).toEqual(["...음."]);
+  });
+
+  it("uses the whole line as the landing line for a one-line caption and omits it when only hashtags remain", () => {
+    expect(extractCaptionSurface("한 줄짜리 캡션.", [])).toEqual({
+      usedTics: [],
+      landingLine: "한 줄짜리 캡션."
+    });
+    expect(extractCaptionSurface("#Uncommitted #개발일기\n", [])).toEqual({
+      usedTics: []
+    });
+  });
+
+  it("does not count a tic that only appears inside the hashtag line (UNC-227)", () => {
+    expect(
+      extractCaptionSurface("오늘은 조용했다.\n\n#대박 #Uncommitted\n", ["대박"]).usedTics
+    ).toEqual([]);
+  });
+
+  it("sanitizes the landing line before it is stored", () => {
+    const surface = extractCaptionSurface(
+      "마지막 줄에 me@example.com 과 /Users/me/secret 이 섞였다.",
+      []
+    );
+
+    expect(surface.landingLine).not.toContain("me@example.com");
+    expect(surface.landingLine).not.toContain("/Users/me/secret");
+    expect(surface.landingLine).toContain("[redacted-email]");
+  });
+
+  it("round-trips captionSurface through recordStoryFormatHistory and loadRecentStoryFormatHistory", async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), "uncommitted-history-"));
+
+    await recordStoryFormatHistory({
+      homeDir,
+      targetDate: "2026-05-12",
+      storyFormatPlan: createMoodPlan({ mood: "grind", angle: "slow tests" }),
+      caption: "테스트가 느렸다. ...음.\n\n내일은 조금 빠르길.\n\n#Uncommitted\n",
+      verbalTics: ["...음.", "그렇군."]
+    });
+
+    const recent = await loadRecentStoryFormatHistory({ homeDir });
+
+    expect(recent).toEqual([
+      {
+        date: "2026-05-12",
+        mood: "grind",
+        angle: "slow tests",
+        captionSurface: { usedTics: ["...음."], landingLine: "내일은 조금 빠르길." }
+      }
+    ]);
+  });
+
+  it("does not write captionSurface when no caption is given (existing record shape unchanged)", async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), "uncommitted-history-"));
+
+    await recordStoryFormatHistory({
+      homeDir,
+      targetDate: "2026-05-12",
+      storyFormatPlan: createMoodPlan({ mood: "firefight", angle: "flaky retry handling" })
+    });
+
+    const raw = JSON.parse(
+      await readFile(join(homeDir, ".uncommitted", "history", "formats.json"), "utf8")
+    ) as { formats: Record<string, unknown>[] };
+
+    expect(raw.formats[0]).toEqual({
+      date: "2026-05-12",
+      mood: "firefight",
+      angle: "flaky retry handling"
+    });
+  });
+
+  it("loads a pre-existing formats.json without captionSurface without error (backward compat)", async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), "uncommitted-history-"));
+    const historyDir = join(homeDir, ".uncommitted", "history");
+    await mkdir(historyDir, { recursive: true });
+    await writeFile(
+      join(historyDir, "formats.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        formats: [
+          { date: "2026-05-11", mood: "grind", angle: "slow test suite" },
+          { date: "2026-05-10", formatName: "quiet" }
+        ]
+      }),
+      "utf8"
+    );
+
+    const recent = await loadRecentStoryFormatHistory({ homeDir });
+
+    expect(recent).toEqual([
+      { date: "2026-05-11", mood: "grind", angle: "slow test suite" },
+      { date: "2026-05-10", formatName: "quiet", mood: "quiet" }
+    ]);
+  });
+
+  it("keeps the entry but drops a malformed captionSurface on load", async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), "uncommitted-history-"));
+    const historyDir = join(homeDir, ".uncommitted", "history");
+    await mkdir(historyDir, { recursive: true });
+    await writeFile(
+      join(historyDir, "formats.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        formats: [
+          { date: "2026-05-11", mood: "grind", captionSurface: { usedTics: "그렇군." } }
+        ]
+      }),
+      "utf8"
+    );
+
+    const recent = await loadRecentStoryFormatHistory({ homeDir });
+
+    expect(recent).toEqual([{ date: "2026-05-11", mood: "grind" }]);
+  });
+
+  it("preserves captionSurface of older entries when a new day is recorded", async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), "uncommitted-history-"));
+
+    await recordStoryFormatHistory({
+      homeDir,
+      targetDate: "2026-05-11",
+      storyFormatPlan: createMoodPlan({ mood: "grind", angle: "a" }),
+      caption: "그렇군.\n어제의 마무리.",
+      verbalTics: ["그렇군."]
+    });
+    await recordStoryFormatHistory({
+      homeDir,
+      targetDate: "2026-05-12",
+      storyFormatPlan: createMoodPlan({ mood: "cleanup", angle: "b" })
+    });
+
+    const recent = await loadRecentStoryFormatHistory({ homeDir });
+
+    expect(recent[1]).toEqual({
+      date: "2026-05-11",
+      mood: "grind",
+      angle: "a",
+      captionSurface: { usedTics: ["그렇군."], landingLine: "어제의 마무리." }
+    });
+  });
+
+  it("does not send captionSurface to the story-plan provider", async () => {
+    const provider = new MockAiProvider({
+      response: createMoodProviderPlan({ mood: "grind" })
+    });
+
+    await generateStoryFormatPlan({
+      activitySummary: createActivitySummary(),
+      provider,
+      persona: "wry coworker",
+      roastLevel: 2,
+      recentFormats: [
+        {
+          date: "2026-05-11",
+          mood: "grind",
+          angle: "a",
+          captionSurface: { usedTics: ["그렇군."], landingLine: "어제의 마무리." }
+        }
+      ]
+    });
+
+    expect(provider.requests[0]?.input.recentFormats).toEqual([
+      { date: "2026-05-11", mood: "grind", angle: "a" }
+    ]);
+  });
+
+  it("redacts a phone number from the stored landing line (UNC-227 review)", () => {
+    const surface = extractCaptionSurface(
+      "오늘의 교훈.\n급하면 555-123-4567 로 연락하라던 그 말.",
+      []
+    );
+
+    expect(surface.landingLine).not.toContain("555-123-4567");
+    expect(surface.landingLine).toContain("[redacted-phone]");
+  });
+
+  it("redacts a secret-shaped token from the stored landing line (UNC-227 review)", () => {
+    const surface = extractCaptionSurface(
+      "마지막 줄에 sk-abcdefgh12345678 가 섞였다.",
+      []
+    );
+
+    expect(surface.landingLine).not.toContain("sk-abcdefgh12345678");
+  });
+
+  it("matches a tic whose trailing punctuation repeats without re-scanning it (UNC-227 review)", () => {
+    expect(
+      extractCaptionSurface("와 이게 되네!!!!!!!!!! 진짜로.", ["와 이게 되네!!!!!!!!!!"])
+        .usedTics
+    ).toEqual(["와 이게 되네!!!!!!!!!!"]);
+    expect(extractCaptionSurface("조용한 하루.", ["...!?~,"]).usedTics).toEqual([]);
+  });
+
+  it("merges caption surfaces when a rerun collides on date+mood+angle (UNC-227 review)", async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), "uncommitted-history-"));
+    const plan = createMoodPlan({ mood: "grind", angle: "same angle" });
+
+    await recordStoryFormatHistory({
+      homeDir,
+      targetDate: "2026-05-12",
+      storyFormatPlan: plan,
+      caption: "그렇군. 첫 번째 생성.\n첫 번째 마무리.",
+      verbalTics: ["그렇군.", "역시나."]
+    });
+    await recordStoryFormatHistory({
+      homeDir,
+      targetDate: "2026-05-12",
+      storyFormatPlan: plan,
+      caption: "역시나. 두 번째 생성.\n두 번째 마무리.",
+      verbalTics: ["그렇군.", "역시나."]
+    });
+
+    const recent = await loadRecentStoryFormatHistory({ homeDir });
+
+    expect(recent).toEqual([
+      {
+        date: "2026-05-12",
+        mood: "grind",
+        angle: "same angle",
+        captionSurface: {
+          usedTics: ["역시나.", "그렇군."],
+          landingLine: "두 번째 마무리."
+        }
+      }
+    ]);
+  });
+
+  it("keeps the earlier rerun's landing line out of the way but never loses its tics (UNC-227 review)", async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), "uncommitted-history-"));
+    const plan = createMoodPlan({ mood: "quiet", angle: "same angle" });
+
+    await recordStoryFormatHistory({
+      homeDir,
+      targetDate: "2026-05-12",
+      storyFormatPlan: plan,
+      caption: "그렇군. 조용했다.\n첫 번째 마무리.",
+      verbalTics: ["그렇군.", "역시나."]
+    });
+    await recordStoryFormatHistory({
+      homeDir,
+      targetDate: "2026-05-12",
+      storyFormatPlan: plan,
+      caption: "아무 말버릇도 쓰지 않은 캡션.\n두 번째 마무리.",
+      verbalTics: ["그렇군.", "역시나."]
+    });
+
+    const recent = await loadRecentStoryFormatHistory({ homeDir });
+
+    expect(recent[0]?.captionSurface).toEqual({
+      usedTics: ["그렇군."],
+      landingLine: "두 번째 마무리."
+    });
   });
 });
 

@@ -1,5 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { resolveConfigPaths } from "./config-paths.js";
+import { sanitizeText } from "./redaction.js";
+import { checkDraftSafety } from "./safety-report.js";
 import type { ActivitySummary } from "./activity-summary.js";
 import {
   AiGenerationError,
@@ -114,6 +116,16 @@ function isStoryPacing(value: unknown): value is StoryPacing {
   );
 }
 
+/**
+ * UNC-280: 그날 최종 캡션에서 실제로 쓰인 표층 문구. 캡션 전문이 아니라
+ * 짧은 추출물만 남겨 히스토리 비대화를 막는다. 다음 날 캡션 지시문이 최근
+ * 쓴 tic·마무리 줄을 피하는 근거가 된다 (UNC-281/282).
+ */
+export type CaptionSurface = {
+  usedTics: string[];
+  landingLine?: string;
+};
+
 export type RecentStoryFormat = {
   date: string;
   mood?: Mood;
@@ -123,6 +135,7 @@ export type RecentStoryFormat = {
    * `formatName` instead of `mood`. Never written for new entries (UNC-214).
    */
   formatName?: string;
+  captionSurface?: CaptionSurface;
 };
 
 export type ProjectPersonaHint = {
@@ -151,6 +164,10 @@ export type RecordStoryFormatHistoryOptions = {
   targetDate: string;
   storyFormatPlan: MoodPlan;
   limit?: number;
+  /** redaction을 마친 최종 캡션 텍스트. 주면 captionSurface를 함께 기록한다. */
+  caption?: string;
+  /** 그날 persona의 verbalTics. 사용 여부는 caption에 대한 사후 부분일치로 판정한다. */
+  verbalTics?: readonly string[];
 };
 
 type StoryFormatHistoryFile = {
@@ -258,24 +275,160 @@ export async function recordStoryFormatHistory(
     mood: options.storyFormatPlan.mood,
     angle: options.storyFormatPlan.angle
   };
-  const formats = [nextFormat, ...existingFormats]
-    .filter((format, index, allFormats) => {
-      return (
-        allFormats.findIndex(
-          (candidate) =>
-            candidate.date === format.date &&
-            candidate.mood === format.mood &&
-            candidate.angle === format.angle
-        ) === index
-      );
-    })
-    .slice(0, limit);
+
+  if (options.caption !== undefined) {
+    nextFormat.captionSurface = extractCaptionSurface(
+      options.caption,
+      options.verbalTics ?? []
+    );
+  }
+
+  const formats = mergeStoryFormatDuplicates([
+    nextFormat,
+    ...existingFormats
+  ]).slice(0, limit);
 
   await mkdir(paths.historyDir, { recursive: true });
   await writeJson(paths.formatHistoryFile, {
     schemaVersion: 1,
     formats
   });
+}
+
+/**
+ * UNC-280: 캡션 표층 문구 추출.
+ * - 마무리 줄: 마지막 비어있지 않은 줄 중 해시태그 전용 줄이 아닌 것.
+ *   (저장되는 캡션은 deriveCaptionText 결과라 마지막 줄이 해시태그다.)
+ * - 사용 tic: 끝 구두점만 뗀 tic이 캡션에 부분일치하면 사용한 것으로 본다
+ *   ("그렇군." ↔ "그렇군.."). 앞쪽 말줄임은 떼지 않는다 — "...음."을 "음"으로
+ *   줄이면 "이었음" 같은 어미에도 걸린다. "…"는 "..."로 정규화해 비교한다.
+ *   저장은 persona의 tic 원문으로 한다.
+ * 저장 전 sanitizeText를 거친다 — 캡션 문구도 히스토리 파일에 남는 데이터다.
+ * UNC-227: tic 매칭도 해시태그 줄을 뺀 나머지 줄에서만 본다. "#대박" 같은
+ * 해시태그가 tic "대박"과 우연히 겹쳐 사용한 것으로 오판되는 것을 막는다.
+ */
+export function extractCaptionSurface(
+  caption: string,
+  verbalTics: readonly string[]
+): CaptionSurface {
+  const sanitized = redactCaptionSurfaceText(caption);
+  const nonHashtagLines = sanitized
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !isHashtagOnlyLine(line));
+  const comparable = nonHashtagLines.join("\n").replace(/…/gu, "...");
+  const usedTics = verbalTics.filter((tic) => {
+    const core = trimTrailingTicPunctuation(tic.replace(/…/gu, "...").trim());
+
+    return core.length > 0 && comparable.includes(core);
+  });
+  const landingLine = nonHashtagLines.at(-1);
+
+  return landingLine === undefined ? { usedTics } : { usedTics, landingLine };
+}
+
+function isHashtagOnlyLine(line: string): boolean {
+  return line.split(/\s+/u).every((token) => token.startsWith("#"));
+}
+
+/**
+ * UNC-227 리뷰: 히스토리에 남기고 다음 날 프롬프트로 되돌려 보내는 텍스트라
+ * sanitizeText의 4규칙(email/path/URL/raw code)만으로는 부족하다. AGENTS.md
+ * "Safety And Privacy"가 요구하는 전화번호·시크릿·DB 자격증명·사설 원격까지
+ * 덮으려면 공개 산출물과 같은 규칙집(checkDraftSafety)을 한 번 더 태워야 한다.
+ * 순서는 sanitizeText 먼저다 — raw code(백틱/선언문)는 checkDraftSafety에
+ * 없는 규칙이라 둘 중 어느 쪽도 뺄 수 없다.
+ */
+function redactCaptionSurfaceText(caption: string): string {
+  return checkDraftSafety(sanitizeText(caption).value).redactedText;
+}
+
+/**
+ * UNC-227 리뷰(CodeQL js/polynomial-redos): 끝 구두점 제거를 `/[.!?~,]+$/`로
+ * 하면 "와 이게 되네!!!!!!!!!!x"처럼 구두점이 길게 반복되고 끝나지 않는 tic에서
+ * 시작 위치마다 반복 구간을 다시 훑어 O(n^2)이 된다. 뒤에서부터 한 번만
+ * 훑어 같은 결과를 선형 시간에 낸다.
+ */
+const TIC_TRAILING_PUNCTUATION = new Set([".", "!", "?", "~", ","]);
+
+function trimTrailingTicPunctuation(value: string): string {
+  let end = value.length;
+
+  while (end > 0 && TIC_TRAILING_PUNCTUATION.has(value[end - 1] as string)) {
+    end -= 1;
+  }
+
+  return value.slice(0, end);
+}
+
+/**
+ * date+mood+angle이 같은 레코드를 하나로 접는다. 다양성 키는 그대로 유지하되
+ * captionSurface는 **버리지 않고 합친다**.
+ *
+ * 왜: 같은 날을 같은 mood/angle로 재생성하면 이 키가 그대로 겹친다. 예전처럼
+ * 최신 레코드만 남기면 앞선 재생성이 쓴 말버릇이 히스토리에서 사라져, 다음 날
+ * 로테이션(selectRotatedVerbalTics)이 "안 쓴 말버릇"으로 착각하고 다시 꺼낸다.
+ * mood가 달라진 재생성은 두 레코드가 모두 남아 양쪽 말버릇이 모두 반영되는데,
+ * mood가 같을 때만 잊히는 비대칭도 함께 사라진다.
+ *
+ * usedTics는 집합이라 합집합이 무손실이다(최신 것이 앞). landingLine은 레코드당
+ * 한 줄뿐이라 최신 재생성의 줄 — 그날 latest 드래프트가 실제로 끝맺은 줄 — 을
+ * 남긴다.
+ */
+function mergeStoryFormatDuplicates(
+  formats: RecentStoryFormat[]
+): RecentStoryFormat[] {
+  const merged: RecentStoryFormat[] = [];
+
+  for (const format of formats) {
+    const existing = merged.find(
+      (candidate) =>
+        candidate.date === format.date &&
+        candidate.mood === format.mood &&
+        candidate.angle === format.angle
+    );
+
+    if (existing === undefined) {
+      merged.push(format);
+      continue;
+    }
+
+    const surface = mergeCaptionSurfaces(
+      existing.captionSurface,
+      format.captionSurface
+    );
+
+    if (surface !== undefined) {
+      existing.captionSurface = surface;
+    }
+  }
+
+  return merged;
+}
+
+function mergeCaptionSurfaces(
+  newer: CaptionSurface | undefined,
+  older: CaptionSurface | undefined
+): CaptionSurface | undefined {
+  if (newer === undefined) {
+    return older;
+  }
+
+  if (older === undefined) {
+    return newer;
+  }
+
+  const usedTics = [...newer.usedTics];
+
+  for (const tic of older.usedTics) {
+    if (!usedTics.includes(tic)) {
+      usedTics.push(tic);
+    }
+  }
+
+  const landingLine = newer.landingLine ?? older.landingLine;
+
+  return landingLine === undefined ? { usedTics } : { usedTics, landingLine };
 }
 
 function buildSafeStoryFormatInput(options: {
@@ -318,7 +471,9 @@ function buildSafeStoryFormatInput(options: {
       ]
     },
     projectPersonaHints: options.projectPersonaHints,
-    recentFormats: options.recentFormats,
+    // UNC-280: captionSurface는 캡션 지시문 전용이다. story-plan 프로바이더
+    // 입력은 이전과 동일하게 다양성 키만 싣는다.
+    recentFormats: options.recentFormats.map(toStoryPlanRecentFormat),
     activitySignals: {
       activityLevel: summary.activityLevel,
       dominantTheme: summary.dominantTheme,
@@ -336,6 +491,24 @@ function buildSafeStoryFormatInput(options: {
       uncertaintyNotes: summary.uncertaintyNotes
     }
   };
+}
+
+function toStoryPlanRecentFormat(format: RecentStoryFormat): RecentStoryFormat {
+  const diversityKeys: RecentStoryFormat = { date: format.date };
+
+  if (format.mood !== undefined) {
+    diversityKeys.mood = format.mood;
+  }
+
+  if (format.angle !== undefined) {
+    diversityKeys.angle = format.angle;
+  }
+
+  if (format.formatName !== undefined) {
+    diversityKeys.formatName = format.formatName;
+  }
+
+  return diversityKeys;
 }
 
 function buildHighlights(summary: ActivitySummary, quiet: boolean): string[] {
@@ -451,6 +624,8 @@ function uniqueDefinedStrings(values: (string | undefined)[]): string[] {
  * Legacy-tolerant projection (UNC-226): older entries may still carry the
  * removed rotating-costume fields `voice`/`tone`. They load without error but
  * are dropped here, so they never reach prompts or get written back.
+ * UNC-280: also projects `captionSurface`, dropping only that field (not the
+ * whole entry) when it is malformed.
  */
 function pickRecentStoryFormatFields(
   entry: Record<string, unknown>
@@ -469,7 +644,25 @@ function pickRecentStoryFormatFields(
     recent.formatName = entry.formatName;
   }
 
+  if (isCaptionSurface(entry.captionSurface)) {
+    recent.captionSurface = {
+      usedTics: [...entry.captionSurface.usedTics],
+      ...(entry.captionSurface.landingLine !== undefined
+        ? { landingLine: entry.captionSurface.landingLine }
+        : {})
+    };
+  }
+
   return recent;
+}
+
+function isCaptionSurface(value: unknown): value is CaptionSurface {
+  return (
+    isRecord(value) &&
+    Array.isArray(value.usedTics) &&
+    value.usedTics.every((tic) => typeof tic === "string") &&
+    (value.landingLine === undefined || typeof value.landingLine === "string")
+  );
 }
 
 /**

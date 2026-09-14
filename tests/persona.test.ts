@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { CAPTION_REPETITION_WINDOW_DAYS } from "../src/diary-generator.js";
 import {
   DEFAULT_PERSONA_PRESET,
   PERSONA_PRESET_NAMES,
@@ -22,6 +23,22 @@ describe("PERSONA_PRESETS", () => {
       expect(bundle.roastLevel).toBeLessThanOrEqual(5);
       expect(bundle.persona.voice.registerVariety).toBe(true);
     }
+  });
+
+  it("ships enough distinct verbalTics per preset to outlast the caption rotation window (UNC-283)", () => {
+    for (const name of PERSONA_PRESET_NAMES) {
+      const tics = PERSONA_PRESETS[name].persona.voice.verbalTics;
+
+      expect(new Set(tics).size).toBe(tics.length);
+      expect(tics.length).toBeGreaterThan(CAPTION_REPETITION_WINDOW_DAYS);
+    }
+  });
+
+  it("keeps each preset's original verbalTics first and unchanged (tone preserved, UNC-283)", () => {
+    expect(PERSONA_PRESETS["까칠한 시니어"].persona.voice.verbalTics.slice(0, 2)).toEqual(["정확히 말하면", "그건 좀..."]);
+    expect(PERSONA_PRESETS["다정한 페어"].persona.voice.verbalTics.slice(0, 2)).toEqual(["괜찮아요", "같이 해봐요"]);
+    expect(PERSONA_PRESETS["시니컬한 관찰자"].persona.voice.verbalTics.slice(0, 2)).toEqual(["...음.", "그렇군."]);
+    expect(PERSONA_PRESETS["텐션 높은 주니어"].persona.voice.verbalTics.slice(0, 2)).toEqual(["대박", "미쳤다"]);
   });
 });
 

@@ -28,7 +28,8 @@ import { isMood } from "./story-format-plan.js";
 import type {
   ProjectPersonaHint,
   MoodPlan,
-  Mood
+  Mood,
+  RecentStoryFormat
 } from "./story-format-plan.js";
 import type { RawNarrativeProjection } from "./raw-narrative-projection.js";
 
@@ -97,7 +98,91 @@ export type GenerateCaptionOptions = {
   roastLevel: number;
   rawNarrativeProjection?: RawNarrativeProjection;
   storyCardGist?: SafeStoryCardGist[];
+  recentFormats?: RecentStoryFormat[];
 };
+
+/**
+ * UNC-281: 표층 문구 반복 회피 윈도 (일).
+ * 실측(2026-07-22~24)에서 같은 추임새가 3일 연속 반복된 것이 가장 눈에
+ * 띄었으므로, 최소 3일은 같은 tic·마무리 줄을 피한다.
+ */
+export const CAPTION_REPETITION_WINDOW_DAYS = 3;
+
+const MS_PER_DAY = 86_400_000;
+
+export type CaptionHistoryContext = {
+  targetDate: string;
+  recentFormats: readonly RecentStoryFormat[];
+};
+
+/**
+ * targetDate 이전 1..N일(달력 기준)의 엔트리만 날짜 내림차순으로 돌려준다.
+ * 같은 날짜의 여러 레코드(다른 mood로 재생성)는 전부 포함한다. 오늘 날짜
+ * 엔트리(같은 날 재생성)는 "지난 며칠"이 아니므로 제외한다.
+ */
+export function selectCaptionHistoryWindow(
+  captionHistory?: CaptionHistoryContext
+): RecentStoryFormat[] {
+  if (captionHistory === undefined) {
+    return [];
+  }
+
+  const target = Date.parse(`${captionHistory.targetDate}T00:00:00Z`);
+
+  if (Number.isNaN(target)) {
+    return [];
+  }
+
+  return captionHistory.recentFormats
+    .filter((format) => {
+      const entry = Date.parse(`${format.date}T00:00:00Z`);
+
+      if (Number.isNaN(entry)) {
+        return false;
+      }
+
+      const daysAgo = Math.round((target - entry) / MS_PER_DAY);
+
+      return daysAgo >= 1 && daysAgo <= CAPTION_REPETITION_WINDOW_DAYS;
+    })
+    .sort((a, b) => b.date.localeCompare(a.date));
+}
+
+/**
+ * UNC-281: 윈도 안에서 쓰인 tic을 뺀 나머지를 돌려준다. 전부 쓰였으면
+ * signature phrases 줄이 사라지지 않도록 가장 오래 전에 쓴 tic 1개만
+ * 되살린다 (동률은 persona 순서상 앞의 것).
+ */
+export function selectRotatedVerbalTics(
+  verbalTics: readonly string[],
+  windowEntries: readonly RecentStoryFormat[]
+): string[] {
+  const lastUseIndex = new Map<string, number>();
+
+  windowEntries.forEach((format, index) => {
+    for (const tic of format.captionSurface?.usedTics ?? []) {
+      if (!lastUseIndex.has(tic)) {
+        lastUseIndex.set(tic, index);
+      }
+    }
+  });
+
+  const unused = verbalTics.filter((tic) => !lastUseIndex.has(tic));
+
+  if (unused.length > 0 || verbalTics.length === 0) {
+    return unused;
+  }
+
+  let revived = verbalTics[0] as string;
+
+  for (const tic of verbalTics) {
+    if ((lastUseIndex.get(tic) ?? 0) > (lastUseIndex.get(revived) ?? 0)) {
+      revived = tic;
+    }
+  }
+
+  return [revived];
+}
 
 type DiaryDraftProviderData = JsonObject & {
   title?: JsonValue;
@@ -435,7 +520,10 @@ function buildDiaryInstructions(options: {
  * they stay as fixed lines in `buildCaptionInstructions` regardless of
  * persona.
  */
-function buildPersonaCaptionLines(persona: Persona): string[] {
+function buildPersonaCaptionLines(
+  persona: Persona,
+  captionHistory?: CaptionHistoryContext
+): string[] {
   const { identity, voice, humor } = persona;
 
   const lines = [
@@ -445,9 +533,14 @@ function buildPersonaCaptionLines(persona: Persona): string[] {
     `Humor style: ${humor.style}. Roast targets when appropriate: ${humor.targets.join(", ")}.`
   ];
 
-  if (voice.verbalTics.length > 0) {
+  const verbalTics = selectRotatedVerbalTics(
+    voice.verbalTics,
+    selectCaptionHistoryWindow(captionHistory)
+  );
+
+  if (verbalTics.length > 0) {
     lines.push(
-      `Signature phrases you may use naturally (do not force every line): ${voice.verbalTics.join(", ")}.`
+      `Signature phrases you may use naturally (do not force every line): ${verbalTics.join(", ")}.`
     );
   }
 
@@ -460,12 +553,50 @@ function buildPersonaCaptionLines(persona: Persona): string[] {
   return lines;
 }
 
+/**
+ * UNC-227: 회피 목록에 얼마나 많은 마무리 줄을 실을지의 상한. captionHistory의
+ * limit이 커지면(UNC-227 fix 1) 윈도 안 엔트리 수도 늘어날 수 있어, 프롬프트가
+ * 계속 불어나지 않도록 최근 것부터 최대 5개만 남긴다. tic 제외는 별도이며
+ * 이 상한의 영향을 받지 않는다 — 윈도의 모든 레코드를 계속 합친다.
+ */
+const MAX_AVOIDED_LANDING_LINES = 5;
+
+/**
+ * UNC-282: 최근 윈도에서 쓴 마무리 줄을 캡션 지시문의 회피 목록으로 싣는다.
+ * 착지 형태를 분류하지 않고, 실제 문장을 보여 주고 문장 모양까지 피하게 한다.
+ * 기록이 없으면 아무것도 싣지 않는다 (히스토리가 빈 날 지시문은 이전과 동일).
+ * UNC-227: 바로 위 블록(카드/반복 스레드 지시)과 붙어 보이지 않도록 앞에
+ * 빈 줄을 하나 둔다. 빈 목록일 때는 여전히 []를 돌려줘 AC5의 바이트 동일성이
+ * 유지된다.
+ */
+function buildRecentLandingLineAvoidanceLines(
+  captionHistory?: CaptionHistoryContext
+): string[] {
+  const landingLines = [
+    ...new Set(
+      selectCaptionHistoryWindow(captionHistory)
+        .map((format) => format.captionSurface?.landingLine?.trim() ?? "")
+        .filter((line) => line.length > 0)
+    )
+  ].slice(0, MAX_AVOIDED_LANDING_LINES);
+
+  if (landingLines.length === 0) {
+    return [];
+  }
+
+  return [
+    "",
+    `Recently used closing lines: ${landingLines.map((line) => `"${line}"`).join(" / ")}. Do not end today's caption with any of these lines or a near-copy of their sentence shape; land on a different kind of final line.`
+  ];
+}
+
 export function buildCaptionInstructions(options: {
   quiet: boolean;
   persona: Persona;
   moodPlan: MoodPlan;
   recurringThreads?: SafeRecurringThread[];
   storyCardGist?: SafeStoryCardGist[];
+  captionHistory?: CaptionHistoryContext;
 }): string {
   const quietInstruction = options.quiet
     ? "This is a quiet day with no recorded Git activity. Acknowledge the absence of recorded work honestly. Write a caption about the quiet — the narrator observed little activity and says so plainly. Do not invent work. A 조용한 날 caption is valid and honest content."
@@ -479,7 +610,7 @@ export function buildCaptionInstructions(options: {
 
   return [
     "Return JSON with exactly two fields: caption (string) and hashtags (array of strings).",
-    ...buildPersonaCaptionLines(options.persona),
+    ...buildPersonaCaptionLines(options.persona, options.captionHistory),
     `Today's mood is "${options.moodPlan.mood}" — let it color the caption's emotional register and pacing on top of the persona voice described above.`,
     `Caption style guidance for today: ${options.moodPlan.captionStyle}.`,
     `The coworker's fixation today: ${options.moodPlan.angle}. Use it as a natural anchor when it fits.`,
@@ -541,7 +672,8 @@ export function buildCaptionInstructions(options: {
     "Do not imply the draft was automatically posted or exported.",
     "Each hashtag must start with # and contain no spaces.",
     ...buildCaptionCardRoleLines(options.storyCardGist),
-    ...buildRecurringThreadInstructionLines(options.recurringThreads)
+    ...buildRecurringThreadInstructionLines(options.recurringThreads),
+    ...buildRecentLandingLineAvoidanceLines(options.captionHistory)
   ].join("\n");
 }
 
@@ -698,7 +830,14 @@ export async function generateCaption(
       persona: options.persona,
       moodPlan: options.moodPlan,
       recurringThreads: options.activitySummary.recurringThreads,
-      storyCardGist: options.storyCardGist
+      storyCardGist: options.storyCardGist,
+      captionHistory:
+        options.recentFormats === undefined
+          ? undefined
+          : {
+              targetDate: options.activitySummary.targetDate,
+              recentFormats: options.recentFormats
+            }
     }),
     summary: buildSafeCaptionInput({
       activitySummary: options.activitySummary,
