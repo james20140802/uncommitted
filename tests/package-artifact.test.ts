@@ -55,7 +55,11 @@ async function getPackedFiles(): Promise<string[]> {
   return files;
 }
 
-describe("package artifact exclusions (UNC-106)", () => {
+// Each test shells out to `npm pack --dry-run`, which can exceed the default 5s
+// timeout on a loaded CI runner (observed at 5010ms in the release workflow).
+const NPM_PACK_TEST_TIMEOUT_MS = 30_000;
+
+describe("package artifact exclusions (UNC-106)", { timeout: NPM_PACK_TEST_TIMEOUT_MS }, () => {
   it("packed tarball excludes src/, tests/, .github/, and other dev-only paths", async () => {
     const files = await getPackedFiles();
 
