@@ -4,6 +4,15 @@ Status: **post-MVP design exploration.** Not yet scoped into issues. Depends on
 source expansion (Linear `UNC-115`). Product strategy stays in Notion; this
 document captures the agreed design direction so it survives between sessions.
 
+> **Update (2026-07-10):** `UNC-115` is done, so short-term memory is no longer
+> blocked. The genre-removal direction here has been sharpened into a
+> **genre → mood** reframe (variety tracks the day's real emotional shape, not a
+> fictional costume), and the whole direction is now consolidated, grounded in 10
+> days of feedback, in
+> `docs/superpowers/specs/2026-07-10-output-quality-persona-mood-design.md` — the
+> authoritative spec for the "Output Quality: Persona × Mood" project. This file
+> remains the background design-notes reference.
+
 ## Why
 
 The MVP already has an "AI coworker" voice, but as a *system* the persona is
