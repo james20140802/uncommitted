@@ -45,7 +45,8 @@ async function getPackedFiles(): Promise<string[]> {
   const { stdout } = await execFileAsync(
     "npm",
     ["pack", "--dry-run", "--json"],
-    { cwd: fileURLToPath(new URL("..", import.meta.url)) }
+    // Kill the child if it hangs, so a timed-out hook doesn't leave npm running
+    { cwd: fileURLToPath(new URL("..", import.meta.url)), timeout: NPM_PACK_TIMEOUT_MS }
   );
 
   // npm pack --json outputs an array; each entry has a `files` array with `path` strings
