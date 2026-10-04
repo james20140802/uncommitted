@@ -7,8 +7,8 @@
  * - Secret/env patterns are absent
  *
  * This test requires npm to be available on PATH (standard on macOS with Node).
- * It is skipped gracefully when running in a no-network / pure-unit environment
- * that blocks child_process.
+ * `npm pack` runs once in `beforeAll`; if it fails (e.g. child_process is blocked)
+ * the suite fails rather than skipping, so a broken pack is never read as a pass.
  */
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
