@@ -14,7 +14,7 @@ import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 
 const execFileAsync = promisify(execFile);
 
@@ -37,7 +37,11 @@ const REQUIRED_PATHS = ["dist/cli.js"];
 /** True only when dist/ has been built; skips dist-presence assertions otherwise */
 const distBuilt = existsSync(fileURLToPath(new URL("../dist/cli.js", import.meta.url)));
 
+/** Number of times `npm pack` was shelled out in this file run (UNC-258) */
+let npmPackCalls = 0;
+
 async function getPackedFiles(): Promise<string[]> {
+  npmPackCalls += 1;
   const { stdout } = await execFileAsync(
     "npm",
     ["pack", "--dry-run", "--json"],
@@ -55,14 +59,19 @@ async function getPackedFiles(): Promise<string[]> {
   return files;
 }
 
-// Each test shells out to `npm pack --dry-run`, which can exceed the default 5s
-// timeout on a loaded CI runner (observed at 5010ms in the release workflow).
-const NPM_PACK_TEST_TIMEOUT_MS = 30_000;
+// `npm pack --dry-run` boots npm (~4.5s alone) and can take far longer when the
+// whole suite runs in parallel. Run it once per file (UNC-258) and give that one
+// call a local budget instead of raising the global testTimeout.
+const NPM_PACK_TIMEOUT_MS = 30_000;
 
-describe("package artifact exclusions (UNC-106)", { timeout: NPM_PACK_TEST_TIMEOUT_MS }, () => {
-  it("packed tarball excludes src/, tests/, .github/, and other dev-only paths", async () => {
-    const files = await getPackedFiles();
+describe("package artifact exclusions (UNC-106)", () => {
+  let files: string[] = [];
 
+  beforeAll(async () => {
+    files = await getPackedFiles();
+  }, NPM_PACK_TIMEOUT_MS);
+
+  it("packed tarball excludes src/, tests/, .github/, and other dev-only paths", () => {
     for (const forbiddenPrefix of FORBIDDEN_PREFIXES) {
       const violators = files.filter((f) => f.startsWith(forbiddenPrefix));
       expect(
@@ -72,9 +81,7 @@ describe("package artifact exclusions (UNC-106)", { timeout: NPM_PACK_TEST_TIMEO
     }
   });
 
-  it("packed tarball excludes secret/env/log files", async () => {
-    const files = await getPackedFiles();
-
+  it("packed tarball excludes secret/env/log files", () => {
     for (const pattern of FORBIDDEN_PATTERNS) {
       const violators = files.filter((f) => pattern.test(f));
       expect(
@@ -84,9 +91,7 @@ describe("package artifact exclusions (UNC-106)", { timeout: NPM_PACK_TEST_TIMEO
     }
   });
 
-  it.skipIf(!distBuilt)("packed tarball includes dist/cli.js (the bin entry)", async () => {
-    const files = await getPackedFiles();
-
+  it.skipIf(!distBuilt)("packed tarball includes dist/cli.js (the bin entry)", () => {
     for (const required of REQUIRED_PATHS) {
       expect(
         files,
@@ -95,9 +100,7 @@ describe("package artifact exclusions (UNC-106)", { timeout: NPM_PACK_TEST_TIMEO
     }
   });
 
-  it("packed tarball includes only dist/ JS files and README.md", async () => {
-    const files = await getPackedFiles();
-
+  it("packed tarball includes only dist/ JS files and README.md", () => {
     // Every file should be either under dist/ or be README.md / package.json
     // (package.json is always auto-included by npm)
     const allowed = files.filter(
@@ -107,5 +110,9 @@ describe("package artifact exclusions (UNC-106)", { timeout: NPM_PACK_TEST_TIMEO
         f === "package.json"
     );
     expect(allowed.length).toBe(files.length);
+  });
+
+  it("shells out to npm pack only once per file run (UNC-258)", () => {
+    expect(npmPackCalls).toBe(1);
   });
 });
