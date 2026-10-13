@@ -32,32 +32,32 @@ const limits = {
 
 const koreanFixtures: Record<NarrativeKind, StoryCardSlots> = {
   typo: {
-    headline: "커밋은 없고 바뀐 파일만 열일곱 개 쌓인 하루였음",
-    kicker: "작업 트리가 조용히 부풀었다"
+    headline: "커밋은 없는데 바뀐 파일만 열일곱 개나 쌓여 있던 조용한 하루였음 정말로",
+    kicker: "작업 트리가 조용히 부풀어 오른 날이었음"
   },
   checkboard: {
-    heading: "오늘 끝낸 일과 아직 남은 일을 정리함",
+    heading: "오늘 끝낸 일과 아직 남아 있는 일을 정리함 PR 전에",
     done: [
-      "복구 경로의 버그 두 개를 고치고 테스트까지 붙임",
-      "CI가 다시 초록색으로 돌아온 것을 확인함"
+      "복구 경로의 버그 두 개를 고치고 테스트까지 붙인 뒤 PR에 정리해 둠",
+      "CI가 다시 초록색으로 돌아온 것을 확인하고 로그까지 꼼꼼히 훑어봄"
     ],
     todo: [
-      "TypeScript 타입 경고 남은 것들을 하나씩 정리하기",
-      "리뷰에서 나온 PR 코멘트에 답장 달고 마무리하기"
+      "TypeScript 타입 경고 남은 것들을 하나씩 정리해서 줄이기 시작",
+      "리뷰에서 나온 PR 코멘트에 답장 달고 CI 통과 확인까지 마치고 닫기"
     ]
   },
   modal: {
-    title: "정말 테스트를 지우고 커밋할까요?",
-    body: "지금 지우면 어제 고친 복구 버그가 다시 살아날 수 있습니다. 테스트는 남겨 두고 나머지 정리만 먼저 끝내는 쪽을 권합니다. 계속할까요?",
-    primaryAction: "테스트 남기고 계속",
-    secondaryAction: "다시 검토하기"
+    title: "정말 테스트를 지우고 바로 커밋해 버리실 건가요 지금?",
+    body: "지금 지우면 어제 고친 복구 버그가 다시 살아날 수 있습니다. 테스트는 남겨 두고 나머지 정리만 먼저 끝낸 다음 PR을 여는 쪽을 권합니다. CI도 한 번 더 돌려 보고 문제가 없는 것을 확인한 뒤에 계속할까요?",
+    primaryAction: "테스트 남기고 계속 진행하기",
+    secondaryAction: "다시 한번 더 검토해 보기"
   },
   chat: {
     messages: [
-      "개발자: 오늘 커밋은 몇 개였어? 아까부터 파일만 계속 바뀌던데",
-      "나: 커밋은 없고 바뀐 파일만 열일곱 개야. 다들 정리 중이래",
-      "개발자: 그럼 내일 한꺼번에 올라오겠네. CI가 놀라지 않았으면",
-      "나: 테스트부터 돌려 보고 PR은 그다음에 열기로 했어"
+      "개발자: 오늘 커밋은 몇 개였어? 아까부터 파일만 계속 바뀌던데 CI는 괜찮은 거야 지금 확인해 봤어?",
+      "나: 커밋은 하나도 없고 바뀐 파일만 열일곱 개야. 다들 정리 중이라고 하더라고 TypeScript 경고도",
+      "개발자: 그럼 내일 아침에 한꺼번에 올라오겠네. CI가 놀라지 않았으면 좋겠다 진짜 정말로 말이야 그치?",
+      "나: 일단 테스트부터 돌려 보고 PR은 그다음에 열기로 했어. 오늘은 여기까지 하고 쉬는 걸로 하자 응"
     ]
   }
 };
@@ -66,29 +66,39 @@ function stringsOf(slots: StoryCardSlots): string[] {
   return Object.values(slots).flatMap((value) => (Array.isArray(value) ? value : [value as string]));
 }
 
+const fixturePng = await sharp({
+  create: { width: 1080, height: 1350, channels: 3, background: "#123456" }
+})
+  .png()
+  .toBuffer();
+
 describe("narrative story-card kinds render realistic Korean sentences", () => {
-  it("keeps every fixture within the declared slot limits", () => {
+  it("keeps every fixture within 3 characters below its declared slot limit", () => {
+    const expectNearMax = (value: unknown, limit: number): void => {
+      expect(typeof value).toBe("string");
+      const length = (value as string).length;
+      expect(length).toBeLessThanOrEqual(limit);
+      expect(length).toBeGreaterThanOrEqual(limit - 3);
+    };
+    const expectLines = (value: unknown, maxLines: number, limit: number): void => {
+      expect(Array.isArray(value)).toBe(true);
+      expect((value as string[]).length).toBe(maxLines);
+      for (const line of value as string[]) {
+        expectNearMax(line, limit);
+      }
+    };
     const { typo, checkboard, modal, chat } = koreanFixtures;
 
-    expect((typo.headline as string).length).toBeLessThanOrEqual(limits.typo.headline);
-    expect((typo.kicker as string).length).toBeLessThanOrEqual(limits.typo.kicker);
-    expect((checkboard.heading as string).length).toBeLessThanOrEqual(limits.checkboard.heading);
-    for (const key of ["done", "todo"]) {
-      const lines = checkboard[key] as string[];
-      expect(lines.length).toBeLessThanOrEqual(limits.checkboard.maxLines);
-      for (const line of lines) {
-        expect(line.length).toBeLessThanOrEqual(limits.checkboard.lines);
-      }
-    }
-    expect((modal.title as string).length).toBeLessThanOrEqual(limits.modal.title);
-    expect((modal.body as string).length).toBeLessThanOrEqual(limits.modal.body);
-    expect((modal.primaryAction as string).length).toBeLessThanOrEqual(limits.modal.primaryAction);
-    expect((modal.secondaryAction as string).length).toBeLessThanOrEqual(limits.modal.secondaryAction);
-    const messages = chat.messages as string[];
-    expect(messages.length).toBeLessThanOrEqual(limits.chat.maxLines);
-    for (const message of messages) {
-      expect(message.length).toBeLessThanOrEqual(limits.chat.lines);
-    }
+    expectNearMax(typo.headline, limits.typo.headline);
+    expectNearMax(typo.kicker, limits.typo.kicker);
+    expectNearMax(checkboard.heading, limits.checkboard.heading);
+    expectLines(checkboard.done, limits.checkboard.maxLines, limits.checkboard.lines);
+    expectLines(checkboard.todo, limits.checkboard.maxLines, limits.checkboard.lines);
+    expectNearMax(modal.title, limits.modal.title);
+    expectNearMax(modal.body, limits.modal.body);
+    expectNearMax(modal.primaryAction, limits.modal.primaryAction);
+    expectNearMax(modal.secondaryAction, limits.modal.secondaryAction);
+    expectLines(chat.messages, limits.chat.maxLines, limits.chat.lines);
   });
 
   it.each(["typo", "checkboard", "modal", "chat"] as const)(
@@ -145,12 +155,6 @@ describe("narrative story-card kinds render realistic Korean sentences", () => {
   );
 });
 
-const fixturePng = await sharp({
-  create: { width: 1080, height: 1350, channels: 3, background: "#123456" }
-})
-  .png()
-  .toBuffer();
-
 let chromiumAvailability: Promise<void> | undefined;
 
 async function assertPlaywrightChromiumAvailable(): Promise<void> {
@@ -162,7 +166,7 @@ async function assertPlaywrightChromiumAvailable(): Promise<void> {
     .catch((error: unknown) => {
       throw new Error(
         [
-          "Renderer smoke tests require Playwright Chromium.",
+          "Story-card Korean layout tests require Playwright Chromium.",
           "Run `pnpm exec playwright install chromium` before running this test file.",
           error instanceof Error ? error.message : String(error)
         ].join("\n")
