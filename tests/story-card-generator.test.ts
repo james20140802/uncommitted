@@ -9,6 +9,12 @@ import type { MoodPlan } from "../src/story-format-plan.js";
 import { listStoryCardCandidateProjections } from "../src/story-card-registry.js";
 import { STORY_CARD_VIOLATIONS } from "../src/story-card-plan.js";
 import { RECURRING_THREAD_INSTRUCTIONS } from "../src/recurring-thread-instructions.js";
+import { buildCaptionInstructions } from "../src/diary-generator.js";
+import { PERSONA_PRESETS } from "../src/persona.js";
+import {
+  KOREAN_SURFACE_RULES,
+  buildKoreanEnglishMixLine
+} from "../src/korean-surface-instructions.js";
 import {
   STORY_CARD_MAX_ATTEMPTS,
   buildStoryCardInstructions,
@@ -535,5 +541,82 @@ describe("카드 슬롯 누적 대비 지시문 (UNC-278 / T6)", () => {
       "Do not manufacture activity to fill the cards."
     );
     expect(instructions).toContain(RECURRING_THREAD_INSTRUCTIONS.noInventedCount);
+  });
+});
+
+describe("story card instructions follow the Korean surface rules (UNC-286)", () => {
+  const base = () => ({
+    quiet: false,
+    cardCount: 3,
+    candidates: listStoryCardCandidateProjections(createSummary())
+  });
+
+  it("carries the same shared Korean rule sentences as the story and caption prompts (parent AC1)", () => {
+    const card = buildStoryCardInstructions(base());
+    const caption = buildCaptionInstructions({
+      quiet: false,
+      persona: PERSONA_PRESETS["시니컬한 관찰자"].persona,
+      moodPlan: createMoodPlan()
+    });
+
+    for (const rule of Object.values(KOREAN_SURFACE_RULES)) {
+      expect(card).toContain(rule);
+      // 캡션 프롬프트도 같은 문장을 가진다 — 출처가 하나임을 교차 확인
+      expect(caption).toContain(rule);
+    }
+  });
+
+  it("names the persona's Korean-English mix value (parent AC2)", () => {
+    const high = buildStoryCardInstructions({ ...base(), koreanEnglishMix: "high" });
+    const medium = buildStoryCardInstructions({ ...base(), koreanEnglishMix: "medium" });
+
+    expect(high).toContain(buildKoreanEnglishMixLine("high"));
+    expect(medium).toContain(buildKoreanEnglishMixLine("medium"));
+    expect(high).not.toBe(medium);
+  });
+
+  it("defaults the mix to low when the option is omitted", () => {
+    expect(buildStoryCardInstructions(base())).toContain(
+      buildKoreanEnglishMixLine("low")
+    );
+  });
+
+  it("passes the mix through generateStoryCardPlan into the provider request and keeps it on retry", async () => {
+    const seenInstructions: string[] = [];
+    const responses = [
+      cardResponse([
+        { type: "typo", slots: [{ name: "headline", lines: ["가".repeat(80)] }] }
+      ]),
+      cardResponse([
+        { type: "typo", slots: [{ name: "headline", lines: ["짧은 제목"] }] }
+      ])
+    ];
+    let index = 0;
+    const provider: AiProvider = {
+      name: "mock",
+      model: "stub",
+      async generateStructured(
+        request: AiStructuredGenerationRequest
+      ): Promise<AiProviderRawResponse> {
+        seenInstructions.push(request.instructions);
+        const body = responses[Math.min(index, responses.length - 1)];
+        index += 1;
+
+        return { responseJson: body };
+      }
+    };
+
+    await generateStoryCardPlan({
+      activitySummary: createSummary(),
+      moodPlan: createMoodPlan(1),
+      provider,
+      koreanEnglishMix: "high"
+    });
+
+    expect(seenInstructions).toHaveLength(2);
+    for (const instructions of seenInstructions) {
+      expect(instructions).toContain(buildKoreanEnglishMixLine("high"));
+      expect(instructions).toContain(KOREAN_SURFACE_RULES.exceptions);
+    }
   });
 });

@@ -20,6 +20,10 @@ import {
   buildCaptionSkeletonLines
 } from "./caption-card-role.js";
 import type { Persona, PersonaLangMix } from "./persona.js";
+import {
+  buildKoreanEnglishMixLine,
+  buildKoreanSurfaceLines
+} from "./korean-surface-instructions.js";
 import { emailPattern } from "./redaction.js";
 import { buildRecurringThreadInstructionLines } from "./recurring-thread-instructions.js";
 import type { StoryCardPlan, StoryCardPlanCard } from "./story-card-plan.js";
@@ -460,18 +464,6 @@ const DEADPAN_FRAME_LINES = [
   "The deadpan frame targets situations, tools, and workflows only. It never becomes irony aimed at the user's identity, ability, appearance, mental health, personal value, or real life."
 ] as const;
 
-/**
- * 영어 명사구 억제 + 내부 식별자 정책 (UNC-250). 내부 식별자 처리는
- * docs/superpowers/specs/2026-08-07-unc-247-internal-identifier-exposure-policy.md
- * 에서 결정한 (a) 전면 마스킹을 따른다 — 마스킹 placeholder를 찍는 게 아니라
- * 보편 상황 서술로 바꾸는 것이다.
- */
-const KOREAN_SURFACE_LINES = [
-  "Write the reader-facing surface — story title, slide titles, slide bodies, altText, and caption — in Korean. Any English noun phrase that has a natural Korean equivalent must be written in Korean instead — for example \"working tree\", \"fire-and-forget\", \"boundary tape\", \"release-shaped moment\" should be expressed as Korean, not printed in English.",
-  "Exceptions: hashtag tokens (anything starting with #) may stay in English, and widely used abbreviations may stay as-is: CI, PR, API, UI, AI, JSON, URL — the abbreviation only, never a specific number or key attached to it. Public tool, language, and platform names such as Git, TypeScript, or Instagram are also allowed. The persona's Korean-English mix setting governs how freely these allowed English tokens appear; it never licenses untranslated internal or translatable noun phrases.",
-  "Internal identifiers must never appear: ticket keys such as UNC-123, internal screen, module, class, or file names such as FeedbackModal or diary-generator.ts, and proper nouns that appear only in internal branch names or PR titles. Reframe them as the universal situation they describe instead of masking them with placeholder text."
-] as const;
-
 function buildDiaryInstructions(options: {
   quiet: boolean;
   roastLevel: number;
@@ -502,8 +494,8 @@ function buildDiaryInstructions(options: {
     "Do not invent work, commits, bugs, features, shipped changes, or user activity.",
     ...ALTITUDE_RULE_LINES,
     ...DEADPAN_FRAME_LINES,
-    ...KOREAN_SURFACE_LINES,
-    `The persona's Korean-English mix setting is "${options.koreanEnglishMix}"; let it govern how freely the allowed English tokens above appear, within the limits stated there.`,
+    ...buildKoreanSurfaceLines("story"),
+    buildKoreanEnglishMixLine(options.koreanEnglishMix),
     quietInstruction,
     "Never include raw code, raw diffs, secrets, private paths, emails, private URLs, or private remote URLs.",
     "Roast policy: jokes may target situations, tools, TODOs, bugs, recurring work patterns, or requirement churn.",
@@ -625,7 +617,7 @@ export function buildCaptionInstructions(options: {
     "Translate developer jargon and any project-internal English noun phrase (PR numbers, version tags, module or file names, commit hashes, internal screen names) into human stakes — what it actually meant for a person — instead of printing the raw term. Example: an \"archive-context PR\" becomes \"뒤로가기 버튼을 못 믿는 하루\", not the literal PR name. Someone who has never touched this project should still be able to read the caption and relate to it.",
     ...ALTITUDE_RULE_LINES,
     ...DEADPAN_FRAME_LINES,
-    ...KOREAN_SURFACE_LINES,
+    ...buildKoreanSurfaceLines("caption"),
     ...buildCaptionSkeletonLines(options.storyCardGist),
     "",
     "=== BAD EXAMPLES (do not write like these) ===",
@@ -1172,7 +1164,7 @@ const koreanWorkObjects = [
 const koreanCountWord = "\\d+|한|두|세|네|다섯|여섯|일곱|여덟|아홉|열";
 
 /**
- * 조용한 날 한국어 작업 주장 (UNC-251). `KOREAN_SURFACE_LINES`가 독자용
+ * 조용한 날 한국어 작업 주장 (UNC-251). `korean-surface-instructions.ts`가 독자용
  * 표면을 한국어로 강제하므로, 영어 동사만 보는 탐지기로는 "버그를 고쳤습니다"
  * 같은 조작이 그대로 통과한다. 한글에는 `\b` 단어 경계가 잡히지 않아 어간과
  * 어미 결합으로 범위를 잡는다.

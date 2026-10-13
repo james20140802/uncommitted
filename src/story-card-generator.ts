@@ -10,6 +10,11 @@ import {
   type SafeActivitySummary,
   type SafeRecurringThread
 } from "./ai-provider.js";
+import {
+  buildKoreanEnglishMixLine,
+  buildKoreanSurfaceLines
+} from "./korean-surface-instructions.js";
+import type { PersonaLangMix } from "./persona.js";
 import { buildRecurringThreadInstructionLines } from "./recurring-thread-instructions.js";
 import {
   STORY_CARD_VIOLATIONS,
@@ -65,6 +70,11 @@ export type GenerateStoryCardPlanOptions = {
    * 기본 카드로 떨어진다. 생략하면 종전대로 suggestedSlideCount를 쓴다.
    */
   cardCount?: number;
+  /**
+   * UNC-286: 페르소나의 Korean-English mix. 스토리 프롬프트와 같은 문장으로
+   * 카드 프롬프트에 싣는다. 생략하면 generateDiaryDraft와 같이 "low".
+   */
+  koreanEnglishMix?: PersonaLangMix;
 };
 
 type StoryCardProviderData = JsonObject & { cards?: JsonValue };
@@ -90,6 +100,7 @@ export function buildStoryCardInstructions(options: {
   cardCount: number;
   candidates: readonly StoryCardCandidate[];
   recurringThreads?: SafeRecurringThread[];
+  koreanEnglishMix?: PersonaLangMix;
 }): string {
   const lines = [
     `Choose exactly ${options.cardCount} cards for today's carousel and fill in their slots.`,
@@ -109,6 +120,10 @@ export function buildStoryCardInstructions(options: {
     options.quiet
       ? "Today is a quiet day. Say so honestly — a quiet day is valid content. Do not manufacture activity to fill the cards."
       : "Anchor each card in the actual activity given in the input summary.",
+    "",
+    // UNC-286: 스토리·캡션과 **같은 모듈이 소유한 같은 문장**을 붙인다.
+    ...buildKoreanSurfaceLines("card"),
+    buildKoreanEnglishMixLine(options.koreanEnglishMix ?? "low"),
     // UNC-229 / T6: 캡션(T5)과 **같은 모듈이 소유한 같은 문장**을 붙인다.
     ...buildRecurringThreadInstructionLines(options.recurringThreads)
   ];
@@ -279,7 +294,8 @@ export async function generateStoryCardPlan(
       quiet: options.activitySummary.activityLevel === "none",
       cardCount,
       candidates,
-      recurringThreads: options.activitySummary.recurringThreads
+      recurringThreads: options.activitySummary.recurringThreads,
+      koreanEnglishMix: options.koreanEnglishMix
     }),
     summary: buildSafeStoryCardInput(options.activitySummary)
   });

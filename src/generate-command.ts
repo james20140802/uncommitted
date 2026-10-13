@@ -432,7 +432,9 @@ export async function runGenerateCommand(
       // 슬라이드에 순서대로 맞춘다. 일기는 suggestedSlideCount를 제안으로만
       // 쓰고 3-8장 범위면 다른 장수도 유효하게 내므로, 카드는 제안값이
       // 아니라 **이미 만들어진 슬라이드 장수**만큼 요청한다.
-      cardCount: generatedDraft.slides.length
+      cardCount: generatedDraft.slides.length,
+      // UNC-286: 스토리와 같은 페르소나 혼용 설정을 카드 프롬프트에도 넘긴다.
+      koreanEnglishMix: config.persona.voice.koreanEnglishMix
     });
   } catch (error) {
     storyCardGeneration = undefined;
