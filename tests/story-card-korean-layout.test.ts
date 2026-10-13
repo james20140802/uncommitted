@@ -11,7 +11,7 @@ import {
 } from "../src/carousel-renderer.js";
 import { createDraftRevision, type DraftRevision } from "../src/draft-storage.js";
 import type { DiaryDraft, DiarySlide } from "../src/diary-generator.js";
-import type { StoryCardSlots } from "../src/story-card-registry.js";
+import { storyCardRegistry, type StoryCardSlots } from "../src/story-card-registry.js";
 import type { StoryCardPlan } from "../src/story-card-plan.js";
 
 const PLAYWRIGHT_TEST_TIMEOUT_MS = 60_000;
@@ -22,13 +22,8 @@ type NarrativeKind = "typo" | "checkboard" | "modal" | "chat";
 // 실제 카드 문구는 띄어쓰기가 있는 한국어 문장에 허용 영어 토큰(PR, CI,
 // TypeScript)이 섞이므로 단어 단위 줄바꿈으로 더 많은 줄을 차지할 수 있다.
 // 그 실제 형태를 한도 근처까지 채워 렌더 레이아웃 검증을 통과하는지 종류별로 본다.
-// 한도는 src/story-card-kind-{typo,checkboard,modal,chat}.ts slots 스키마 값.
-const limits = {
-  typo: { headline: 40, kicker: 24 },
-  checkboard: { heading: 32, lines: 40, maxLines: 2 },
-  modal: { title: 32, body: 120, primaryAction: 16, secondaryAction: 16 },
-  chat: { lines: 60, maxLines: 4 }
-};
+// 한도는 레지스트리에 등록된 각 종류의 slots 스키마에서 직접 읽는다 —
+// 한도가 재조정되면 이 테스트도 새 한도 기준으로 다시 검증된다.
 
 const koreanFixtures: Record<NarrativeKind, StoryCardSlots> = {
   typo: {
@@ -74,31 +69,30 @@ const fixturePng = await sharp({
 
 describe("narrative story-card kinds render realistic Korean sentences", () => {
   it("keeps every fixture within 3 characters below its declared slot limit", () => {
-    const expectNearMax = (value: unknown, limit: number): void => {
-      expect(typeof value).toBe("string");
-      const length = (value as string).length;
-      expect(length).toBeLessThanOrEqual(limit);
-      expect(length).toBeGreaterThanOrEqual(limit - 3);
-    };
-    const expectLines = (value: unknown, maxLines: number, limit: number): void => {
-      expect(Array.isArray(value)).toBe(true);
-      expect((value as string[]).length).toBe(maxLines);
-      for (const line of value as string[]) {
-        expectNearMax(line, limit);
-      }
-    };
-    const { typo, checkboard, modal, chat } = koreanFixtures;
+    for (const [type, slots] of Object.entries(koreanFixtures)) {
+      const kind = storyCardRegistry.find((candidate) => candidate.id === type);
+      expect(kind, `story-card kind "${type}" is registered`).toBeDefined();
 
-    expectNearMax(typo.headline, limits.typo.headline);
-    expectNearMax(typo.kicker, limits.typo.kicker);
-    expectNearMax(checkboard.heading, limits.checkboard.heading);
-    expectLines(checkboard.done, limits.checkboard.maxLines, limits.checkboard.lines);
-    expectLines(checkboard.todo, limits.checkboard.maxLines, limits.checkboard.lines);
-    expectNearMax(modal.title, limits.modal.title);
-    expectNearMax(modal.body, limits.modal.body);
-    expectNearMax(modal.primaryAction, limits.modal.primaryAction);
-    expectNearMax(modal.secondaryAction, limits.modal.secondaryAction);
-    expectLines(chat.messages, limits.chat.maxLines, limits.chat.lines);
+      for (const [name, spec] of Object.entries(kind!.slots)) {
+        const value = slots[name];
+        const limit = spec.maxLength;
+        expect(value, `${type}.${name} has a fixture`).toBeDefined();
+        expect(limit, `${type}.${name} declares maxLength`).toBeDefined();
+
+        const lines = spec.type === "lines" ? (value as string[]) : [value as string];
+        if (spec.type === "lines") {
+          expect(Array.isArray(value), `${type}.${name} is a lines slot`).toBe(true);
+          expect(lines.length, `${type}.${name} fills maxLines`).toBe(spec.maxLines);
+        } else {
+          expect(typeof value, `${type}.${name} is a text slot`).toBe("string");
+        }
+
+        for (const line of lines) {
+          expect(line.length, `${type}.${name} within limit`).toBeLessThanOrEqual(limit!);
+          expect(line.length, `${type}.${name} near limit`).toBeGreaterThanOrEqual(limit! - 3);
+        }
+      }
+    }
   });
 
   it.each(["typo", "checkboard", "modal", "chat"] as const)(

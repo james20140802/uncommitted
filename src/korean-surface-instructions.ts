@@ -33,7 +33,7 @@ const SURFACE_TARGETS: Record<KoreanSurfaceTarget, string> = {
 };
 
 const CARD_TECHNICAL_SURFACE_EXCEPTION =
-  "Technical-surface slots that imitate a real tool screen — terminal prompt, command, and output, and diff filename, added, and removed — are exempt from this Korean rule; keep writing them the way a real terminal or diff would show them.";
+  "Technical-surface slots that imitate a real tool screen — terminal prompt, command, and output, and diff filename, added, and removed — are exempt from the Korean-language and noun-phrase translation rules above; keep writing them the way a real terminal or diff would show them. The internal-identifier rule still applies to them.";
 
 export function buildKoreanSurfaceLines(target: KoreanSurfaceTarget): string[] {
   const lines = [

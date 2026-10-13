@@ -16,7 +16,7 @@ import type { GitActivityEvent } from "../src/collect-git-command.js";
 import type { CaptionResult } from "../src/diary-generator.js";
 import { addProject, type ProjectRecord } from "../src/project-add.js";
 import { buildKoreanEnglishMixLine } from "../src/korean-surface-instructions.js";
-import { PERSONA_PRESETS } from "../src/persona.js";
+import { PERSONA_PRESETS, type Persona } from "../src/persona.js";
 import { storyCardRegistry } from "../src/story-card-registry.js";
 import type { MoodPlan } from "../src/story-format-plan.js";
 
@@ -649,7 +649,7 @@ function createProviderCaption(): CaptionResult {
   };
 }
 
-async function createRegisteredProjectFixture(persona?: unknown): Promise<{
+async function createRegisteredProjectFixture(persona?: string | Persona): Promise<{
   homeDir: string;
   draftRoot: string;
   project: ProjectRecord;
@@ -681,7 +681,7 @@ async function createRegisteredProjectFixture(persona?: unknown): Promise<{
 async function writeConfig(
   homeDir: string,
   draftRoot: string,
-  persona: unknown = "wry coworker"
+  persona: string | Persona = "wry coworker"
 ): Promise<void> {
   const configDir = join(homeDir, ".uncommitted");
 
