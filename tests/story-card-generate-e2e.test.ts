@@ -15,6 +15,8 @@ import { generateStoryCardPlan } from "../src/story-card-generator.js";
 import type { GitActivityEvent } from "../src/collect-git-command.js";
 import type { CaptionResult } from "../src/diary-generator.js";
 import { addProject, type ProjectRecord } from "../src/project-add.js";
+import { buildKoreanEnglishMixLine } from "../src/korean-surface-instructions.js";
+import { PERSONA_PRESETS, type Persona } from "../src/persona.js";
 import { storyCardRegistry } from "../src/story-card-registry.js";
 import type { MoodPlan } from "../src/story-format-plan.js";
 
@@ -164,6 +166,37 @@ describe("story card plan in the generate path (UNC-265)", () => {
     // 카드가 전부 검증을 통과한 실행에는 진단 파일이 남지 않아야 한다.
     expect(await fileExists(join(outputDir, "story-card-failure.json"))).toBe(false);
     await expectCompleteDraft(outputDir);
+  });
+
+  it("hands the persona's Korean-English mix to the card prompt, not the default (UNC-286)", async () => {
+    const { io, stderr } = createIo();
+    // 기본 프리셋의 mix는 "low"라 기본값과 우연히 같아질 수 있다 — "high" 프리셋으로 증명한다.
+    const persona = PERSONA_PRESETS["텐션 높은 주니어"].persona;
+    const fixture = await createRegisteredProjectFixture(persona);
+    const provider = new TaskAwareProvider({
+      storyCards: validStoryCardResponse()
+    });
+
+    await writeGitEvent(fixture.project, "2026-05-12");
+    await writeManualNote(fixture.project, "2026-05-12");
+
+    const exitCode = await runCli(["generate", "today"], io, {
+      homeDir: fixture.homeDir,
+      now: () => "2026-05-12T23:30:00.000Z",
+      aiProvider: provider
+    });
+    const draft = provider.requests.find((request) => request.task === "draft");
+    const card = provider.requests.find((request) => request.task === "story-card");
+    const draftMix = /Korean-English mix setting is "(low|medium|high)"/.exec(
+      draft?.instructions ?? ""
+    )?.[1];
+
+    expect(exitCode).toBe(0);
+    expect(stderr).toEqual([]);
+    expect(draftMix).toBe("high");
+    expect(card?.instructions).toContain(
+      buildKoreanEnglishMixLine(draftMix as "high")
+    );
   });
 
   it("keeps the surviving cards and degrades only the violating card (parent AC4)", async () => {
@@ -616,7 +649,7 @@ function createProviderCaption(): CaptionResult {
   };
 }
 
-async function createRegisteredProjectFixture(): Promise<{
+async function createRegisteredProjectFixture(persona?: string | Persona): Promise<{
   homeDir: string;
   draftRoot: string;
   project: ProjectRecord;
@@ -635,7 +668,7 @@ async function createRegisteredProjectFixture(): Promise<{
     "user.email",
     "dev@example.com"
   ]);
-  await writeConfig(homeDir, draftRoot);
+  await writeConfig(homeDir, draftRoot, persona);
 
   const registered = await addProject(repoDir, {
     homeDir,
@@ -645,7 +678,11 @@ async function createRegisteredProjectFixture(): Promise<{
   return { homeDir, draftRoot, project: registered.project };
 }
 
-async function writeConfig(homeDir: string, draftRoot: string): Promise<void> {
+async function writeConfig(
+  homeDir: string,
+  draftRoot: string,
+  persona: string | Persona = "wry coworker"
+): Promise<void> {
   const configDir = join(homeDir, ".uncommitted");
 
   await mkdir(join(configDir, "history"), { recursive: true });
@@ -657,7 +694,7 @@ async function writeConfig(homeDir: string, draftRoot: string): Promise<void> {
         draftRoot,
         scheduleTime: "23:30",
         aiProvider: "mock",
-        persona: "wry coworker",
+        persona,
         roastLevel: 2
       },
       null,
