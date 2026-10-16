@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { isAbsolute, normalize, relative, resolve, sep, win32 } from "node:path";
 import { chromium, type Browser } from "playwright";
 import sharp from "sharp";
@@ -163,6 +164,7 @@ const invalidStoryMessage =
   "story.json must include ordered slides with title and body.";
 const pngSignature = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 const renderFailureMessage = "Could not render carousel PNGs.";
+const missingBrowserExecutableMarker = "Executable doesn't exist";
 const layoutFits = ["base", "tight", "compact"] as const;
 type CarouselLayoutFit = (typeof layoutFits)[number];
 
@@ -748,7 +750,48 @@ function toCarouselPngRenderError(
     return new CarouselPngRenderError(error.message, draftStorageCode);
   }
 
+  // UNC-284: 브라우저 실행 파일이 없을 때만 설치 안내로 바꾼다. 시스템
+  // 라이브러리 누락이나 sandbox 오류에 설치 안내가 붙으면 사용자를 잘못
+  // 이끈다. Playwright 원문에는 로컬 절대 경로가 있어 그대로 내보내지 않는다.
+  if (isMissingBrowserExecutableError(error)) {
+    const playwrightVersion = readInstalledPlaywrightVersion();
+
+    if (playwrightVersion) {
+      return new CarouselPngRenderError(
+        missingBrowserMessage(playwrightVersion),
+        "render-failed"
+      );
+    }
+  }
+
   return new CarouselPngRenderError(renderFailureMessage, "render-failed");
+}
+
+/**
+ * UNC-284: 버전 없는 `npx playwright install`은 레지스트리 최신 playwright를
+ * 받아 다른 Chromium 리비전을 깔 수 있다. 실제 해석된 버전을 붙인다.
+ */
+export function missingBrowserMessage(playwrightVersion: string): string {
+  return `Render browser is missing. Run \`npx playwright@${playwrightVersion} install chromium\` and try again.`;
+}
+
+function isMissingBrowserExecutableError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    error.message.includes(missingBrowserExecutableMarker)
+  );
+}
+
+function readInstalledPlaywrightVersion(): string | undefined {
+  try {
+    const manifest = createRequire(import.meta.url)("playwright/package.json") as {
+      version?: unknown;
+    };
+
+    return typeof manifest.version === "string" ? manifest.version : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function withPartialRenderResult(

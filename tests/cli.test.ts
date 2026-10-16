@@ -9,6 +9,7 @@ import {
   symlink,
   writeFile
 } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -666,6 +667,45 @@ describe("cli", () => {
     expect(exitCode).toBe(1);
     expect(stdout).toEqual([]);
     expect(stderr.join("\n")).toContain("Unknown persona preset");
+  });
+
+  it("prints a version-pinned browser install hint and exits 5 when the render browser is missing", async () => {
+    const { io, stdout, stderr } = createIo();
+    const fixture = await createLatestDraftFixture();
+    const installedVersion = (
+      createRequire(import.meta.url)("playwright/package.json") as { version: string }
+    ).version;
+
+    const exitCode = await runCli(["render", "latest"], io, {
+      homeDir: fixture.homeDir,
+      carouselRenderer: new ThrowingPngRenderer(
+        new Error(
+          "browserType.launch: Executable doesn't exist at /Users/someone/Library/Caches/ms-playwright/chromium_headless_shell-1243/chrome-mac/headless_shell"
+        )
+      )
+    });
+    const output = stderr.join("\n");
+
+    expect(exitCode).toBe(5);
+    expect(stdout).toEqual([]);
+    expect(output).toContain(`npx playwright@${installedVersion} install chromium`);
+    expect(output.split("\n").length).toBeLessThanOrEqual(2);
+    expect(output).not.toContain("/Users/");
+  });
+
+  it("keeps reporting other render failures as Could not render carousel PNGs.", async () => {
+    const { io, stderr } = createIo();
+    const fixture = await createLatestDraftFixture();
+
+    const exitCode = await runCli(["render", "latest"], io, {
+      homeDir: fixture.homeDir,
+      carouselRenderer: new ThrowingPngRenderer(
+        new Error("browserType.launch: Host system is missing dependencies to run browsers.")
+      )
+    });
+
+    expect(exitCode).toBe(5);
+    expect(stderr).toEqual(["Could not render carousel PNGs."]);
   });
 
   it("renders the latest draft carousel with existing visual assets", async () => {
@@ -2731,5 +2771,13 @@ class FailingPngRenderer implements CarouselHtmlToPngRenderer {
       "Could not render carousel PNGs.",
       "render-failed"
     );
+  }
+}
+
+class ThrowingPngRenderer implements CarouselHtmlToPngRenderer {
+  constructor(private readonly error: Error) {}
+
+  async renderHtmlToPng(): Promise<never> {
+    throw this.error;
   }
 }
