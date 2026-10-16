@@ -30,6 +30,7 @@ Uncommitted is published on npm as [`@sangchu04/uncommitted`](https://www.npmjs.
 
 ```sh
 npm install -g @sangchu04/uncommitted
+npx playwright@1.60.0 install chromium   # browser for story-card rendering
 uncommitted --help
 ```
 

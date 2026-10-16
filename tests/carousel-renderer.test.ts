@@ -1,5 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import sharp from "sharp";
@@ -8,9 +9,11 @@ import {
   CarouselRenderInputError,
   CarouselPngRenderError,
   createCarouselHtmlCards,
+  missingBrowserMessage,
   parseCarouselRenderInput,
   renderCarouselPngs
 } from "../src/carousel-renderer.js";
+import type { CarouselHtmlToPngRenderer } from "../src/carousel-renderer.js";
 import { createDraftRevision } from "../src/draft-storage.js";
 import type { DiaryDraft } from "../src/diary-generator.js";
 
@@ -421,6 +424,54 @@ describe("carousel renderer", () => {
     expect(renderer.calls).toHaveLength(0);
   });
 
+  it("turns a missing browser executable into a version-pinned install hint", async () => {
+    const revision = await createTestRevision();
+    const cards = createCarouselHtmlCards(createStoryDraft());
+    const installedVersion = (
+      createRequire(import.meta.url)("playwright/package.json") as { version: string }
+    ).version;
+    const expected = `Render browser is missing. Run \`npx playwright@${installedVersion} install chromium\` and try again.`;
+
+    expect(missingBrowserMessage(installedVersion)).toBe(expected);
+    await expect(
+      renderCarouselPngs({
+        revision,
+        cards,
+        renderer: new ThrowingPngRenderer(
+          new Error(
+            "browserType.launch: Executable doesn't exist at /Users/someone/Library/Caches/ms-playwright/chromium_headless_shell-1243/chrome-mac/headless_shell\n" +
+              "Looks like Playwright was just installed or updated. Please run the following command: npx playwright install"
+          )
+        )
+      })
+    ).rejects.toMatchObject({
+      message: expected,
+      code: "render-failed",
+      partialResult: {
+        status: "failed",
+        failures: [expect.objectContaining({ message: expected })]
+      }
+    });
+  });
+
+  it("keeps the generic message for browser launch failures that are not a missing executable", async () => {
+    const revision = await createTestRevision();
+    const cards = createCarouselHtmlCards(createStoryDraft());
+
+    await expect(
+      renderCarouselPngs({
+        revision,
+        cards,
+        renderer: new ThrowingPngRenderer(
+          new Error("browserType.launch: Host system is missing dependencies to run browsers.")
+        )
+      })
+    ).rejects.toMatchObject({
+      message: "Could not render carousel PNGs.",
+      code: "render-failed"
+    });
+  });
+
   it("surfaces screenshot failures as carousel PNG render errors", async () => {
     const revision = await createTestRevision();
     const cards = createCarouselHtmlCards(createStoryDraft());
@@ -666,6 +717,14 @@ class SecondCardOverflowRenderer {
 class FailingPngRenderer {
   async renderHtmlToPng(): Promise<never> {
     throw new Error("browser failed with internal detail");
+  }
+}
+
+class ThrowingPngRenderer implements CarouselHtmlToPngRenderer {
+  constructor(private readonly error: Error) {}
+
+  async renderHtmlToPng(): Promise<never> {
+    throw this.error;
   }
 }
 
