@@ -223,3 +223,50 @@ describe("parseCodexSession", () => {
     expect(result.conversation).toHaveLength(1);
   });
 });
+
+describe("harness noise", () => {
+  it("keeps noise in conversation but emits no signal for it", () => {
+    const respUser = (text: string) =>
+      JSON.stringify({
+        timestamp: "2026-06-13T14:20:00.000Z",
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text }]
+        }
+      });
+    const contents = [
+      respUser("\n[69] tool exec result: synthetic"),
+      respUser("# AGENTS.md instructions for /repo"),
+      respUser("PR 128 끝까지 봐줘"),
+      JSON.stringify({
+        timestamp: "2026-06-13T14:20:01.000Z",
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "assistant",
+          content: [
+            {
+              type: "output_text",
+              text: '{"risk_level":"low","outcome":"allow","rationale":"x"}'
+            }
+          ]
+        }
+      }),
+      JSON.stringify({
+        timestamp: "2026-06-13T14:20:02.000Z",
+        type: "event_msg",
+        payload: {
+          type: "user_message",
+          message: "Agent message from w\nMessage Type: FINAL_ANSWER"
+        }
+      })
+    ].join("\n");
+
+    const result = parseCodexSession({ projectId: "p1", contents });
+
+    expect(result.signals.map((s) => s.summary)).toEqual(["PR 128 끝까지 봐줘"]);
+    expect(result.conversation).toHaveLength(5);
+  });
+});

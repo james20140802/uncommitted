@@ -1,4 +1,5 @@
 import type { ActivitySignal } from "./event-source.js";
+import { isHarnessNoise } from "./harness-noise.js";
 
 export type ConversationTurn = {
   role: "user" | "assistant";
@@ -49,7 +50,9 @@ export function parseClaudeSession(
       const text = extractUserText(entry);
       if (text === null) continue;
       conversation.push({ role: "user", text, timestamp });
-      signals.push(makeSignal(input.projectId, timestamp, "claude-user-turn", text));
+      if (!isHarnessNoise(text)) {
+        signals.push(makeSignal(input.projectId, timestamp, "claude-user-turn", text));
+      }
       continue;
     }
 
@@ -59,9 +62,11 @@ export function parseClaudeSession(
         if (!isRecord(block)) continue;
         if (block.type === "text" && typeof block.text === "string") {
           conversation.push({ role: "assistant", text: block.text, timestamp });
-          signals.push(
-            makeSignal(input.projectId, timestamp, "claude-assistant-text", block.text)
-          );
+          if (!isHarnessNoise(block.text)) {
+            signals.push(
+              makeSignal(input.projectId, timestamp, "claude-assistant-text", block.text)
+            );
+          }
         } else if (block.type === "thinking" && typeof block.thinking === "string") {
           conversation.push({ role: "assistant", text: block.thinking, timestamp });
         } else if (block.type === "tool_use" && typeof block.name === "string") {

@@ -178,3 +178,38 @@ describe("parseClaudeSession", () => {
     ]);
   });
 });
+
+describe("harness noise", () => {
+  it("keeps noise turns in conversation but out of signals", () => {
+    const user = (text: string, n: number) =>
+      line({
+        type: "user",
+        timestamp: `2026-06-13T05:00:0${n}.000Z`,
+        message: { content: text }
+      });
+    const contents = [
+      user("<local-command-caveat>Caveat: synthetic</local-command-caveat>", 0),
+      user("<command-message>review</command-message>", 1),
+      user("# AGENTS.md instructions for /repo\n\nsynthetic", 2),
+      user("PR 128 끝까지 봐줘", 3),
+      line({
+        type: "assistant",
+        timestamp: "2026-06-13T05:00:04.000Z",
+        message: {
+          content: [
+            { type: "text", text: "<system-reminder>synthetic</system-reminder>" },
+            { type: "text", text: "Looking at the PR now." }
+          ]
+        }
+      })
+    ].join("\n");
+
+    const result = parseClaudeSession({ projectId: "p1", contents });
+
+    expect(result.signals.map((s) => s.summary)).toEqual([
+      "PR 128 끝까지 봐줘",
+      "Looking at the PR now."
+    ]);
+    expect(result.conversation).toHaveLength(6);
+  });
+});
