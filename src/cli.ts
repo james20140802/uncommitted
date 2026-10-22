@@ -1155,21 +1155,22 @@ async function runCollect(
         return 0;
       }
 
-      if (result.successes.length > 0) {
+      const collected = result.successes.filter((s) => !s.preservedExisting);
+      if (collected.length > 0) {
         io.stdout(
-          `Collected Claude activity for ${formatProjectCount(result.successes.length)}.`
+          `Collected Claude activity for ${formatProjectCount(collected.length)}.`
         );
-        for (const success of result.successes) {
-          if (success.preservedExisting) {
-            io.stderr(
-              `${success.projectId}: no Claude activity found for ${result.targetDate}; kept existing signals.`
-            );
-            continue;
-          }
-          io.stdout(
-            `${success.projectId}: ${success.signalCount} signals, ${success.conversationCount} turns, ${success.toolFactCount} tool facts.`
+      }
+      for (const success of result.successes) {
+        if (success.preservedExisting) {
+          io.stderr(
+            `${success.projectId}: no Claude activity found for ${result.targetDate}; kept existing signals.`
           );
+          continue;
         }
+        io.stdout(
+          `${success.projectId}: ${success.signalCount} signals, ${success.conversationCount} turns, ${success.toolFactCount} tool facts.`
+        );
       }
 
       for (const failure of result.failures) {

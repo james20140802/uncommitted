@@ -380,6 +380,60 @@ describe("collectClaudeForRegisteredProjects", () => {
     });
   });
 
+  it("rejects an empty targetDate instead of falling back to today", async () => {
+    await writeProjectsFile(homeDir, [
+      {
+        schemaVersion: 1,
+        id: "p1",
+        name: "demo",
+        root: projectRoot,
+        gitRoot: projectRoot,
+        enabled: true,
+        createdAt: "2026-06-01T00:00:00.000Z"
+      }
+    ]);
+    await expect(
+      collectClaudeForRegisteredProjects({
+        homeDir,
+        claudeHome,
+        now: NOW,
+        targetDate: ""
+      })
+    ).rejects.toMatchObject({ code: "invalid-date" });
+  });
+
+  it("anchors raw-archive retention on the real date, not a future --date", async () => {
+    await writeProjectsFile(homeDir, [
+      {
+        schemaVersion: 1,
+        id: "p1",
+        name: "demo",
+        root: projectRoot,
+        gitRoot: projectRoot,
+        enabled: true,
+        createdAt: "2026-06-01T00:00:00.000Z"
+      }
+    ]);
+    await writeFile(
+      join(homeDir, ".uncommitted", "config.json"),
+      JSON.stringify({ rawRetentionDays: 7 })
+    );
+    const rawDir = join(projectRoot, ".uncommitted", "events", "claude", "raw");
+    await mkdir(rawDir, { recursive: true });
+    const recent = join(rawDir, "2026-06-12.jsonl");
+    await writeFile(recent, "{}\n");
+
+    // A year typo must not move the retention cutoff to 2027 and wipe archives.
+    await collectClaudeForRegisteredProjects({
+      homeDir,
+      claudeHome,
+      now: NOW,
+      targetDate: "2027-06-13"
+    });
+
+    await expect(readFile(recent, "utf8")).resolves.toBe("{}\n");
+  });
+
   it("skips session files whose cwd does not attribute to a registered project", async () => {
     await writeProjectsFile(homeDir, [
       {

@@ -1,5 +1,4 @@
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
 import { resolveConfigPaths } from "./config-paths.js";
 import { readProjectsFile } from "./project-registry.js";
 import type { ProjectRecord } from "./project-registry.js";
@@ -13,7 +12,10 @@ import {
   type ClaudeSessionParseResult
 } from "./claude-session-parser.js";
 import { redactClaudeSession } from "./claude-session-redactor.js";
-import { writeClaudeSessionOutputs } from "./claude-session-writer.js";
+import {
+  claudeSessionOutputPaths,
+  writeClaudeSessionOutputs
+} from "./claude-session-writer.js";
 import {
   pruneRawArchives,
   readRawRetentionDays
@@ -89,8 +91,15 @@ export async function collectClaudeForRegisteredProjects(
     );
   }
 
+  // Retention is anchored on the real current date, never on --date: a
+  // future or mistyped target date would otherwise move the cutoff forward
+  // and delete every raw archive.
+  const today = (options.now ? options.now() : new Date().toISOString()).slice(
+    0,
+    10
+  );
   let targetDate: string;
-  if (options.targetDate) {
+  if (options.targetDate !== undefined) {
     if (!DATE_RE.test(options.targetDate)) {
       throw new CollectClaudeCommandError(
         "Invalid --date; expected YYYY-MM-DD.",
@@ -99,8 +108,7 @@ export async function collectClaudeForRegisteredProjects(
     }
     targetDate = options.targetDate;
   } else {
-    const now = options.now ? options.now() : new Date().toISOString();
-    targetDate = now.slice(0, 10);
+    targetDate = today;
   }
   const retentionDays = await readRawRetentionDays(paths.configFile);
 
@@ -115,7 +123,7 @@ export async function collectClaudeForRegisteredProjects(
       await pruneRawArchives({
         projectRoot: project.root,
         source: "claude",
-        today: targetDate,
+        today,
         retentionDays
       });
     }
@@ -186,30 +194,17 @@ export async function collectClaudeForRegisteredProjects(
         );
       }
       const redacted = redactClaudeSession(aggregate);
-      const existingSignalsFile = join(
-        project.root,
-        ".uncommitted",
-        "events",
-        "claude",
-        `${targetDate}.jsonl`
-      );
+      const outputPaths = claudeSessionOutputPaths(project.root, targetDate);
       // A re-collection that finds nothing (e.g. the session logs were pruned
       // or the date has no entries) must not wipe signals collected earlier.
       if (
         redacted.signals.length === 0 &&
-        (await hasContent(existingSignalsFile))
+        (await hasContent(outputPaths.signalsFile))
       ) {
         successes.push({
           projectId: project.id,
-          signalsFile: existingSignalsFile,
-          rawArchiveFile: join(
-            project.root,
-            ".uncommitted",
-            "events",
-            "claude",
-            "raw",
-            `${targetDate}.jsonl`
-          ),
+          signalsFile: outputPaths.signalsFile,
+          rawArchiveFile: outputPaths.rawArchiveFile,
           signalCount: 0,
           conversationCount: 0,
           toolFactCount: 0,
@@ -218,7 +213,7 @@ export async function collectClaudeForRegisteredProjects(
         await pruneRawArchives({
           projectRoot: project.root,
           source: "claude",
-          today: targetDate,
+          today,
           retentionDays
         });
         continue;
@@ -242,7 +237,7 @@ export async function collectClaudeForRegisteredProjects(
       await pruneRawArchives({
         projectRoot: project.root,
         source: "claude",
-        today: targetDate,
+        today,
         retentionDays
       });
     } catch (error) {

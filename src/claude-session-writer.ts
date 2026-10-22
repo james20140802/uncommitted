@@ -1,5 +1,5 @@
 import { chmod, mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { ActivitySignal } from "./event-source.js";
 import type { ConversationTurn, ToolFact } from "./claude-session-parser.js";
 
@@ -19,15 +19,25 @@ export type ClaudeSessionWriteResult = {
   toolFactCount: number;
 };
 
+export function claudeSessionOutputPaths(
+  projectRoot: string,
+  targetDate: string
+): { signalsFile: string; rawArchiveFile: string } {
+  const baseDir = join(projectRoot, ".uncommitted", "events", "claude");
+  return {
+    signalsFile: join(baseDir, `${targetDate}.jsonl`),
+    rawArchiveFile: join(baseDir, "raw", `${targetDate}.jsonl`)
+  };
+}
+
 export async function writeClaudeSessionOutputs(
   input: ClaudeSessionWriteInput
 ): Promise<ClaudeSessionWriteResult> {
-  const baseDir = join(input.projectRoot, ".uncommitted", "events", "claude");
-  const rawDir = join(baseDir, "raw");
-  await mkdir(rawDir, { recursive: true });
-
-  const signalsFile = join(baseDir, `${input.targetDate}.jsonl`);
-  const rawArchiveFile = join(rawDir, `${input.targetDate}.jsonl`);
+  const { signalsFile, rawArchiveFile } = claudeSessionOutputPaths(
+    input.projectRoot,
+    input.targetDate
+  );
+  await mkdir(dirname(rawArchiveFile), { recursive: true });
 
   const signalsBody = input.signals.length
     ? input.signals.map((s) => JSON.stringify(s)).join("\n") + "\n"

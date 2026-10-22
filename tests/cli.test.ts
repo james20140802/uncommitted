@@ -2615,10 +2615,6 @@ async function createLatestDraftFixture(options: LatestDraftFixtureOptions = {})
   };
 }
 
-// `schedule run-now` now collects every config-enabled source. Stub the
-// non-git collectors so workflow tests stay deterministic and never touch the
-// host's real ~/.claude / ~/.codex; git still runs for real against the
-// fixture repo to feed generate/render.
 async function createCollectClaudeDateFixture() {
   const directory = await mkdtemp(join(tmpdir(), "uncommitted-cli-collect-claude-date-"));
   const repoDir = join(directory, "repo");
@@ -2657,6 +2653,10 @@ async function createCollectClaudeDateFixture() {
   return { directory, repoDir, homeDir, claudeHome };
 }
 
+// `schedule run-now` now collects every config-enabled source. Stub the
+// non-git collectors so workflow tests stay deterministic and never touch the
+// host's real ~/.claude / ~/.codex; git still runs for real against the
+// fixture repo to feed generate/render.
 function nonGitStubInvokers() {
   const ok = (detail: string) => async () => ({
     successCount: 1,
