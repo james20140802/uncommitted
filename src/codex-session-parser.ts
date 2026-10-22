@@ -1,5 +1,6 @@
 // src/codex-session-parser.ts
 import type { ActivitySignal } from "./event-source.js";
+import { isHarnessNoise } from "./harness-noise.js";
 
 export type ConversationTurn = {
   role: "user" | "assistant";
@@ -103,14 +104,16 @@ function handleResponseItem(
         continue;
       }
       sink.conversation.push({ role, text: bText, timestamp });
-      sink.signals.push(
-        makeSignal(
-          projectId,
-          timestamp,
-          role === "user" ? "codex-user-turn" : "codex-assistant-text",
-          bText
-        )
-      );
+      if (!isHarnessNoise(bText)) {
+        sink.signals.push(
+          makeSignal(
+            projectId,
+            timestamp,
+            role === "user" ? "codex-user-turn" : "codex-assistant-text",
+            bText
+          )
+        );
+      }
     }
     return;
   }
@@ -154,7 +157,7 @@ function handleEventMsg(
     // response_item/message (and may carry reasoning). Keep it in the raw
     // archive but don't emit a Tier 2 signal, mirroring reasoning handling, so
     // it isn't double-counted or surfaced into activity summaries.
-    if (role === "user") {
+    if (role === "user" && !isHarnessNoise(text)) {
       sink.signals.push(
         makeSignal(projectId, timestamp, "codex-user-turn", text)
       );

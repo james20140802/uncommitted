@@ -1,4 +1,5 @@
 import type { ActivitySignal } from "./event-source.js";
+import { isHarnessNoise } from "./harness-noise.js";
 
 export type ConversationTurn = {
   role: "user" | "assistant";
@@ -46,10 +47,17 @@ export function parseClaudeSession(
     const timestamp = typeof entry.timestamp === "string" ? entry.timestamp : "";
 
     if (entry.type === "user") {
-      const text = extractUserText(entry);
-      if (text === null) continue;
-      conversation.push({ role: "user", text, timestamp });
-      signals.push(makeSignal(input.projectId, timestamp, "claude-user-turn", text));
+      const blocks = extractUserTextBlocks(entry);
+      if (blocks === null) continue;
+      conversation.push({ role: "user", text: blocks.join("\n"), timestamp });
+      // Judge noise per block: harness blocks (e.g. an injected
+      // <system-reminder>) often sit next to the real prompt in one message.
+      const signalText = blocks.filter((block) => !isHarnessNoise(block)).join("\n");
+      if (signalText.trim() !== "") {
+        signals.push(
+          makeSignal(input.projectId, timestamp, "claude-user-turn", signalText)
+        );
+      }
       continue;
     }
 
@@ -59,9 +67,11 @@ export function parseClaudeSession(
         if (!isRecord(block)) continue;
         if (block.type === "text" && typeof block.text === "string") {
           conversation.push({ role: "assistant", text: block.text, timestamp });
-          signals.push(
-            makeSignal(input.projectId, timestamp, "claude-assistant-text", block.text)
-          );
+          if (!isHarnessNoise(block.text)) {
+            signals.push(
+              makeSignal(input.projectId, timestamp, "claude-assistant-text", block.text)
+            );
+          }
         } else if (block.type === "thinking" && typeof block.thinking === "string") {
           conversation.push({ role: "assistant", text: block.thinking, timestamp });
         } else if (block.type === "tool_use" && typeof block.name === "string") {
@@ -93,11 +103,11 @@ function makeSignal(
   };
 }
 
-function extractUserText(entry: Record<string, unknown>): string | null {
+function extractUserTextBlocks(entry: Record<string, unknown>): string[] | null {
   const message = entry.message;
   if (!isRecord(message)) return null;
   const content = message.content;
-  if (typeof content === "string") return content;
+  if (typeof content === "string") return [content];
   if (Array.isArray(content)) {
     // Collect every text block, not just the first — multi-part user prompts
     // store several `text` blocks, and dropping the rest loses context from
@@ -109,7 +119,7 @@ function extractUserText(entry: Record<string, unknown>): string | null {
         texts.push(block.text);
       }
     }
-    return texts.length > 0 ? texts.join("\n") : null;
+    return texts.length > 0 ? texts : null;
   }
   return null;
 }

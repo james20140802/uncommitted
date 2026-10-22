@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { buildActivitySummary, isActivitySummary } from "../src/activity-summary.js";
+import {
+  buildActivitySummary,
+  isActivitySummary,
+  RECURRING_THREAD_MAX,
+  RECURRING_THREAD_MIN_OCCURRENCES
+} from "../src/activity-summary.js";
 import type { ActivitySummaryInput } from "../src/activity-summary.js";
-import type { MemoryThread } from "../src/memory-store.js";
+import { THREAD_TOP_K, type MemoryThread } from "../src/memory-store.js";
 
 function baseInput(): ActivitySummaryInput {
   return {
@@ -213,5 +218,53 @@ describe("recurringThreads (UNC-275 / T3)", () => {
     delete (v1 as { recurringThreads?: unknown }).recurringThreads;
 
     expect(isActivitySummary(v1)).toBe(true);
+  });
+});
+
+describe("activity-summary memory noise filter (UNC-302)", () => {
+  it("hides noise threads before top-K so recurringThreads fills with real threads", () => {
+    const noiseNotes = [
+      "# AGENTS.md instructions for /repo",
+      "exec",
+      "ToolSearch",
+      "exec: 6th time",
+      "mcp__linear-sangchu__get_issue",
+      "Bash"
+    ];
+    expect(noiseNotes.length).toBeGreaterThanOrEqual(THREAD_TOP_K);
+
+    const noise = noiseNotes.map((note, index) =>
+      thread({
+        id: `noise-${index}`,
+        note,
+        kind: index % 2 === 0 ? "running-joke" : "bug",
+        lastSeen: "2026-07-15T00:00:00.000Z",
+        occurrenceCount: RECURRING_THREAD_MIN_OCCURRENCES + 5
+      })
+    );
+    const realNotes = ["exec 버그", "scheduler flake", "export flow rewrite"];
+    const real = realNotes.map((note, index) =>
+      thread({
+        id: `real-${index}`,
+        note,
+        lastSeen: `2026-07-${String(10 - index).padStart(2, "0")}T00:00:00.000Z`,
+        occurrenceCount: RECURRING_THREAD_MIN_OCCURRENCES
+      })
+    );
+
+    const summary = buildActivitySummary({
+      ...baseInput(),
+      memoryThreads: [...noise, ...real]
+    });
+
+    expect(summary.recurringThreads).toHaveLength(RECURRING_THREAD_MAX);
+    for (const entry of summary.recurringThreads ?? []) {
+      expect(realNotes).toContain(entry.note);
+    }
+    for (const note of noiseNotes) {
+      expect(summary.unfinishedThreads).not.toContain(note);
+      expect(summary.possibleJokes).not.toContain(note);
+    }
+    expect(summary.unfinishedThreads).toContain("exec 버그");
   });
 });
