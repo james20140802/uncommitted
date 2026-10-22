@@ -1,5 +1,6 @@
 import type { ActivitySignal } from "./event-source.js";
 import type { ActivityTheme } from "./activity-summary.js";
+import { isToolSignalKind } from "./harness-noise.js";
 
 export type ActivitySynthesis = {
   smallWins: string[];
@@ -59,7 +60,7 @@ export function deriveSynthesisFromSignals(
     }
 
     // Tool-call summaries (e.g. "ToolSearch") are harness noise: themes only.
-    if (signal.kind.endsWith("-tool")) {
+    if (isToolSignalKind(signal.kind)) {
       continue;
     }
 

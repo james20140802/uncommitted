@@ -13,6 +13,8 @@ describe("isHarnessNoise", () => {
     "# AGENTS.md instructions for /repo\n\nbody",
     "<INSTRUCTIONS>\nbody",
     '{"risk_level":"low","outcome":"allow","rationale":"x"}',
+    // truncated approval JSON (signal summaries / thread notes are cut at 200 chars)
+    '{"risk_level":"medium","user_authorization":"syn',
     "\n[71] tool exec result: Script completed",
     "Agent message from worker-1\nMessage Type: FINAL_ANSWER\nbody",
     "   <system-reminder>leading spaces"
@@ -24,7 +26,7 @@ describe("isHarnessNoise", () => {
     "PR 128 끝까지 봐줘",
     "왜 <system-reminder>가 보이지?",
     '{"foo":1}',
-    '{"risk_level":"low"',
+    '{"foo":1',
     "exec 버그 고쳐줘",
     ""
   ])("keeps %j", (text) => {

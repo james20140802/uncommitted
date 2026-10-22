@@ -212,4 +212,42 @@ describe("harness noise", () => {
     ]);
     expect(result.conversation).toHaveLength(6);
   });
+
+  it("drops only the noise blocks of a multi-block user turn", () => {
+    const contents = line({
+      type: "user",
+      timestamp: "2026-06-13T05:00:00.000Z",
+      message: {
+        content: [
+          { type: "text", text: "<system-reminder>synthetic</system-reminder>" },
+          { type: "text", text: "PR 128 끝까지 봐줘" }
+        ]
+      }
+    });
+
+    const result = parseClaudeSession({ projectId: "p1", contents });
+
+    expect(result.signals.map((s) => s.summary)).toEqual(["PR 128 끝까지 봐줘"]);
+    expect(result.conversation[0]?.text).toBe(
+      "<system-reminder>synthetic</system-reminder>\nPR 128 끝까지 봐줘"
+    );
+  });
+
+  it("emits no signal when every user block is noise", () => {
+    const contents = line({
+      type: "user",
+      timestamp: "2026-06-13T05:00:00.000Z",
+      message: {
+        content: [
+          { type: "text", text: "<system-reminder>a</system-reminder>" },
+          { type: "text", text: "<task-notification>b</task-notification>" }
+        ]
+      }
+    });
+
+    const result = parseClaudeSession({ projectId: "p1", contents });
+
+    expect(result.signals).toEqual([]);
+    expect(result.conversation).toHaveLength(1);
+  });
 });

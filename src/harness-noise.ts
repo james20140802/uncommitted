@@ -10,6 +10,9 @@ const NOISE_TAG_START = new RegExp(`^<(?:${NOISE_TAG_NAMES.join("|")})\\b`);
 const AGENTS_INSTRUCTIONS_START = /^(?:# AGENTS\.md instructions|<INSTRUCTIONS>)/;
 const TOOL_EXEC_RESULT_START = /^\[\d+\]\s*tool exec result:/;
 const AGENT_MESSAGE_START = /^Agent message from\b/;
+// Approval JSON cut short (signal summaries and stored thread notes are
+// truncated) no longer parses; its leading `risk_level` key still marks it.
+const TRUNCATED_APPROVAL_JSON_START = /^\{\s*"risk_level"\s*:/;
 
 export function isHarnessNoise(text: string): boolean {
   const t = text.trimStart();
@@ -33,8 +36,13 @@ function isApprovalJson(text: string): boolean {
       "outcome" in parsed
     );
   } catch {
-    return false;
+    return TRUNCATED_APPROVAL_JSON_START.test(text);
   }
+}
+
+/** Tool-call signal kinds (`claude-tool`, `codex-tool`, …): harness noise, not story material. */
+export function isToolSignalKind(kind: string): boolean {
+  return kind.endsWith("-tool");
 }
 
 const KNOWN_TOOL_NAMES: ReadonlySet<string> = new Set([

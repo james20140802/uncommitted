@@ -16,6 +16,7 @@
  * every thread `id` is derived from its content so the same signal always
  * maps to the same thread.
  */
+import { isToolSignalKind } from "./harness-noise.js";
 import { applyThreadBounds, type MemoryThread, type ThreadKind } from "./memory-store.js";
 import { readThreads, writeThreads } from "./memory-store.js";
 import { sanitizeText } from "./redaction.js";
@@ -185,7 +186,7 @@ export function reflectThreads(input: {
 
   for (const signal of signals) {
     // Harness tool-call signals are noise, never thread candidates.
-    if (signal.kind.endsWith("-tool")) {
+    if (isToolSignalKind(signal.kind)) {
       continue;
     }
 

@@ -605,7 +605,8 @@ function buildUncertaintyNotes(
  * `running-joke`/`win` go to the joke slot, everything else goes to the
  * unfinished-thread slot. Threads with `status !== "active"` are excluded
  * before ranking, as are harness-noise / bare tool-name notes (UNC-302; the
- * stored threads.jsonl is never rewritten by this read filter). The same recency-ranked scan (no re-sort) also picks out
+ * stored threads.jsonl is never rewritten by this read filter). The same
+ * recency-ranked scan (no re-sort) also picks out
  * up to `RECURRING_THREAD_MAX` threads with `occurrenceCount >=
  * RECURRING_THREAD_MIN_OCCURRENCES` for `recurringThreads` (UNC-229 / T3).
  */
