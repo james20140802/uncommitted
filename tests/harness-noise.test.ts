@@ -65,3 +65,22 @@ describe("isMemoryNoiseNote", () => {
     expect(isMemoryNoiseNote("exec 버그")).toBe(false);
   });
 });
+
+describe("isToolNameOnlyNote regex safety", () => {
+  it("stays fast on pathological inputs", () => {
+    const inputs = [
+      "mcp__-__" + "-__".repeat(20000) + "!",
+      "exec" + " ".repeat(20000) + "!",
+      "mcp__-" + "__-".repeat(20000) + " !"
+    ];
+    const started = Date.now();
+    for (const input of inputs) {
+      expect(isToolNameOnlyNote(input)).toBe(false);
+    }
+    expect(Date.now() - started).toBeLessThan(500);
+  });
+
+  it("still matches multi-segment mcp names", () => {
+    expect(isToolNameOnlyNote("mcp__linear-sangchu__get_issue")).toBe(true);
+  });
+});

@@ -64,12 +64,16 @@ const KNOWN_TOOL_NAMES: ReadonlySet<string> = new Set([
   "read_file"
 ]);
 
-const MCP_TOOL_NAME = /^mcp__[\w-]+(__[\w-]+)*$/;
-const SMALL_COUNT_SUFFIX = /\s*(?::\s*\d+(?:st|nd|rd|th)\s+time|\(\s*[x×]\s*\d+\s*\)|[x×]\s*\d+)\s*$/i;
+// `\w` already covers `_`, so one character class matches `mcp__server__tool`
+// without nested repetition (which backtracks exponentially).
+const MCP_TOOL_NAME = /^mcp__[\w-]+$/;
+// No leading/trailing `\s*`: the caller trims instead, so long runs of spaces
+// cannot trigger polynomial backtracking.
+const SMALL_COUNT_SUFFIX = /(?::\s*\d+(?:st|nd|rd|th)\s+time|\(\s*[x×]\s*\d+\s*\)|[x×]\s*\d+)$/i;
 
 /** A stored thread note that is only a harness tool name (optionally with a small count suffix). */
 export function isToolNameOnlyNote(note: string): boolean {
-  const base = note.trim().replace(SMALL_COUNT_SUFFIX, "");
+  const base = note.trim().replace(SMALL_COUNT_SUFFIX, "").trimEnd();
   return MCP_TOOL_NAME.test(base) || KNOWN_TOOL_NAMES.has(base);
 }
 
