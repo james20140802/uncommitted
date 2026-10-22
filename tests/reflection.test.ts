@@ -235,4 +235,45 @@ describe("occurrenceCount out-of-order 날짜 (backfill)", () => {
     expect(regenerated).toHaveLength(1);
     expect(regenerated[0]?.occurrenceCount).toBe(2);
   });
+
+  it("ignores *-tool signals as thread candidates", () => {
+    const now = new Date("2026-07-15T10:00:00.000Z");
+    const out = reflectThreads({
+      threads: [],
+      signals: [
+        signal({ kind: "claude-tool", summary: "ToolSearch" }),
+        signal({ kind: "codex-tool", summary: "exec_command_end ls" })
+      ],
+      now
+    });
+    expect(out).toEqual([]);
+  });
+
+  it("does not update an existing thread from a tool signal, and keeps the thread", () => {
+    const first = new Date("2026-07-14T10:00:00.000Z");
+    const [seed] = reflectThreads({
+      threads: [],
+      signals: [signal({ kind: "note", summary: "ToolSearch" })],
+      now: first
+    });
+    const now = new Date("2026-07-15T10:00:00.000Z");
+    const out = reflectThreads({
+      threads: [seed],
+      signals: [signal({ kind: "claude-tool", summary: "ToolSearch" })],
+      now
+    });
+    expect(out).toHaveLength(1);
+    expect(out[0].lastSeen).toBe(seed.lastSeen);
+    expect(out[0].occurrenceCount).toBe(seed.occurrenceCount);
+  });
+
+  it("still creates threads from note signals", () => {
+    const now = new Date("2026-07-15T10:00:00.000Z");
+    const out = reflectThreads({
+      threads: [],
+      signals: [signal({ kind: "note", summary: "ToolSearch" })],
+      now
+    });
+    expect(out).toHaveLength(1);
+  });
 });

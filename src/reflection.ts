@@ -184,6 +184,11 @@ export function reflectThreads(input: {
   const nowIso = now.toISOString();
 
   for (const signal of signals) {
+    // Harness tool-call signals are noise, never thread candidates.
+    if (signal.kind.endsWith("-tool")) {
+      continue;
+    }
+
     const kind = signalThreadKind(signal.kind, signal.summary);
     const note = deriveSafeThreadNote(signal.summary);
 

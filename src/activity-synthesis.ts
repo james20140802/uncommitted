@@ -34,6 +34,8 @@ export type ActivitySynthesis = {
  *    context only and must not infer intent (e.g. a "src/fix-bug.ts" path
  *    must not set a debugging theme). The uncommitted-files thread aggregate
  *    is derived separately from the source-shaped uncommittedChanges output.
+ *  - "*-tool" signals (claude-tool, codex-tool): harness tool-call names are
+ *    not story material — they feed themes only, never wins/blockers/unfinished.
  *  - Themes: every non-dirty signal's summary is fed through classifyThemes.
  */
 export function deriveSynthesisFromSignals(
@@ -54,6 +56,11 @@ export function deriveSynthesisFromSignals(
 
     for (const theme of classifyThemes(signal.summary)) {
       themes.add(theme);
+    }
+
+    // Tool-call summaries (e.g. "ToolSearch") are harness noise: themes only.
+    if (signal.kind.endsWith("-tool")) {
+      continue;
     }
 
     if (signal.kind === "commit") {
