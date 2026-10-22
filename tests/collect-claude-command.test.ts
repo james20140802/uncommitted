@@ -239,6 +239,147 @@ describe("collectClaudeForRegisteredProjects", () => {
     expect(rawText).not.toContain("yesterday-only Claude work");
   });
 
+  describe("--date targeting and empty-result preservation", () => {
+    const project = () => ({
+      schemaVersion: 1,
+      id: "p1",
+      name: "demo",
+      root: projectRoot,
+      gitRoot: projectRoot,
+      enabled: true,
+      createdAt: "2026-06-01T00:00:00.000Z"
+    });
+
+    async function writeSession(entries: Array<[string, string]>) {
+      const sessionDir = join(claudeHome, "projects", "encoded-project");
+      await mkdir(sessionDir, { recursive: true });
+      const lines = entries.map(([timestamp, text]) =>
+        JSON.stringify({
+          type: "user",
+          cwd: projectRoot,
+          timestamp,
+          message: { content: text }
+        })
+      );
+      await writeFile(join(sessionDir, "abc.jsonl"), lines.join("\n") + "\n");
+    }
+
+    const eventsDir = () => join(projectRoot, ".uncommitted", "events", "claude");
+
+    async function preWrite(signals: string, raw: string) {
+      await mkdir(join(eventsDir(), "raw"), { recursive: true });
+      await writeFile(join(eventsDir(), "2026-10-10.jsonl"), signals);
+      await writeFile(join(eventsDir(), "raw", "2026-10-10.jsonl"), raw);
+    }
+
+    it("collects entries for an explicit --date even when now is the next day", async () => {
+      await writeProjectsFile(homeDir, [project()]);
+      await writeSession([
+        ["2026-10-10T10:00:00.000Z", "past-day Claude work"],
+        ["2026-10-11T01:00:00.000Z", "next-day Claude work"]
+      ]);
+
+      const result = await collectClaudeForRegisteredProjects({
+        homeDir,
+        claudeHome,
+        now: () => "2026-10-11T02:51:00.000Z",
+        targetDate: "2026-10-10"
+      });
+
+      expect(result.targetDate).toBe("2026-10-10");
+      expect(result.successes[0].conversationCount).toBe(1);
+      expect(result.successes[0].signalsFile.endsWith("2026-10-10.jsonl")).toBe(true);
+      const rawText = await readFile(result.successes[0].rawArchiveFile, "utf8");
+      expect(rawText).toContain("past-day Claude work");
+      expect(rawText).not.toContain("next-day Claude work");
+    });
+
+    it("defaults to the now date when targetDate is omitted", async () => {
+      await writeProjectsFile(homeDir, [project()]);
+      await writeSession([
+        ["2026-10-10T10:00:00.000Z", "past-day Claude work"],
+        ["2026-10-11T01:00:00.000Z", "next-day Claude work"]
+      ]);
+
+      const result = await collectClaudeForRegisteredProjects({
+        homeDir,
+        claudeHome,
+        now: () => "2026-10-11T02:51:00.000Z"
+      });
+
+      expect(result.targetDate).toBe("2026-10-11");
+      const rawText = await readFile(result.successes[0].rawArchiveFile, "utf8");
+      expect(rawText).toContain("next-day Claude work");
+      expect(rawText).not.toContain("past-day Claude work");
+    });
+
+    it("rejects a malformed targetDate with invalid-date", async () => {
+      await writeProjectsFile(homeDir, [project()]);
+      const promise = collectClaudeForRegisteredProjects({
+        homeDir,
+        claudeHome,
+        now: NOW,
+        targetDate: "2026/10/10"
+      });
+      await expect(promise).rejects.toMatchObject({ code: "invalid-date" });
+      await expect(promise).rejects.toBeInstanceOf(CollectClaudeCommandError);
+    });
+
+    it("keeps existing signals when a re-collection finds nothing", async () => {
+      await writeProjectsFile(homeDir, [project()]);
+      const oldSignal = JSON.stringify({ id: "old" }) + "\n";
+      await preWrite(oldSignal, "old raw");
+      await writeSession([["2026-10-11T01:00:00.000Z", "next-day Claude work"]]);
+
+      const result = await collectClaudeForRegisteredProjects({
+        homeDir,
+        claudeHome,
+        now: () => "2026-10-11T02:51:00.000Z",
+        targetDate: "2026-10-10"
+      });
+
+      expect(result.successes[0].preservedExisting).toBe(true);
+      expect(await readFile(join(eventsDir(), "2026-10-10.jsonl"), "utf8")).toBe(
+        oldSignal
+      );
+      expect(
+        await readFile(join(eventsDir(), "raw", "2026-10-10.jsonl"), "utf8")
+      ).toBe("old raw");
+    });
+
+    it("overwrites when the re-collection finds signals", async () => {
+      await writeProjectsFile(homeDir, [project()]);
+      await preWrite("stale\n", "old raw");
+      await writeSession([["2026-10-10T10:00:00.000Z", "past-day Claude work"]]);
+
+      const result = await collectClaudeForRegisteredProjects({
+        homeDir,
+        claudeHome,
+        now: () => "2026-10-11T02:51:00.000Z",
+        targetDate: "2026-10-10"
+      });
+
+      expect(result.successes[0].preservedExisting).toBe(false);
+      const signals = await readFile(join(eventsDir(), "2026-10-10.jsonl"), "utf8");
+      expect(signals).not.toContain("stale");
+    });
+
+    it("writes an empty file without preserving when no prior signals exist", async () => {
+      await writeProjectsFile(homeDir, [project()]);
+      await writeSession([["2026-10-11T01:00:00.000Z", "next-day Claude work"]]);
+
+      const result = await collectClaudeForRegisteredProjects({
+        homeDir,
+        claudeHome,
+        now: () => "2026-10-11T02:51:00.000Z",
+        targetDate: "2026-10-10"
+      });
+
+      expect(result.successes[0].preservedExisting).toBe(false);
+      expect(await readFile(result.successes[0].signalsFile, "utf8")).toBe("");
+    });
+  });
+
   it("skips session files whose cwd does not attribute to a registered project", async () => {
     await writeProjectsFile(homeDir, [
       {

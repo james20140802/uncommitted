@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { resolveConfigPaths } from "./config-paths.js";
 import { readProjectsFile } from "./project-registry.js";
 import type { ProjectRecord } from "./project-registry.js";
@@ -22,6 +23,7 @@ export type CollectClaudeCommandOptions = {
   homeDir?: string;
   claudeHome?: string;
   now?: () => string;
+  targetDate?: string;
 };
 
 export type CollectClaudeSuccess = {
@@ -31,6 +33,8 @@ export type CollectClaudeSuccess = {
   signalCount: number;
   conversationCount: number;
   toolFactCount: number;
+  /** True when the write was skipped to keep existing signals. */
+  preservedExisting: boolean;
 };
 
 export type CollectClaudeFailure = {
@@ -47,7 +51,8 @@ export type CollectClaudeCommandResult = {
 
 export type CollectClaudeCommandErrorCode =
   | "invalid-projects-file"
-  | "no-projects";
+  | "no-projects"
+  | "invalid-date";
 
 export class CollectClaudeCommandError extends Error {
   constructor(
@@ -58,6 +63,8 @@ export class CollectClaudeCommandError extends Error {
     this.name = "CollectClaudeCommandError";
   }
 }
+
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 export async function collectClaudeForRegisteredProjects(
   options: CollectClaudeCommandOptions = {}
@@ -82,8 +89,19 @@ export async function collectClaudeForRegisteredProjects(
     );
   }
 
-  const now = options.now ? options.now() : new Date().toISOString();
-  const targetDate = now.slice(0, 10);
+  let targetDate: string;
+  if (options.targetDate) {
+    if (!DATE_RE.test(options.targetDate)) {
+      throw new CollectClaudeCommandError(
+        "Invalid --date; expected YYYY-MM-DD.",
+        "invalid-date"
+      );
+    }
+    targetDate = options.targetDate;
+  } else {
+    const now = options.now ? options.now() : new Date().toISOString();
+    targetDate = now.slice(0, 10);
+  }
   const retentionDays = await readRawRetentionDays(paths.configFile);
 
   const logs = await discoverClaudeSessionLogs({
@@ -168,6 +186,43 @@ export async function collectClaudeForRegisteredProjects(
         );
       }
       const redacted = redactClaudeSession(aggregate);
+      const existingSignalsFile = join(
+        project.root,
+        ".uncommitted",
+        "events",
+        "claude",
+        `${targetDate}.jsonl`
+      );
+      // A re-collection that finds nothing (e.g. the session logs were pruned
+      // or the date has no entries) must not wipe signals collected earlier.
+      if (
+        redacted.signals.length === 0 &&
+        (await hasContent(existingSignalsFile))
+      ) {
+        successes.push({
+          projectId: project.id,
+          signalsFile: existingSignalsFile,
+          rawArchiveFile: join(
+            project.root,
+            ".uncommitted",
+            "events",
+            "claude",
+            "raw",
+            `${targetDate}.jsonl`
+          ),
+          signalCount: 0,
+          conversationCount: 0,
+          toolFactCount: 0,
+          preservedExisting: true
+        });
+        await pruneRawArchives({
+          projectRoot: project.root,
+          source: "claude",
+          today: targetDate,
+          retentionDays
+        });
+        continue;
+      }
       const written = await writeClaudeSessionOutputs({
         projectRoot: project.root,
         targetDate,
@@ -181,7 +236,8 @@ export async function collectClaudeForRegisteredProjects(
         rawArchiveFile: written.rawArchiveFile,
         signalCount: written.signalCount,
         conversationCount: written.conversationCount,
-        toolFactCount: written.toolFactCount
+        toolFactCount: written.toolFactCount,
+        preservedExisting: false
       });
       await pruneRawArchives({
         projectRoot: project.root,
@@ -229,4 +285,13 @@ function isOnTargetDate(timestamp: string, targetDate: string): boolean {
   // Undated entries can't be proven to belong to another day, so keep them
   // with the current collection; dated entries must match the target date.
   return timestamp === "" || timestamp.slice(0, 10) === targetDate;
+}
+
+async function hasContent(path: string): Promise<boolean> {
+  try {
+    return (await readFile(path, "utf8")).trim() !== "";
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
 }

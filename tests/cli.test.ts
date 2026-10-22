@@ -91,6 +91,55 @@ describe("cli", () => {
     expect(stderr.join("\n")).toContain("Usage: uncommitted collect claude");
   });
 
+  it("rejects collect claude --date without a value", async () => {
+    const { io, stdout, stderr } = createIo();
+
+    const exitCode = await runCli(["collect", "claude", "--date"], io);
+
+    expect(exitCode).toBe(1);
+    expect(stdout).toEqual([]);
+    expect(stderr.join("\n")).toContain(
+      "Usage: uncommitted collect claude [--date YYYY-MM-DD]"
+    );
+  });
+
+  it("exits 2 with invalid-date message for collect claude --date with a malformed value", async () => {
+    const { io, stderr } = createIo();
+    const { homeDir, claudeHome } = await createCollectClaudeDateFixture();
+
+    const exitCode = await runCli(["collect", "claude", "--date", "2026-13"], io, {
+      homeDir,
+      claudeHome,
+      now: () => "2026-10-11T02:51:00.000Z"
+    });
+
+    expect(exitCode).toBe(2);
+    expect(stderr.join("\n")).toContain("Invalid --date; expected YYYY-MM-DD.");
+  });
+
+  it("collect claude --date prints a warning and keeps existing signals", async () => {
+    const { io, stderr } = createIo();
+    const { homeDir, claudeHome, repoDir } = await createCollectClaudeDateFixture();
+    const eventsDir = join(repoDir, ".uncommitted", "events", "claude");
+    await mkdir(eventsDir, { recursive: true });
+    const oldSignal = `${JSON.stringify({ id: "old" })}\n`;
+    await writeFile(join(eventsDir, "2026-10-10.jsonl"), oldSignal, "utf8");
+
+    const exitCode = await runCli(["collect", "claude", "--date", "2026-10-10"], io, {
+      homeDir,
+      claudeHome,
+      now: () => "2026-10-11T02:51:00.000Z"
+    });
+
+    expect(exitCode).toBe(0);
+    expect(stderr.join("\n")).toContain(
+      "p1: no Claude activity found for 2026-10-10; kept existing signals."
+    );
+    expect(await readFile(join(eventsDir, "2026-10-10.jsonl"), "utf8")).toBe(
+      oldSignal
+    );
+  });
+
   it("rejects collect codex --date without a value", async () => {
     const { io, stdout, stderr } = createIo();
 
@@ -1044,6 +1093,50 @@ describe("cli", () => {
     expect(stdout.join("\n")).toContain("Generated text draft for 2026-05-31");
     expect(stdout.join("\n")).toContain("Rendered carousel for 2026-05-31");
     expect(renderedPng).toEqual(pngBytes);
+  });
+
+  it("schedule run-now collects Claude signals under the same target date it generates", async () => {
+    const { io, stdout, stderr } = createIo();
+    const fixture = await createScheduleRunNowFixture();
+    const claudeHome = join(fixture.directory, "claude-home");
+    const sessionDir = join(claudeHome, "projects", "x");
+    await mkdir(sessionDir, { recursive: true });
+    await writeFile(
+      join(sessionDir, "s.jsonl"),
+      `${JSON.stringify({
+        type: "user",
+        cwd: await realpath(fixture.repoDir),
+        timestamp: "2026-05-31T22:00:00.000Z",
+        message: { content: "scheduled Claude work" }
+      })}\n`,
+      "utf8"
+    );
+    const stubs = nonGitStubInvokers();
+    const clockValues = [
+      "2026-05-31T23:59:59.000Z",
+      "2026-06-01T00:00:01.000Z",
+      "2026-06-01T00:00:02.000Z"
+    ];
+
+    const exitCode = await runCli(["schedule", "run-now"], io, {
+      homeDir: fixture.homeDir,
+      claudeHome,
+      now: () => clockValues.shift() ?? "2026-06-01T00:00:03.000Z",
+      aiProvider: new ScheduleAiProvider(),
+      carouselRenderer: new RecordingPngRenderer(),
+      collectInvokers: { codex: stubs.codex, github: stubs.github }
+    });
+
+    const eventsDir = join(fixture.repoDir, ".uncommitted", "events", "claude");
+    expect(exitCode).toBe(0);
+    expect(stderr).toEqual([]);
+    expect(
+      (await readFile(join(eventsDir, "2026-05-31.jsonl"), "utf8")).length
+    ).toBeGreaterThan(0);
+    await expect(access(join(eventsDir, "2026-06-01.jsonl"))).rejects.toMatchObject({
+      code: "ENOENT"
+    });
+    expect(stdout.join("\n")).toContain("Generated text draft for 2026-05-31");
   });
 
   it("returns collection exit code for schedule run-now when collection fails", async () => {
@@ -2526,6 +2619,44 @@ async function createLatestDraftFixture(options: LatestDraftFixtureOptions = {})
 // non-git collectors so workflow tests stay deterministic and never touch the
 // host's real ~/.claude / ~/.codex; git still runs for real against the
 // fixture repo to feed generate/render.
+async function createCollectClaudeDateFixture() {
+  const directory = await mkdtemp(join(tmpdir(), "uncommitted-cli-collect-claude-date-"));
+  const repoDir = join(directory, "repo");
+  const homeDir = join(directory, "home");
+  const claudeHome = join(directory, "claude-home");
+  const sessionDir = join(claudeHome, "projects", "x");
+
+  await mkdir(repoDir, { recursive: true });
+  await mkdir(sessionDir, { recursive: true });
+  await mkdir(join(homeDir, ".uncommitted"), { recursive: true });
+  await writeJson(join(homeDir, ".uncommitted", "projects.json"), {
+    schemaVersion: 1,
+    projects: [
+      {
+        schemaVersion: 1,
+        id: "p1",
+        name: "demo",
+        root: repoDir,
+        gitRoot: repoDir,
+        enabled: true,
+        createdAt: "2026-05-01T00:00:00.000Z"
+      }
+    ]
+  });
+  await writeFile(
+    join(sessionDir, "s.jsonl"),
+    `${JSON.stringify({
+      type: "user",
+      cwd: repoDir,
+      timestamp: "2026-10-11T01:00:00.000Z",
+      message: { content: "next-day Claude work" }
+    })}\n`,
+    "utf8"
+  );
+
+  return { directory, repoDir, homeDir, claudeHome };
+}
+
 function nonGitStubInvokers() {
   const ok = (detail: string) => async () => ({
     successCount: 1,
