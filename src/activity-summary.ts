@@ -12,6 +12,7 @@ export { deriveSynthesisFromSignals };
 import type { GitActivityEvent } from "./collect-git-command.js";
 import type { ActivitySignal } from "./event-source.js";
 import type { DirtyFileStatus, DirtyStatusTotals } from "./git-activity-collector.js";
+import { isMemoryNoiseNote } from "./harness-noise.js";
 import { recencyDecay, THREAD_TOP_K, type MemoryThread } from "./memory-store.js";
 import type { ManualNoteEvent } from "./note-command.js";
 import {
@@ -603,7 +604,8 @@ function buildUncertaintyNotes(
  * `recencyDecay(thread, now)` descending, then split their notes by kind:
  * `running-joke`/`win` go to the joke slot, everything else goes to the
  * unfinished-thread slot. Threads with `status !== "active"` are excluded
- * before ranking. The same recency-ranked scan (no re-sort) also picks out
+ * before ranking, as are harness-noise / bare tool-name notes (UNC-302; the
+ * stored threads.jsonl is never rewritten by this read filter). The same recency-ranked scan (no re-sort) also picks out
  * up to `RECURRING_THREAD_MAX` threads with `occurrenceCount >=
  * RECURRING_THREAD_MIN_OCCURRENCES` for `recurringThreads` (UNC-229 / T3).
  */
@@ -620,7 +622,7 @@ function selectTopMemoryThreads(
   }
 
   const topThreads = memoryThreads
-    .filter((thread) => thread.status === "active")
+    .filter((thread) => thread.status === "active" && !isMemoryNoiseNote(thread.note))
     .sort((a, b) => recencyDecay(b, now) - recencyDecay(a, now))
     .slice(0, THREAD_TOP_K);
 

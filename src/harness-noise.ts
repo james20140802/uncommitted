@@ -36,3 +36,36 @@ function isApprovalJson(text: string): boolean {
     return false;
   }
 }
+
+const KNOWN_TOOL_NAMES: ReadonlySet<string> = new Set([
+  "exec",
+  "exec_command",
+  "ToolSearch",
+  "Bash",
+  "Read",
+  "Edit",
+  "Write",
+  "Grep",
+  "Glob",
+  "Agent",
+  "Task",
+  "WebFetch",
+  "WebSearch",
+  "apply_patch",
+  "shell",
+  "read_file"
+]);
+
+const MCP_TOOL_NAME = /^mcp__[\w-]+(__[\w-]+)*$/;
+const SMALL_COUNT_SUFFIX = /\s*(?::\s*\d+(?:st|nd|rd|th)\s+time|\(\s*[x×]\s*\d+\s*\)|[x×]\s*\d+)\s*$/i;
+
+/** A stored thread note that is only a harness tool name (optionally with a small count suffix). */
+export function isToolNameOnlyNote(note: string): boolean {
+  const base = note.trim().replace(SMALL_COUNT_SUFFIX, "");
+  return MCP_TOOL_NAME.test(base) || KNOWN_TOOL_NAMES.has(base);
+}
+
+/** Read-time filter for memory threads: harness text or a bare tool name. */
+export function isMemoryNoiseNote(note: string): boolean {
+  return isHarnessNoise(note) || isToolNameOnlyNote(note);
+}

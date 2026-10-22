@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isHarnessNoise } from "../src/harness-noise.js";
+import { isHarnessNoise, isMemoryNoiseNote, isToolNameOnlyNote } from "../src/harness-noise.js";
 
 describe("isHarnessNoise", () => {
   it.each([
@@ -29,5 +29,37 @@ describe("isHarnessNoise", () => {
     ""
   ])("keeps %j", (text) => {
     expect(isHarnessNoise(text)).toBe(false);
+  });
+});
+
+describe("isToolNameOnlyNote", () => {
+  it.each([
+    "exec",
+    " exec ",
+    "ToolSearch",
+    "mcp__linear-sangchu__get_issue",
+    "exec: 6th time",
+    "exec (x6)",
+    "ToolSearch ×3",
+    "Bash",
+    "apply_patch",
+    "shell"
+  ])("treats %j as tool-name-only", (note) => {
+    expect(isToolNameOnlyNote(note)).toBe(true);
+  });
+
+  it.each(["exec 버그", "Bash src/foo.ts", "Read the docs", "mcp", ""])(
+    "keeps %j",
+    (note) => {
+      expect(isToolNameOnlyNote(note)).toBe(false);
+    }
+  );
+});
+
+describe("isMemoryNoiseNote", () => {
+  it("combines harness noise and tool-name-only notes", () => {
+    expect(isMemoryNoiseNote("# AGENTS.md instructions for /repo")).toBe(true);
+    expect(isMemoryNoiseNote("exec")).toBe(true);
+    expect(isMemoryNoiseNote("exec 버그")).toBe(false);
   });
 });

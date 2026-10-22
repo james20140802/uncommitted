@@ -1,7 +1,10 @@
-import { describe, expect, it } from "vitest";
-import { reflectThreads, deriveThreadNote } from "../src/reflection.js";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { reflectProjectThreads, reflectThreads, deriveThreadNote } from "../src/reflection.js";
 import type { ActivitySignal } from "../src/event-source.js";
-import type { MemoryThread } from "../src/memory-store.js";
+import { readThreads, writeThreads, type MemoryThread } from "../src/memory-store.js";
 
 function signal(overrides: Partial<ActivitySignal> = {}): ActivitySignal {
   return {
@@ -275,5 +278,44 @@ describe("occurrenceCount out-of-order 날짜 (backfill)", () => {
       now
     });
     expect(out).toHaveLength(1);
+  });
+});
+
+describe("reflection keeps noise threads on disk (UNC-302)", () => {
+  let projectRoot: string;
+
+  beforeEach(async () => {
+    projectRoot = await mkdtemp(join(tmpdir(), "unc-reflection-noise-"));
+  });
+
+  afterEach(async () => {
+    await rm(projectRoot, { recursive: true, force: true });
+  });
+
+  it("does not rewrite threads.jsonl to drop noise threads (read-only filter)", async () => {
+    // "# AGENTS.md instructions ..." notes are already dropped by the existing
+    // deriveSafeThreadNote gate, so they can never survive on disk; only
+    // tool-name notes are exercised here.
+    const now = new Date("2026-07-15T10:00:00.000Z");
+    const stamp = now.toISOString();
+    const noise: MemoryThread[] = ["exec", "ToolSearch"].map((note) => ({
+      id: `bug:${note.toLowerCase()}`,
+      firstSeen: stamp,
+      lastSeen: stamp,
+      kind: "bug",
+      note,
+      status: "active",
+      decay: 1,
+      occurrenceCount: 3
+    }));
+    await writeThreads(projectRoot, noise);
+
+    await reflectProjectThreads(projectRoot, [signal()], now);
+
+    const onDisk = await readThreads(projectRoot);
+    const notes = onDisk.map((thread) => thread.note);
+    expect(notes).toContain("exec");
+    expect(notes).toContain("ToolSearch");
+    expect(notes).toContain(deriveThreadNote("fix race condition in scheduler"));
   });
 });
