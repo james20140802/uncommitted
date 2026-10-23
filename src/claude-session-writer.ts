@@ -9,6 +9,10 @@ export type ClaudeSessionWriteInput = {
   signals: ActivitySignal[];
   conversation: ConversationTurn[];
   toolFacts: ToolFact[];
+  /** Leave the existing signals file untouched instead of rewriting it. */
+  keepSignalsFile?: boolean;
+  /** Leave the existing raw archive untouched instead of rewriting it. */
+  keepRawArchiveFile?: boolean;
 };
 
 export type ClaudeSessionWriteResult = {
@@ -78,11 +82,15 @@ export async function writeClaudeSessionOutputs(
     ? rawEntries.map((entry) => entry.line).join("\n") + "\n"
     : "";
 
-  await writeFile(signalsFile, signalsBody, "utf8");
-  await writeFile(rawArchiveFile, rawBody, { encoding: "utf8", mode: 0o600 });
-  // Belt-and-suspenders: writeFile honors mode only when CREATING the file.
-  // On rewrite, chmod ensures the 0600 invariant survives.
-  await chmod(rawArchiveFile, 0o600);
+  if (!input.keepSignalsFile) {
+    await writeFile(signalsFile, signalsBody, "utf8");
+  }
+  if (!input.keepRawArchiveFile) {
+    await writeFile(rawArchiveFile, rawBody, { encoding: "utf8", mode: 0o600 });
+    // Belt-and-suspenders: writeFile honors mode only when CREATING the file.
+    // On rewrite, chmod ensures the 0600 invariant survives.
+    await chmod(rawArchiveFile, 0o600);
+  }
 
   return {
     signalsFile,

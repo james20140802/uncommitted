@@ -35,7 +35,7 @@ export type CollectClaudeSuccess = {
   signalCount: number;
   conversationCount: number;
   toolFactCount: number;
-  /** True when the write was skipped to keep existing signals. */
+  /** True when nothing new was found and the existing files were kept. */
   preservedExisting: boolean;
 };
 
@@ -196,11 +196,22 @@ export async function collectClaudeForRegisteredProjects(
       const redacted = redactClaudeSession(aggregate);
       const outputPaths = claudeSessionOutputPaths(project.root, targetDate);
       // A re-collection that finds nothing (e.g. the session logs were pruned
-      // or the date has no entries) must not wipe signals collected earlier.
-      if (
+      // or the date has no entries) must not wipe data collected earlier.
+      // Signals and the raw archive are judged separately: a run that only
+      // yields raw content (thinking, harness-only turns) still saves it
+      // without clearing the existing signals, and vice versa.
+      const keepSignalsFile =
         redacted.signals.length === 0 &&
-        (await hasContent(outputPaths.signalsFile))
-      ) {
+        (await hasContent(outputPaths.signalsFile));
+      const keepRawArchiveFile =
+        redacted.conversation.length === 0 &&
+        redacted.toolFacts.length === 0 &&
+        (await hasContent(outputPaths.rawArchiveFile));
+      const hasNewContent =
+        redacted.signals.length > 0 ||
+        redacted.conversation.length > 0 ||
+        redacted.toolFacts.length > 0;
+      if (!hasNewContent && (keepSignalsFile || keepRawArchiveFile)) {
         successes.push({
           projectId: project.id,
           signalsFile: outputPaths.signalsFile,
@@ -223,7 +234,9 @@ export async function collectClaudeForRegisteredProjects(
         targetDate,
         signals: redacted.signals,
         conversation: redacted.conversation,
-        toolFacts: redacted.toolFacts
+        toolFacts: redacted.toolFacts,
+        keepSignalsFile,
+        keepRawArchiveFile
       });
       successes.push({
         projectId: project.id,

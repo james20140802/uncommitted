@@ -364,6 +364,58 @@ describe("collectClaudeForRegisteredProjects", () => {
       expect(signals).not.toContain("stale");
     });
 
+    it("saves new raw content while keeping existing signals when only raw is found", async () => {
+      await writeProjectsFile(homeDir, [project()]);
+      const oldSignal = JSON.stringify({ id: "old" }) + "\n";
+      await preWrite(oldSignal, "old raw");
+      // An assistant thinking block lands in the raw archive but emits no signal.
+      const sessionDir = join(claudeHome, "projects", "encoded-project");
+      await mkdir(sessionDir, { recursive: true });
+      await writeFile(
+        join(sessionDir, "abc.jsonl"),
+        JSON.stringify({
+          type: "assistant",
+          cwd: projectRoot,
+          timestamp: "2026-10-10T10:00:00.000Z",
+          message: { content: [{ type: "thinking", thinking: "raw-only thought" }] }
+        }) + "\n"
+      );
+
+      const result = await collectClaudeForRegisteredProjects({
+        homeDir,
+        claudeHome,
+        now: () => "2026-10-11T02:51:00.000Z",
+        targetDate: "2026-10-10"
+      });
+
+      expect(result.successes[0].signalCount).toBe(0);
+      expect(result.successes[0].conversationCount).toBe(1);
+      expect(await readFile(join(eventsDir(), "2026-10-10.jsonl"), "utf8")).toBe(
+        oldSignal
+      );
+      expect(
+        await readFile(join(eventsDir(), "raw", "2026-10-10.jsonl"), "utf8")
+      ).toContain("raw-only thought");
+    });
+
+    it("keeps an existing raw archive when a re-collection finds no raw content", async () => {
+      await writeProjectsFile(homeDir, [project()]);
+      await preWrite("", "old raw");
+      await writeSession([["2026-10-11T01:00:00.000Z", "next-day Claude work"]]);
+
+      const result = await collectClaudeForRegisteredProjects({
+        homeDir,
+        claudeHome,
+        now: () => "2026-10-11T02:51:00.000Z",
+        targetDate: "2026-10-10"
+      });
+
+      expect(result.successes[0].preservedExisting).toBe(true);
+      expect(
+        await readFile(join(eventsDir(), "raw", "2026-10-10.jsonl"), "utf8")
+      ).toBe("old raw");
+    });
+
     it("writes an empty file without preserving when no prior signals exist", async () => {
       await writeProjectsFile(homeDir, [project()]);
       await writeSession([["2026-10-11T01:00:00.000Z", "next-day Claude work"]]);
