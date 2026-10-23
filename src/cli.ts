@@ -1019,14 +1019,14 @@ async function runGenerate(
 }
 
 /**
- * Parse the optional `--date YYYY-MM-DD` argv shared by `collect codex` and
- * `collect github`. Rejects a dangling `--date` (would otherwise fall back to
+ * Parse the optional `--date YYYY-MM-DD` argv shared by `collect claude`,
+ * `collect codex` and `collect github`. Rejects a dangling `--date` (would otherwise fall back to
  * today and overwrite events) and any unknown token. Emits the usage error to
  * stderr and returns `{ error: true }` on failure.
  */
 function parseCollectDateArgs(
   args: string[],
-  source: "codex" | "github",
+  source: "claude" | "codex" | "github",
   io: CliIo
 ): { targetDate?: string; error: boolean } {
   const usage = `Usage: uncommitted collect ${source} [--date YYYY-MM-DD]`;
@@ -1074,26 +1074,29 @@ async function runCollect(
     return await runCollectAllCommand(io, options);
   }
 
-  // git and claude take no further arguments; reject trailing tokens so an
+  // git takes no further arguments; reject trailing tokens so an
   // unsupported flag can't silently collect/overwrite today's events.
-  if ((args[0] === "git" || args[0] === "claude") && args.length > 1) {
+  if (args[0] === "git" && args.length > 1) {
     io.stderr(`Usage: uncommitted collect ${args[0]}`);
     return 1;
   }
 
   const source = args[0] as SourceName;
 
-  // codex and github accept `--date`; validate their argv BEFORE consulting
+  // claude, codex and github accept `--date`; validate their argv BEFORE consulting
   // config so a typo (e.g. `collect codex --date`, `collect github --bogus`) is
   // rejected even when the source is disabled — matching the enabled path.
+  let claudeTargetDate: string | undefined;
   let codexTargetDate: string | undefined;
   let ghTargetDate: string | undefined;
-  if (source === "codex" || source === "github") {
+  if (source === "claude" || source === "codex" || source === "github") {
     const parsed = parseCollectDateArgs(args.slice(1), source, io);
     if (parsed.error) {
       return 1;
     }
-    if (source === "codex") {
+    if (source === "claude") {
+      claudeTargetDate = parsed.targetDate;
+    } else if (source === "codex") {
       codexTargetDate = parsed.targetDate;
     } else {
       ghTargetDate = parsed.targetDate;
@@ -1140,22 +1143,34 @@ async function runCollect(
 
   if (args[0] === "claude") {
     try {
-      const result = await collectClaudeForRegisteredProjects(options);
+      const result = await collectClaudeForRegisteredProjects({
+        homeDir: options.homeDir,
+        claudeHome: options.claudeHome,
+        now: options.now ?? (() => new Date().toISOString()),
+        targetDate: claudeTargetDate
+      });
 
       if (result.claudeLogsMissing) {
         io.stdout("No Claude session logs found at ~/.claude/projects. Skipping.");
         return 0;
       }
 
-      if (result.successes.length > 0) {
+      const collected = result.successes.filter((s) => !s.preservedExisting);
+      if (collected.length > 0) {
         io.stdout(
-          `Collected Claude activity for ${formatProjectCount(result.successes.length)}.`
+          `Collected Claude activity for ${formatProjectCount(collected.length)}.`
         );
-        for (const success of result.successes) {
-          io.stdout(
-            `${success.projectId}: ${success.signalCount} signals, ${success.conversationCount} turns, ${success.toolFactCount} tool facts.`
+      }
+      for (const success of result.successes) {
+        if (success.preservedExisting) {
+          io.stderr(
+            `${success.projectId}: no Claude activity found for ${result.targetDate}; kept existing signals.`
           );
+          continue;
         }
+        io.stdout(
+          `${success.projectId}: ${success.signalCount} signals, ${success.conversationCount} turns, ${success.toolFactCount} tool facts.`
+        );
       }
 
       for (const failure of result.failures) {
@@ -1166,7 +1181,10 @@ async function runCollect(
     } catch (error) {
       if (error instanceof CollectClaudeCommandError) {
         io.stderr(error.message);
-        return error.code === "invalid-projects-file" ? 2 : 3;
+        return error.code === "invalid-projects-file" ||
+          error.code === "invalid-date"
+          ? 2
+          : 3;
       }
       throw error;
     }

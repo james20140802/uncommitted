@@ -1,5 +1,5 @@
 import { chmod, mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { ActivitySignal } from "./event-source.js";
 import type { ConversationTurn, ToolFact } from "./claude-session-parser.js";
 
@@ -9,6 +9,10 @@ export type ClaudeSessionWriteInput = {
   signals: ActivitySignal[];
   conversation: ConversationTurn[];
   toolFacts: ToolFact[];
+  /** Leave the existing signals file untouched instead of rewriting it. */
+  keepSignalsFile?: boolean;
+  /** Leave the existing raw archive untouched instead of rewriting it. */
+  keepRawArchiveFile?: boolean;
 };
 
 export type ClaudeSessionWriteResult = {
@@ -19,15 +23,25 @@ export type ClaudeSessionWriteResult = {
   toolFactCount: number;
 };
 
+export function claudeSessionOutputPaths(
+  projectRoot: string,
+  targetDate: string
+): { signalsFile: string; rawArchiveFile: string } {
+  const baseDir = join(projectRoot, ".uncommitted", "events", "claude");
+  return {
+    signalsFile: join(baseDir, `${targetDate}.jsonl`),
+    rawArchiveFile: join(baseDir, "raw", `${targetDate}.jsonl`)
+  };
+}
+
 export async function writeClaudeSessionOutputs(
   input: ClaudeSessionWriteInput
 ): Promise<ClaudeSessionWriteResult> {
-  const baseDir = join(input.projectRoot, ".uncommitted", "events", "claude");
-  const rawDir = join(baseDir, "raw");
-  await mkdir(rawDir, { recursive: true });
-
-  const signalsFile = join(baseDir, `${input.targetDate}.jsonl`);
-  const rawArchiveFile = join(rawDir, `${input.targetDate}.jsonl`);
+  const { signalsFile, rawArchiveFile } = claudeSessionOutputPaths(
+    input.projectRoot,
+    input.targetDate
+  );
+  await mkdir(dirname(rawArchiveFile), { recursive: true });
 
   const signalsBody = input.signals.length
     ? input.signals.map((s) => JSON.stringify(s)).join("\n") + "\n"
@@ -68,11 +82,15 @@ export async function writeClaudeSessionOutputs(
     ? rawEntries.map((entry) => entry.line).join("\n") + "\n"
     : "";
 
-  await writeFile(signalsFile, signalsBody, "utf8");
-  await writeFile(rawArchiveFile, rawBody, { encoding: "utf8", mode: 0o600 });
-  // Belt-and-suspenders: writeFile honors mode only when CREATING the file.
-  // On rewrite, chmod ensures the 0600 invariant survives.
-  await chmod(rawArchiveFile, 0o600);
+  if (!input.keepSignalsFile) {
+    await writeFile(signalsFile, signalsBody, "utf8");
+  }
+  if (!input.keepRawArchiveFile) {
+    await writeFile(rawArchiveFile, rawBody, { encoding: "utf8", mode: 0o600 });
+    // Belt-and-suspenders: writeFile honors mode only when CREATING the file.
+    // On rewrite, chmod ensures the 0600 invariant survives.
+    await chmod(rawArchiveFile, 0o600);
+  }
 
   return {
     signalsFile,

@@ -12,7 +12,10 @@ import {
   type ClaudeSessionParseResult
 } from "./claude-session-parser.js";
 import { redactClaudeSession } from "./claude-session-redactor.js";
-import { writeClaudeSessionOutputs } from "./claude-session-writer.js";
+import {
+  claudeSessionOutputPaths,
+  writeClaudeSessionOutputs
+} from "./claude-session-writer.js";
 import {
   pruneRawArchives,
   readRawRetentionDays
@@ -22,6 +25,7 @@ export type CollectClaudeCommandOptions = {
   homeDir?: string;
   claudeHome?: string;
   now?: () => string;
+  targetDate?: string;
 };
 
 export type CollectClaudeSuccess = {
@@ -31,6 +35,8 @@ export type CollectClaudeSuccess = {
   signalCount: number;
   conversationCount: number;
   toolFactCount: number;
+  /** True when nothing new was found and the existing files were kept. */
+  preservedExisting: boolean;
 };
 
 export type CollectClaudeFailure = {
@@ -47,7 +53,8 @@ export type CollectClaudeCommandResult = {
 
 export type CollectClaudeCommandErrorCode =
   | "invalid-projects-file"
-  | "no-projects";
+  | "no-projects"
+  | "invalid-date";
 
 export class CollectClaudeCommandError extends Error {
   constructor(
@@ -58,6 +65,8 @@ export class CollectClaudeCommandError extends Error {
     this.name = "CollectClaudeCommandError";
   }
 }
+
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 export async function collectClaudeForRegisteredProjects(
   options: CollectClaudeCommandOptions = {}
@@ -82,8 +91,25 @@ export async function collectClaudeForRegisteredProjects(
     );
   }
 
-  const now = options.now ? options.now() : new Date().toISOString();
-  const targetDate = now.slice(0, 10);
+  // Retention is anchored on the real current date, never on --date: a
+  // future or mistyped target date would otherwise move the cutoff forward
+  // and delete every raw archive.
+  const today = (options.now ? options.now() : new Date().toISOString()).slice(
+    0,
+    10
+  );
+  let targetDate: string;
+  if (options.targetDate !== undefined) {
+    if (!DATE_RE.test(options.targetDate)) {
+      throw new CollectClaudeCommandError(
+        "Invalid --date; expected YYYY-MM-DD.",
+        "invalid-date"
+      );
+    }
+    targetDate = options.targetDate;
+  } else {
+    targetDate = today;
+  }
   const retentionDays = await readRawRetentionDays(paths.configFile);
 
   const logs = await discoverClaudeSessionLogs({
@@ -97,7 +123,7 @@ export async function collectClaudeForRegisteredProjects(
       await pruneRawArchives({
         projectRoot: project.root,
         source: "claude",
-        today: targetDate,
+        today,
         retentionDays
       });
     }
@@ -168,12 +194,49 @@ export async function collectClaudeForRegisteredProjects(
         );
       }
       const redacted = redactClaudeSession(aggregate);
+      const outputPaths = claudeSessionOutputPaths(project.root, targetDate);
+      // A re-collection that finds nothing (e.g. the session logs were pruned
+      // or the date has no entries) must not wipe data collected earlier.
+      // Signals and the raw archive are judged separately: a run that only
+      // yields raw content (thinking, harness-only turns) still saves it
+      // without clearing the existing signals, and vice versa.
+      const keepSignalsFile =
+        redacted.signals.length === 0 &&
+        (await hasContent(outputPaths.signalsFile));
+      const keepRawArchiveFile =
+        redacted.conversation.length === 0 &&
+        redacted.toolFacts.length === 0 &&
+        (await hasContent(outputPaths.rawArchiveFile));
+      const hasNewContent =
+        redacted.signals.length > 0 ||
+        redacted.conversation.length > 0 ||
+        redacted.toolFacts.length > 0;
+      if (!hasNewContent && (keepSignalsFile || keepRawArchiveFile)) {
+        successes.push({
+          projectId: project.id,
+          signalsFile: outputPaths.signalsFile,
+          rawArchiveFile: outputPaths.rawArchiveFile,
+          signalCount: 0,
+          conversationCount: 0,
+          toolFactCount: 0,
+          preservedExisting: true
+        });
+        await pruneRawArchives({
+          projectRoot: project.root,
+          source: "claude",
+          today,
+          retentionDays
+        });
+        continue;
+      }
       const written = await writeClaudeSessionOutputs({
         projectRoot: project.root,
         targetDate,
         signals: redacted.signals,
         conversation: redacted.conversation,
-        toolFacts: redacted.toolFacts
+        toolFacts: redacted.toolFacts,
+        keepSignalsFile,
+        keepRawArchiveFile
       });
       successes.push({
         projectId: project.id,
@@ -181,12 +244,13 @@ export async function collectClaudeForRegisteredProjects(
         rawArchiveFile: written.rawArchiveFile,
         signalCount: written.signalCount,
         conversationCount: written.conversationCount,
-        toolFactCount: written.toolFactCount
+        toolFactCount: written.toolFactCount,
+        preservedExisting: false
       });
       await pruneRawArchives({
         projectRoot: project.root,
         source: "claude",
-        today: targetDate,
+        today,
         retentionDays
       });
     } catch (error) {
@@ -229,4 +293,13 @@ function isOnTargetDate(timestamp: string, targetDate: string): boolean {
   // Undated entries can't be proven to belong to another day, so keep them
   // with the current collection; dated entries must match the target date.
   return timestamp === "" || timestamp.slice(0, 10) === targetDate;
+}
+
+async function hasContent(path: string): Promise<boolean> {
+  try {
+    return (await readFile(path, "utf8")).trim() !== "";
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
 }
