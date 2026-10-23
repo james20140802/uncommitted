@@ -89,6 +89,13 @@ export async function collectCodexForRegisteredProjects(
     );
   }
 
+  // Retention is anchored on the real current date, never on --date: a
+  // future or mistyped target date would otherwise move the cutoff forward
+  // and delete every raw archive.
+  const today = (options.now ? options.now() : new Date().toISOString()).slice(
+    0,
+    10
+  );
   let targetDate: string;
   if (options.targetDate) {
     if (!DATE_RE.test(options.targetDate)) {
@@ -99,8 +106,7 @@ export async function collectCodexForRegisteredProjects(
     }
     targetDate = options.targetDate;
   } else {
-    const now = options.now ? options.now() : new Date().toISOString();
-    targetDate = now.slice(0, 10);
+    targetDate = today;
   }
 
   const retentionDays = await readRawRetentionDays(paths.configFile);
@@ -133,7 +139,7 @@ export async function collectCodexForRegisteredProjects(
       await pruneRawArchives({
         projectRoot: project.root,
         source: "codex",
-        today: targetDate,
+        today,
         retentionDays
       });
     }
@@ -218,7 +224,7 @@ export async function collectCodexForRegisteredProjects(
       await pruneRawArchives({
         projectRoot: project.root,
         source: "codex",
-        today: targetDate,
+        today,
         retentionDays
       });
     } catch (error) {

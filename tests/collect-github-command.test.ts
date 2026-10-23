@@ -193,6 +193,7 @@ describe("collectGitHubForRegisteredProjects", () => {
     const result = await collectGitHubForRegisteredProjects({
       homeDir,
       env: { GITHUB_TOKEN: "t" },
+      now: () => "2026-06-17T05:00:00Z",
       targetDate: "2026-06-17",
       remoteUrlReader: async () => "git@gitlab.com:foo/bar.git",
       httpClient: async () => {
@@ -253,6 +254,34 @@ describe("collectGitHubForRegisteredProjects", () => {
     expect(result.failures[0].projectId).toBe("p1");
     expect(result.skippedProjects).toHaveLength(0);
     expect(result.successes).toHaveLength(0);
+  });
+
+  it("anchors raw-archive retention on the real date, not a future --date", async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), "gh-cmd-"));
+    const projectRoot = await mkdtemp(join(tmpdir(), "gh-proj-"));
+    await seedProjects(homeDir, projectRoot);
+    await writeFile(
+      join(homeDir, ".uncommitted", "config.json"),
+      JSON.stringify({ rawRetentionDays: 7 })
+    );
+    const rawDir = join(projectRoot, ".uncommitted", "events", "github", "raw");
+    await mkdir(rawDir, { recursive: true });
+    const recent = join(rawDir, "2026-06-15.jsonl");
+    await writeFile(recent, "{}\n");
+
+    // A year typo must not move the retention cutoff to 2027 and wipe archives.
+    await collectGitHubForRegisteredProjects({
+      homeDir,
+      env: { GITHUB_TOKEN: "t" },
+      now: () => "2026-06-17T05:00:00Z",
+      targetDate: "2027-06-17",
+      remoteUrlReader: async () => "git@gitlab.com:foo/bar.git",
+      httpClient: async () => {
+        throw new Error("should not be called");
+      }
+    });
+
+    await expect(readFile(recent, "utf8")).resolves.toBe("{}\n");
   });
 
   it("rejects an invalid --date (not YYYY-MM-DD)", async () => {

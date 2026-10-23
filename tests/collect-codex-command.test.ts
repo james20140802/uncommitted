@@ -224,6 +224,97 @@ describe("collectCodexForRegisteredProjects", () => {
     await expect(readFile(recent, "utf8")).resolves.toBe("{}\n");
   });
 
+  it("anchors no-log raw-archive retention on the real date, not a future --date", async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), "codex-cmd-"));
+    const codexHome = join(homeDir, ".codex");
+    const projectRoot = await mkdtemp(join(tmpdir(), "codex-proj-"));
+    await mkdir(join(homeDir, ".uncommitted"), { recursive: true });
+    await writeFile(
+      join(homeDir, ".uncommitted", "projects.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        projects: [
+          {
+            schemaVersion: 1,
+            id: "p1",
+            name: "demo",
+            root: projectRoot,
+            gitRoot: projectRoot,
+            enabled: true,
+            createdAt: "2026-06-14T00:00:00Z"
+          }
+        ]
+      })
+    );
+    await writeFile(
+      join(homeDir, ".uncommitted", "config.json"),
+      JSON.stringify({ rawRetentionDays: 7 })
+    );
+    const rawDir = join(projectRoot, ".uncommitted", "events", "codex", "raw");
+    await mkdir(rawDir, { recursive: true });
+    const recent = join(rawDir, "2026-06-12.jsonl");
+    await writeFile(recent, "{}\n");
+
+    // A year typo must not move the retention cutoff to 2027 and wipe archives.
+    const result = await collectCodexForRegisteredProjects({
+      homeDir,
+      codexHome,
+      now: () => "2026-06-14T05:00:00Z",
+      targetDate: "2027-06-13"
+    });
+
+    expect(result.codexLogsMissing).toBe(true);
+    await expect(readFile(recent, "utf8")).resolves.toBe("{}\n");
+  });
+
+  it("anchors collected-day raw-archive retention on the real date, not a future --date", async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), "codex-cmd-"));
+    const codexHome = join(homeDir, ".codex");
+    const projectRoot = await mkdtemp(join(tmpdir(), "codex-proj-"));
+    await mkdir(join(homeDir, ".uncommitted"), { recursive: true });
+    await writeFile(
+      join(homeDir, ".uncommitted", "projects.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        projects: [
+          {
+            schemaVersion: 1,
+            id: "p1",
+            name: "demo",
+            root: projectRoot,
+            gitRoot: projectRoot,
+            enabled: true,
+            createdAt: "2026-06-14T00:00:00Z"
+          }
+        ]
+      })
+    );
+    await writeFile(
+      join(homeDir, ".uncommitted", "config.json"),
+      JSON.stringify({ rawRetentionDays: 7 })
+    );
+    const rawDir = join(projectRoot, ".uncommitted", "events", "codex", "raw");
+    await mkdir(rawDir, { recursive: true });
+    const recent = join(rawDir, "2026-06-12.jsonl");
+    await writeFile(recent, "{}\n");
+    await seed({
+      projectRoot,
+      codexHome,
+      cwd: projectRoot,
+      date: "2027-06-13"
+    });
+
+    const result = await collectCodexForRegisteredProjects({
+      homeDir,
+      codexHome,
+      now: () => "2026-06-14T05:00:00Z",
+      targetDate: "2027-06-13"
+    });
+
+    expect(result.successes).toHaveLength(1);
+    await expect(readFile(recent, "utf8")).resolves.toBe("{}\n");
+  });
+
   it("throws no-projects error when registry is empty", async () => {
     const homeDir = await mkdtemp(join(tmpdir(), "codex-cmd-"));
     await mkdir(join(homeDir, ".uncommitted"), { recursive: true });
