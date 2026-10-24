@@ -120,6 +120,13 @@ export async function collectGitHubForRegisteredProjects(
     );
   }
 
+  // Retention is anchored on the real current date, never on --date: a
+  // future or mistyped target date would otherwise move the cutoff forward
+  // and delete every raw archive.
+  const today = (input.now ? input.now() : new Date().toISOString()).slice(
+    0,
+    10
+  );
   let targetDate: string;
   if (input.targetDate) {
     if (!DATE_RE.test(input.targetDate)) {
@@ -130,8 +137,7 @@ export async function collectGitHubForRegisteredProjects(
     }
     targetDate = input.targetDate;
   } else {
-    const now = input.now ? input.now() : new Date().toISOString();
-    targetDate = now.slice(0, 10);
+    targetDate = today;
   }
 
   const retentionDays = await readRawRetentionDays(paths.configFile);
@@ -145,7 +151,7 @@ export async function collectGitHubForRegisteredProjects(
     await pruneRawArchives({
       projectRoot: project.root,
       source: "github",
-      today: targetDate,
+      today,
       retentionDays
     });
   }
