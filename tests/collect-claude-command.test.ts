@@ -313,6 +313,65 @@ describe("collectClaudeForRegisteredProjects", () => {
       expect(rawText).not.toContain("past-day Claude work");
     });
 
+    describe("in a KST (Asia/Seoul) time zone", () => {
+      const originalTz = process.env.TZ;
+
+      beforeEach(() => {
+        process.env.TZ = "Asia/Seoul";
+      });
+
+      afterEach(() => {
+        if (originalTz === undefined) {
+          delete process.env.TZ;
+        } else {
+          process.env.TZ = originalTz;
+        }
+      });
+
+      it("places a KST 05:30 entry on its local day, not the previous UTC day", async () => {
+        await writeProjectsFile(homeDir, [project()]);
+        await writeSession([
+          ["2026-10-10T20:30:00.000Z", "kst dawn Claude work"],
+          ["2026-10-10T05:00:00.000Z", "kst afternoon of the tenth"]
+        ]);
+
+        const onEleventh = await collectClaudeForRegisteredProjects({
+          homeDir,
+          claudeHome,
+          now: () => "2026-10-11T14:30:00.000Z",
+          targetDate: "2026-10-11"
+        });
+        const eleventhRaw = await readFile(onEleventh.successes[0].rawArchiveFile, "utf8");
+        expect(eleventhRaw).toContain("kst dawn Claude work");
+        expect(eleventhRaw).not.toContain("kst afternoon of the tenth");
+
+        const onTenth = await collectClaudeForRegisteredProjects({
+          homeDir,
+          claudeHome,
+          now: () => "2026-10-11T14:30:00.000Z",
+          targetDate: "2026-10-10"
+        });
+        const tenthRaw = await readFile(onTenth.successes[0].rawArchiveFile, "utf8");
+        expect(tenthRaw).toContain("kst afternoon of the tenth");
+        expect(tenthRaw).not.toContain("kst dawn Claude work");
+      });
+
+      it("defaults to the local date at the 23:30 KST run and keeps 00:30 KST work", async () => {
+        await writeProjectsFile(homeDir, [project()]);
+        await writeSession([["2026-10-10T15:30:00.000Z", "kst half past midnight work"]]);
+
+        const result = await collectClaudeForRegisteredProjects({
+          homeDir,
+          claudeHome,
+          now: () => "2026-10-11T14:30:00.000Z"
+        });
+
+        expect(result.targetDate).toBe("2026-10-11");
+        const rawText = await readFile(result.successes[0].rawArchiveFile, "utf8");
+        expect(rawText).toContain("kst half past midnight work");
+      });
+    });
+
     it("rejects a malformed targetDate with invalid-date", async () => {
       await writeProjectsFile(homeDir, [project()]);
       const promise = collectClaudeForRegisteredProjects({

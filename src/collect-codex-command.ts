@@ -20,6 +20,7 @@ import {
   pruneRawArchives,
   readRawRetentionDays
 } from "./raw-archive-prune.js";
+import { localDateOf, todayLocal } from "./local-date.js";
 
 export type CollectCodexCommandOptions = {
   homeDir?: string;
@@ -92,10 +93,7 @@ export async function collectCodexForRegisteredProjects(
   // Retention is anchored on the real current date, never on --date: a
   // future or mistyped target date would otherwise move the cutoff forward
   // and delete every raw archive.
-  const today = (options.now ? options.now() : new Date().toISOString()).slice(
-    0,
-    10
-  );
+  const today = todayLocal(options.now ? options.now() : new Date());
   let targetDate: string;
   if (options.targetDate) {
     if (!DATE_RE.test(options.targetDate)) {
@@ -247,5 +245,5 @@ function previousDate(targetDate: string): string {
 function isOnTargetDate(timestamp: string, targetDate: string): boolean {
   // Undated entries can't be proven to belong to another day, so keep them
   // with the current collection; dated entries must match the target date.
-  return timestamp === "" || timestamp.slice(0, 10) === targetDate;
+  return timestamp === "" || localDateOf(timestamp) === targetDate;
 }

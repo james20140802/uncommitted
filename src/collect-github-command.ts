@@ -19,6 +19,7 @@ import {
   pruneRawArchives,
   readRawRetentionDays
 } from "./raw-archive-prune.js";
+import { todayLocal } from "./local-date.js";
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const execFileP = promisify(execFile);
@@ -123,10 +124,7 @@ export async function collectGitHubForRegisteredProjects(
   // Retention is anchored on the real current date, never on --date: a
   // future or mistyped target date would otherwise move the cutoff forward
   // and delete every raw archive.
-  const today = (input.now ? input.now() : new Date().toISOString()).slice(
-    0,
-    10
-  );
+  const today = todayLocal(input.now ? input.now() : new Date());
   let targetDate: string;
   if (input.targetDate) {
     if (!DATE_RE.test(input.targetDate)) {

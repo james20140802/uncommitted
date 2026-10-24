@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, beforeEach, describe, it, expect } from "vitest";
 import { mkdtemp, mkdir, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -313,6 +313,91 @@ describe("collectCodexForRegisteredProjects", () => {
 
     expect(result.successes).toHaveLength(1);
     await expect(readFile(recent, "utf8")).resolves.toBe("{}\n");
+  });
+
+  describe("in a KST (Asia/Seoul) time zone", () => {
+    const originalTz = process.env.TZ;
+
+    beforeEach(() => {
+      process.env.TZ = "Asia/Seoul";
+    });
+
+    afterEach(() => {
+      if (originalTz === undefined) {
+        delete process.env.TZ;
+      } else {
+        process.env.TZ = originalTz;
+      }
+    });
+
+    it("places a KST 05:30 entry on its local day, not the previous UTC day", async () => {
+      const homeDir = await mkdtemp(join(tmpdir(), "codex-cmd-"));
+      const codexHome = join(homeDir, ".codex");
+      const projectRoot = await mkdtemp(join(tmpdir(), "codex-proj-"));
+      await mkdir(join(homeDir, ".uncommitted"), { recursive: true });
+      await writeFile(
+        join(homeDir, ".uncommitted", "projects.json"),
+        JSON.stringify({
+          schemaVersion: 1,
+          projects: [
+            {
+              schemaVersion: 1,
+              id: "p1",
+              name: "demo",
+              root: projectRoot,
+              gitRoot: projectRoot,
+              enabled: true,
+              createdAt: "2026-10-01T00:00:00Z"
+            }
+          ]
+        })
+      );
+      // Session started KST 10-10 14:00 and continued to KST 10-11 05:30.
+      const dayDir = join(codexHome, "sessions", "2026", "10", "10");
+      await mkdir(dayDir, { recursive: true });
+      const message = (timestamp: string, text: string) =>
+        JSON.stringify({
+          timestamp,
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text }]
+          }
+        });
+      await writeFile(
+        join(dayDir, "rollout-kst.jsonl"),
+        [
+          JSON.stringify({
+            timestamp: "2026-10-10T05:00:00.000Z",
+            type: "session_meta",
+            payload: { id: "s1", cwd: projectRoot }
+          }),
+          message("2026-10-10T05:00:01.000Z", "kst afternoon of the tenth"),
+          message("2026-10-10T20:30:00.000Z", "kst dawn Codex work")
+        ].join("\n")
+      );
+
+      const onEleventh = await collectCodexForRegisteredProjects({
+        homeDir,
+        codexHome,
+        now: () => "2026-10-11T14:30:00Z"
+      });
+      expect(onEleventh.targetDate).toBe("2026-10-11");
+      const eleventhRaw = await readFile(onEleventh.successes[0].rawArchiveFile, "utf8");
+      expect(eleventhRaw).toContain("kst dawn Codex work");
+      expect(eleventhRaw).not.toContain("kst afternoon of the tenth");
+
+      const onTenth = await collectCodexForRegisteredProjects({
+        homeDir,
+        codexHome,
+        now: () => "2026-10-11T14:30:00Z",
+        targetDate: "2026-10-10"
+      });
+      const tenthRaw = await readFile(onTenth.successes[0].rawArchiveFile, "utf8");
+      expect(tenthRaw).toContain("kst afternoon of the tenth");
+      expect(tenthRaw).not.toContain("kst dawn Codex work");
+    });
   });
 
   it("throws no-projects error when registry is empty", async () => {

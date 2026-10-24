@@ -101,6 +101,7 @@ import {
 import type { CarouselHtmlToPngRenderer } from "./carousel-renderer.js";
 import type { ImageAssetProvider } from "./visual-assets.js";
 import { isRecord } from "./type-guards.js";
+import { todayLocal } from "./local-date.js";
 
 /**
  * Thrown by readPreviewDraftRoot when config.json is unreadable, malformed,
@@ -512,7 +513,7 @@ async function runSchedule(
     }
 
     const scheduledAt = options.now ? options.now() : new Date().toISOString();
-    const targetDate = scheduledAt.slice(0, 10);
+    const targetDate = todayLocal(scheduledAt);
     const workflowOptions = {
       ...options,
       now: () => scheduledAt

@@ -4,6 +4,7 @@ import {
   sortThemes,
   type ActivitySynthesis
 } from "./activity-synthesis.js";
+import { localDateOf } from "./local-date.js";
 
 export type { ActivitySynthesis };
 // Preserve the pre-refactor deep-import path: `deriveSynthesisFromSignals` was a
@@ -253,7 +254,7 @@ export function buildActivitySummary(
   ].filter(
     (signal) =>
       signal.timestamp === "" ||
-      signal.timestamp.slice(0, 10) === input.targetDate
+      localDateOf(signal.timestamp) === input.targetDate
   );
 
   // GitHub signals carry a registered projectId but never create a git event or
@@ -262,7 +263,7 @@ export function buildActivitySummary(
   // accumulator per GitHub signal so PR-only days keep their project
   // attribution (name falls back to the id, as manual-note-only projects do).
   for (const signal of input.githubSignals ?? []) {
-    if (signal.timestamp !== "" && signal.timestamp.slice(0, 10) !== input.targetDate) {
+    if (signal.timestamp !== "" && localDateOf(signal.timestamp) !== input.targetDate) {
       continue;
     }
     getProject(projects, signal.projectId, signal.projectId).githubSignalCount += 1;

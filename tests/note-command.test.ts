@@ -4,7 +4,7 @@ import { mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { addProject } from "../src/project-add.js";
 import {
   listManualNotes,
@@ -48,6 +48,35 @@ describe("note command", () => {
     expect(JSON.parse(lines[0]) as unknown).toEqual(result.event);
     expect(lines[0]).not.toContain(repoDir);
     expect(lines[0]).not.toContain(homeDir);
+  });
+
+  describe("in a KST (Asia/Seoul) time zone", () => {
+    const originalTz = process.env.TZ;
+
+    afterEach(() => {
+      if (originalTz === undefined) {
+        delete process.env.TZ;
+      } else {
+        process.env.TZ = originalTz;
+      }
+    });
+
+    it("files a KST-dawn note under its local date", async () => {
+      process.env.TZ = "Asia/Seoul";
+      const { homeDir, repoDir } = await createRegisteredProject("note-kst");
+
+      const result = await recordManualNote(["dawn note"], {
+        cwd: repoDir,
+        homeDir,
+        now: () => "2026-10-10T20:30:00.000Z",
+        createId: () => "note-kst"
+      });
+
+      expect(result.event.date).toBe("2026-10-11");
+      expect(result.eventFile).toBe(
+        join(repoDir, ".uncommitted", "events", "manual", "2026-10-11.jsonl")
+      );
+    });
   });
 
   it("rejects empty or whitespace-only notes", async () => {

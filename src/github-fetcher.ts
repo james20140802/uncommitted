@@ -1,3 +1,5 @@
+import { localDateOf, localDayWindow } from "./local-date.js";
+
 export type HttpClient = (url: string, init?: RequestInit) => Promise<Response>;
 export type Sleep = (ms: number) => Promise<void>;
 
@@ -121,7 +123,10 @@ export async function fetchGitHubActivity(
   const visibility: RepoVisibility = repoInfo.private ? "private" : "public";
   const repoQ = `repo:${input.owner}/${input.repo}`;
 
-  const prItems = await searchAll(`${repoQ} is:pr is:merged merged:${input.targetDate}`);
+  // "The day" is the user's local calendar day, so search its UTC range
+  // instead of GitHub's UTC-calendar `merged:YYYY-MM-DD` form.
+  const dayRange = githubSearchRange(input.targetDate);
+  const prItems = await searchAll(`${repoQ} is:pr is:merged merged:${dayRange}`);
   const mergedPRs: FetchedPR[] = prItems
     .filter((it) => it.pull_request)
     .map((it) => ({
@@ -136,7 +141,7 @@ export async function fetchGitHubActivity(
   // issue so the closer (`closed_by`) drives signal attribution; otherwise an
   // issue the user opened but a teammate closed (or vice versa) would invent or
   // omit a "closed" diary signal. An unknown closer stays empty and is dropped.
-  const issueItems = (await searchAll(`${repoQ} is:issue is:closed closed:${input.targetDate}`))
+  const issueItems = (await searchAll(`${repoQ} is:issue is:closed closed:${dayRange}`))
     .filter((it) => !it.pull_request);
   const closedIssues: FetchedIssue[] = [];
   for (const it of issueItems) {
@@ -158,7 +163,7 @@ export async function fetchGitHubActivity(
   // were touched on the date, then union with merged PRs before fetching reviews.
   const reviewCandidatePRs = new Set<number>(mergedPRs.map((pr) => pr.number));
   const reviewedItems = await searchAll(
-    `${repoQ} is:pr reviewed-by:${me.login} updated:${input.targetDate}`
+    `${repoQ} is:pr reviewed-by:${me.login} updated:${dayRange}`
   );
   for (const it of reviewedItems) {
     if (it.pull_request) reviewCandidatePRs.add(it.number);
@@ -183,7 +188,7 @@ export async function fetchGitHubActivity(
   for (const prNumber of reviewCandidatePRs) {
     const list = await listReviews(prNumber);
     for (const r of list) {
-      if (!r.submitted_at || !r.submitted_at.startsWith(input.targetDate)) continue;
+      if (!r.submitted_at || localDateOf(r.submitted_at) !== input.targetDate) continue;
       reviews.push({
         id: r.id,
         prNumber,
@@ -196,6 +201,14 @@ export async function fetchGitHubActivity(
   }
 
   return { visibility, authenticatedLogin: me.login, mergedPRs, closedIssues, reviews };
+}
+
+// Inclusive `start..end` search range for the local day, as UTC ISO without
+// milliseconds (e.g. `2026-10-10T15:00:00Z..2026-10-11T14:59:59Z`).
+function githubSearchRange(targetDate: string): string {
+  const { start, end } = localDayWindow(targetDate);
+  const lastSecond = new Date(Date.parse(end) - 1000).toISOString();
+  return `${start.replace(".000Z", "Z")}..${lastSecond.replace(".000Z", "Z")}`;
 }
 
 type GHIssueLike = {

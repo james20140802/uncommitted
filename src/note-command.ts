@@ -6,6 +6,7 @@ import process from "node:process";
 import { promisify } from "node:util";
 import { resolveConfigPaths } from "./config-paths.js";
 import type { ProjectRecord, ProjectsFile } from "./project-add.js";
+import { todayLocal } from "./local-date.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -75,7 +76,7 @@ export async function recordManualNote(
 
   const project = await resolveCurrentProject(options);
   const timestamp = options.now ? options.now() : new Date().toISOString();
-  const date = timestamp.slice(0, 10);
+  const date = todayLocal(timestamp);
   const event: ManualNoteEvent = {
     schemaVersion: 1,
     id: options.createId ? options.createId() : randomUUID(),

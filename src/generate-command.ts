@@ -94,6 +94,7 @@ import {
   type VisualAssetGenerationResult,
   type VisualAssetMetadata
 } from "./visual-assets.js";
+import { todayLocal } from "./local-date.js";
 
 export type GenerateCommandErrorCode =
   | "invalid-arguments"
@@ -955,7 +956,7 @@ function parseGenerateDate(
   now: (() => string) | undefined
 ): string {
   if (args.length === 1 && args[0] === "today") {
-    return (now ? now() : new Date().toISOString()).slice(0, 10);
+    return todayLocal(now ? now() : new Date());
   }
 
   if (args.length === 2 && args[0] === "--date") {
