@@ -130,7 +130,7 @@ function resolveInvokerMap(options: CollectAllOptions): CollectInvokerMap {
 /**
  * Wrap a clock so the first reading is captured and reused for the rest of the
  * run. Without this, each per-source collector would call `now()` as it starts,
- * and a `collect all` run that straddles UTC midnight could write events under
+ * and a `collect all` run that straddles local midnight could write events under
  * two different dates — splitting one run so `generate today` sees only part.
  */
 export function createStableNow(now?: () => string): () => string {

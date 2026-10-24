@@ -3,17 +3,31 @@
 
 type DateParts = { year: number; month: number; day: number; hour: number; minute: number; second: number };
 
+// One formatter per zone. The default zone is keyed by process.env.TZ so a
+// runtime TZ change (as tests do) still picks up the new system zone.
+const formatters = new Map<string, Intl.DateTimeFormat>();
+
+function formatterFor(timeZone: string | undefined): Intl.DateTimeFormat {
+  const key = timeZone ?? `system:${process.env.TZ ?? ""}`;
+  let formatter = formatters.get(key);
+  if (formatter === undefined) {
+    formatter = new Intl.DateTimeFormat("en-CA", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hourCycle: "h23"
+    });
+    formatters.set(key, formatter);
+  }
+  return formatter;
+}
+
 function partsOf(instant: Date, timeZone: string | undefined): DateParts {
-  const formatter = new Intl.DateTimeFormat("en-CA", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hourCycle: "h23"
-  });
+  const formatter = formatterFor(timeZone);
   const values: Record<string, number> = {};
   for (const part of formatter.formatToParts(instant)) {
     if (part.type !== "literal") {
@@ -44,12 +58,10 @@ function offsetMs(instant: Date, timeZone: string | undefined): number {
 
 function localMidnight(year: number, month: number, day: number, timeZone: string | undefined): Date {
   const guess = Date.UTC(year, month - 1, day);
-  let result = guess - offsetMs(new Date(guess), timeZone);
-  const recheck = guess - offsetMs(new Date(result), timeZone);
-  if (recheck !== result) {
-    result = recheck;
-  }
-  return new Date(result);
+  // Re-read the offset at the first estimate so a DST change between UTC
+  // midnight and local midnight is accounted for.
+  const estimate = guess - offsetMs(new Date(guess), timeZone);
+  return new Date(guess - offsetMs(new Date(estimate), timeZone));
 }
 
 export function localDateOf(isoTimestamp: string, timeZone?: string): string {

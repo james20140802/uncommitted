@@ -52,6 +52,12 @@ describe("localDayWindow", () => {
 
   it("handles a DST transition day", () => {
     const { start, end } = localDayWindow("2026-03-08", "America/New_York");
+    expect(start).toBe("2026-03-08T05:00:00.000Z");
+    expect(end).toBe("2026-03-09T04:00:00.000Z");
     expect(Date.parse(end) - Date.parse(start)).toBe(23 * 60 * 60 * 1000);
+    expect(localDayWindow("2026-11-01", "America/New_York")).toEqual({
+      start: "2026-11-01T04:00:00.000Z",
+      end: "2026-11-02T05:00:00.000Z"
+    });
   });
 });
