@@ -60,4 +60,13 @@ describe("localDayWindow", () => {
       end: "2026-11-02T05:00:00.000Z"
     });
   });
+
+  it("starts the day at the first valid instant when local midnight is skipped", () => {
+    // Chile springs forward at 00:00 → 01:00 on 2026-09-06, so that day starts at 01:00 -03.
+    expect(localDayWindow("2026-09-06", "America/Santiago").start).toBe("2026-09-06T04:00:00.000Z");
+    expect(localDayWindow("2026-09-05", "America/Santiago")).toEqual({
+      start: "2026-09-05T04:00:00.000Z",
+      end: "2026-09-06T04:00:00.000Z"
+    });
+  });
 });

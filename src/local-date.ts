@@ -61,7 +61,26 @@ function localMidnight(year: number, month: number, day: number, timeZone: strin
   // Re-read the offset at the first estimate so a DST change between UTC
   // midnight and local midnight is accounted for.
   const estimate = guess - offsetMs(new Date(guess), timeZone);
-  return new Date(guess - offsetMs(new Date(estimate), timeZone));
+  const candidate = guess - offsetMs(new Date(estimate), timeZone);
+  const target = formatDate({ year, month, day, hour: 0, minute: 0, second: 0 });
+  const dateAt = (ms: number) => formatDate(partsOf(new Date(ms), timeZone));
+  if (dateAt(candidate) === target) {
+    return new Date(candidate);
+  }
+  // Local midnight was skipped by a DST jump, so the candidate landed in the
+  // previous day. The day starts at the first instant after the jump, which
+  // lies between the candidate and the pre-jump estimate.
+  let before = candidate;
+  let after = estimate;
+  while (after - before > 1000) {
+    const mid = before + Math.floor((after - before) / 2000) * 1000;
+    if (dateAt(mid) >= target) {
+      after = mid;
+    } else {
+      before = mid;
+    }
+  }
+  return new Date(after);
 }
 
 export function localDateOf(isoTimestamp: string, timeZone?: string): string {
