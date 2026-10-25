@@ -4,7 +4,7 @@ import { mkdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { promisify } from "node:util";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   collectGitActivity,
   collectGitActivitySignals,
@@ -13,7 +13,10 @@ import {
 } from "../src/git-activity-collector.js";
 import { isActivitySignal } from "../src/event-source.js";
 import { buildSignalsFromInput } from "../src/activity-summary.js";
-import type { GitActivityEvent } from "../src/collect-git-command.js";
+import {
+  collectGitForRegisteredProjects,
+  type GitActivityEvent
+} from "../src/collect-git-command.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -334,6 +337,73 @@ describe("collectGitActivitySignals", () => {
     expect(activity.schemaVersion).toBe(1);
     expect(activity.commits).toHaveLength(1);
     expect(activity.totals.commits).toBe(1);
+  });
+});
+
+describe("Git collection in a KST (Asia/Seoul) time zone", () => {
+  const originalTz = process.env.TZ;
+
+  beforeEach(() => {
+    process.env.TZ = "Asia/Seoul";
+  });
+
+  afterEach(() => {
+    if (originalTz === undefined) {
+      delete process.env.TZ;
+    } else {
+      process.env.TZ = originalTz;
+    }
+  });
+
+  async function createDawnCommitRepo(): Promise<string> {
+    const repoDir = await initGitRepo("kst-dawn-repo");
+    await writeFile(join(repoDir, "dawn.txt"), "dawn\n", "utf8");
+    await git(repoDir, ["add", "dawn.txt"]);
+    await commit(repoDir, "dawn commit", "2026-10-11T05:30:00+09:00");
+    return repoDir;
+  }
+
+  it("windows a target date by the local day", async () => {
+    const repoDir = await createDawnCommitRepo();
+
+    const eleventh = await collectGitActivity({ projectRoot: repoDir, targetDate: "2026-10-11" });
+    expect(eleventh.commits.map((c) => c.subject)).toEqual(["dawn commit"]);
+
+    const tenth = await collectGitActivity({ projectRoot: repoDir, targetDate: "2026-10-10" });
+    expect(tenth.commits).toEqual([]);
+  });
+
+  it("defaults the target date to the local date at the 23:30 KST run", async () => {
+    const repoDir = await createDawnCommitRepo();
+    const homeDir = await createTempRoot("kst-home");
+    await mkdir(join(homeDir, ".uncommitted"), { recursive: true });
+    await writeFile(
+      join(homeDir, ".uncommitted", "projects.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        projects: [
+          {
+            schemaVersion: 1,
+            id: "p1",
+            name: "demo",
+            root: repoDir,
+            gitRoot: repoDir,
+            enabled: true,
+            createdAt: "2026-10-01T00:00:00.000Z"
+          }
+        ]
+      })
+    );
+
+    const result = await collectGitForRegisteredProjects({
+      homeDir,
+      now: () => "2026-10-11T14:30:00Z"
+    });
+
+    expect(result.targetDate).toBe("2026-10-11");
+    expect(result.successes[0]?.activity.commits.map((c) => c.subject)).toEqual([
+      "dawn commit"
+    ]);
   });
 });
 

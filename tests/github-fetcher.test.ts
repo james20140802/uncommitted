@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import {
   fetchGitHubActivity,
   RateLimitedError,
@@ -282,5 +282,57 @@ describe("fetchGitHubActivity", () => {
     expect(result.reviews.map((r) => r.prNumber)).toContain(7);
     expect(result.reviews.map((r) => r.id)).toContain(500);
     expect(calls.some((u) => u.includes("/pulls/7/reviews"))).toBe(true);
+  });
+});
+
+describe("fetchGitHubActivity in a KST (Asia/Seoul) time zone", () => {
+  const originalTz = process.env.TZ;
+
+  beforeEach(() => {
+    process.env.TZ = "Asia/Seoul";
+  });
+
+  afterEach(() => {
+    if (originalTz === undefined) {
+      delete process.env.TZ;
+    } else {
+      process.env.TZ = originalTz;
+    }
+  });
+
+  it("searches the local day as a UTC range and keeps reviews by local date", async () => {
+    const queries: string[] = [];
+    const client: HttpClient = async (url) => {
+      if (url.includes("/pulls/7/reviews")) {
+        return jsonResponse([
+          { id: 600, state: "APPROVED", submitted_at: "2026-10-10T20:30:00Z",
+            user: { login: "alice" }, body: "dawn review" },
+          { id: 601, state: "COMMENTED", submitted_at: "2026-10-11T20:30:00Z",
+            user: { login: "alice" }, body: "next local day" }
+        ]);
+      }
+      if (url.includes("/user")) return jsonResponse({ login: "alice" });
+      if (url.endsWith("/repos/foo/bar")) return jsonResponse({ private: false });
+      if (url.includes("/search/issues")) {
+        const q = new URL(url, "https://api.github.com").searchParams.get("q") ?? "";
+        queries.push(q);
+        if (q.includes("reviewed-by")) {
+          return jsonResponse({ items: [{ number: 7, title: "PR", pull_request: {}, user: { login: "carol" } }] });
+        }
+        return jsonResponse({ items: [] });
+      }
+      return jsonResponse({}, 404);
+    };
+
+    const result = await fetchGitHubActivity({
+      token: "t", owner: "foo", repo: "bar",
+      targetDate: "2026-10-11", httpClient: client
+    });
+
+    const range = "2026-10-10T15:00:00Z..2026-10-11T14:59:59Z";
+    expect(queries).toContain(`repo:foo/bar is:pr is:merged merged:${range}`);
+    expect(queries).toContain(`repo:foo/bar is:issue is:closed closed:${range}`);
+    expect(queries).toContain(`repo:foo/bar is:pr reviewed-by:alice updated:${range}`);
+    expect(result.reviews.map((r) => r.id)).toEqual([600]);
   });
 });

@@ -7,6 +7,7 @@ import {
 } from "./git-activity-collector.js";
 import { resolveConfigPaths } from "./config-paths.js";
 import type { ProjectRecord, ProjectsFile } from "./project-registry.js";
+import { todayLocal } from "./local-date.js";
 
 export type CollectGitCommandErrorCode =
   | "invalid-projects-file"
@@ -63,7 +64,7 @@ export async function collectGitForRegisteredProjects(
   const projectsFile = await readProjectsFile(paths.projectsFile);
   const projects = projectsFile.projects.filter((project) => project.enabled);
   const now = options.now ? options.now() : new Date().toISOString();
-  const targetDate = now.slice(0, 10);
+  const targetDate = todayLocal(now);
 
   if (projects.length === 0) {
     throw new CollectGitCommandError(

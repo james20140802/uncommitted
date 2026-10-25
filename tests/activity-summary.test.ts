@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   buildActivitySummary,
   isActivitySummary,
@@ -541,5 +541,51 @@ describe("activity summary — Claude signal wiring (UNC-117)", () => {
 
     expect(summary.activityLevel).toBe("none");
     expect(summary.smallWins).not.toContain("implement yesterday's feature");
+  });
+});
+
+describe("activity summary — local-day signal filter in KST (UNC-299)", () => {
+  const originalTz = process.env.TZ;
+
+  beforeEach(() => {
+    process.env.TZ = "Asia/Seoul";
+  });
+
+  afterEach(() => {
+    if (originalTz === undefined) {
+      delete process.env.TZ;
+    } else {
+      process.env.TZ = originalTz;
+    }
+  });
+
+  it("keeps a KST-dawn session signal and GitHub signal on their local date", () => {
+    const summary = buildActivitySummary(
+      createInput({
+        targetDate: "2026-10-11",
+        claudeSignals: [
+          {
+            projectId: "cli",
+            timestamp: "2026-10-10T20:30:00.000Z",
+            kind: "claude-assistant-text",
+            summary: "implement the dawn feature",
+            safetyNotes: []
+          }
+        ],
+        githubSignals: [
+          {
+            projectId: "gh-only",
+            timestamp: "2026-10-10T20:30:00.000Z",
+            kind: "pr",
+            summary: "PR #3 merged: dawn fix",
+            safetyNotes: []
+          }
+        ]
+      })
+    );
+
+    expect(summary.activityLevel).not.toBe("none");
+    expect(summary.smallWins).toContain("implement the dawn feature");
+    expect(summary.projects.find((p) => p.projectId === "gh-only")).toBeDefined();
   });
 });

@@ -12,6 +12,7 @@ import {
   type RedactionCategory,
   type RedactionResult
 } from "./redaction.js";
+import { localDayWindow } from "./local-date.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -143,7 +144,7 @@ async function collectCommits(
   gitRoot: string,
   targetDate: string
 ): Promise<ParsedCommit[]> {
-  const { start, end } = getDateWindow(targetDate);
+  const { start, end } = localDayWindow(targetDate);
   const { stdout } = await execFileAsync("git", [
     "-C",
     gitRoot,
@@ -335,17 +336,6 @@ function parseNumstatValue(value: string | undefined): number {
   }
 
   return Number.parseInt(value, 10);
-}
-
-function getDateWindow(targetDate: string): { start: string; end: string } {
-  const startDate = new Date(`${targetDate}T00:00:00.000Z`);
-  const endDate = new Date(startDate);
-  endDate.setUTCDate(startDate.getUTCDate() + 1);
-
-  return {
-    start: startDate.toISOString(),
-    end: endDate.toISOString()
-  };
 }
 
 /**
