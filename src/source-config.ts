@@ -75,6 +75,49 @@ export async function loadSourceConfig(
   }
 }
 
+export async function loadGitDirtyExcludes(
+  configFilePath: string
+): Promise<string[]> {
+  const outcome = await loadGlobalConfig(configFilePath);
+
+  switch (outcome.status) {
+    case "missing":
+      return [];
+    case "read-error":
+    case "parse-error":
+      throw new SourceConfigError(
+        `Config error: ${configFilePath} is unreadable or malformed. Fix or remove the file.`
+      );
+    case "ok": {
+      const config = outcome.value;
+
+      if (isRecord(config) && config.schemaVersion !== 1) {
+        throw new SourceConfigError(
+          `Config error: ${configFilePath} is unreadable or malformed. Fix or remove the file.`
+        );
+      }
+
+      const git = isRecord(config) && isRecord(config.sources) ? config.sources.git : undefined;
+      const value = isRecord(git) ? git.dirtyExcludes : undefined;
+
+      if (value === undefined) {
+        return [];
+      }
+
+      if (
+        !Array.isArray(value) ||
+        value.some((entry) => typeof entry !== "string" || entry.trim() === "")
+      ) {
+        throw new SourceConfigError(
+          "Config error: sources.git.dirtyExcludes must be an array of non-empty path strings."
+        );
+      }
+
+      return value as string[];
+    }
+  }
+}
+
 export function buildSourceConfigMap(config: unknown): SourceConfigMap {
   const map = {} as SourceConfigMap;
 

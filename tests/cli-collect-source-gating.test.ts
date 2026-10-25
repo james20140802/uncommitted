@@ -162,6 +162,32 @@ describe("cli collect <source> per-source gating", () => {
     expect(stderr.join("\n")).toContain("Config error:");
   });
 
+  it("exits 2 when sources.git.dirtyExcludes is not an array of strings", async () => {
+    const { io, stderr } = createIo();
+    const directory = await mkdtemp(
+      join(tmpdir(), "uncommitted-cli-collect-bad-excludes-")
+    );
+    const repoDir = join(directory, "repo");
+    const homeDir = join(directory, "home");
+    await mkdir(repoDir, { recursive: true });
+    await writeProjectsFile(homeDir, repoDir);
+    await writeFile(
+      join(homeDir, ".uncommitted", "config.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        sources: { git: { enabled: true, dirtyExcludes: ".idea/" } }
+      }),
+      "utf8"
+    );
+
+    const exitCode = await runCli(["collect", "git"], io, { homeDir });
+
+    expect(exitCode).toBe(2);
+    const message = stderr.join("\n").trim();
+    expect(message).not.toBe("");
+    expect(message.split("\n")).toHaveLength(1);
+  });
+
   it("invokes the claude collector when sources.claude.enabled is true (sanity)", async () => {
     const { io, stdout, stderr } = createIo();
     const directory = await mkdtemp(

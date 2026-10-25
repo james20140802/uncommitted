@@ -2,14 +2,16 @@ import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   collectGitActivity,
   collectGitActivitySignals,
   GitActivityCollectionError,
-  GitActivityEventSource
+  GitActivityEventSource,
+  DEFAULT_DIRTY_EXCLUDES,
+  isDirtyPathExcluded
 } from "../src/git-activity-collector.js";
 import { isActivitySignal } from "../src/event-source.js";
 import { buildSignalsFromInput } from "../src/activity-summary.js";
@@ -406,6 +408,152 @@ describe("Git collection in a KST (Asia/Seoul) time zone", () => {
     ]);
   });
 });
+
+describe("dirty path excludes", () => {
+  it("excludes agent tool config paths from dirty status by default", async () => {
+    const repoDir = await initRepoWithBaseCommit("exclude-default-repo");
+    await writeRepoFile(repoDir, ".claude/skills/x/SKILL.md", "skill\n");
+    await writeRepoFile(repoDir, ".codex/config.toml", "x = 1\n");
+    await writeRepoFile(repoDir, "skills-lock.json", "{}\n");
+
+    const activity = await collectGitActivity({ projectRoot: repoDir, targetDate: "2026-05-05" });
+
+    expect(activity.dirty.files).toEqual([]);
+    expect(activity.dirty.totals.untracked).toBe(0);
+  });
+
+  it("counts only regular files when mixed with excluded paths", async () => {
+    const repoDir = await initRepoWithBaseCommit("exclude-mixed-repo");
+    await writeRepoFile(repoDir, ".claude/skills/x/SKILL.md", "skill\n");
+    await writeRepoFile(repoDir, ".codex/config.toml", "x = 1\n");
+    await writeRepoFile(repoDir, "skills-lock.json", "{}\n");
+    await writeRepoFile(repoDir, "auto-release.txt", "release\n");
+
+    const activity = await collectGitActivity({ projectRoot: repoDir, targetDate: "2026-05-05" });
+
+    expect(activity.dirty.files).toEqual([{ path: "auto-release.txt", status: "untracked" }]);
+    expect(activity.dirty.totals.untracked).toBe(1);
+  });
+
+  it("excludes tracked agent config files that are modified", async () => {
+    const repoDir = await initRepoWithBaseCommit("exclude-tracked-repo");
+    await writeRepoFile(repoDir, ".claude/settings.json", "{}\n");
+    await git(repoDir, ["add", ".claude/settings.json"]);
+    await commit(repoDir, "add settings", "2026-05-04T12:00:00Z");
+    await writeRepoFile(repoDir, ".claude/settings.json", '{"a":1}\n');
+
+    const activity = await collectGitActivity({ projectRoot: repoDir, targetDate: "2026-05-05" });
+
+    expect(activity.dirty.files).toEqual([]);
+  });
+
+  it("adds dirtyExcludes on top of the defaults", async () => {
+    const repoDir = await initRepoWithBaseCommit("exclude-custom-repo");
+    await writeRepoFile(repoDir, ".idea/workspace.xml", "<x/>\n");
+    await writeRepoFile(repoDir, "notes.tmp", "tmp\n");
+    await writeRepoFile(repoDir, "keep.txt", "keep\n");
+    await writeRepoFile(repoDir, ".agents/a.md", "a\n");
+
+    const activity = await collectGitActivity({
+      projectRoot: repoDir,
+      targetDate: "2026-05-05",
+      dirtyExcludes: [".idea", "notes.tmp"]
+    });
+
+    expect(activity.dirty.files).toEqual([{ path: "keep.txt", status: "untracked" }]);
+  });
+
+  it("does not exclude look-alike paths", async () => {
+    const repoDir = await initRepoWithBaseCommit("exclude-lookalike-repo");
+    await writeRepoFile(repoDir, "skills-lock.json.bak", "x\n");
+    await writeRepoFile(repoDir, "my.claude/x.txt", "x\n");
+
+    const activity = await collectGitActivity({ projectRoot: repoDir, targetDate: "2026-05-05" });
+
+    expect(activity.dirty.files.map((file) => file.path).sort()).toEqual([
+      "my.claude/",
+      "skills-lock.json.bak"
+    ]);
+  });
+
+  it("emits no dirty-file signals for excluded paths", async () => {
+    const repoDir = await initRepoWithBaseCommit("exclude-signals-repo");
+    await writeRepoFile(repoDir, ".codex/x", "x\n");
+    await writeRepoFile(repoDir, "keep.txt", "keep\n");
+
+    const signals = await collectGitActivitySignals({
+      projectId: "cli",
+      projectRoot: repoDir,
+      targetDate: "2026-05-05"
+    });
+
+    const dirtySignals = signals.filter((signal) => signal.kind === "dirty-file");
+    expect(dirtySignals).toHaveLength(1);
+    expect(dirtySignals[0].summary).toBe("untracked: keep.txt");
+  });
+
+  it("applies sources.git.dirtyExcludes from config in collectGitForRegisteredProjects", async () => {
+    const repoDir = await initRepoWithBaseCommit("exclude-registered-repo");
+    await writeRepoFile(repoDir, "notes.tmp", "tmp\n");
+    await writeRepoFile(repoDir, ".claude/x.md", "x\n");
+    await writeRepoFile(repoDir, "keep.txt", "keep\n");
+    const homeDir = await createTempRoot("exclude-home");
+    await mkdir(join(homeDir, ".uncommitted"), { recursive: true });
+    await writeFile(
+      join(homeDir, ".uncommitted", "config.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        sources: { git: { enabled: true, dirtyExcludes: ["notes.tmp"] } }
+      })
+    );
+    await writeFile(
+      join(homeDir, ".uncommitted", "projects.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        projects: [
+          {
+            schemaVersion: 1,
+            id: "p1",
+            name: "demo",
+            root: repoDir,
+            gitRoot: repoDir,
+            enabled: true,
+            createdAt: "2026-10-01T00:00:00.000Z"
+          }
+        ]
+      })
+    );
+
+    const result = await collectGitForRegisteredProjects({
+      homeDir,
+      now: () => "2026-10-11T14:30:00Z"
+    });
+
+    expect(result.successes[0]?.activity.dirty.files).toEqual([
+      { path: "keep.txt", status: "untracked" }
+    ]);
+  });
+
+  it("isDirtyPathExcluded matches by prefix and exact name", () => {
+    expect(isDirtyPathExcluded(".codex/", DEFAULT_DIRTY_EXCLUDES)).toBe(true);
+    expect(isDirtyPathExcluded(".claude/skills/x", DEFAULT_DIRTY_EXCLUDES)).toBe(true);
+    expect(isDirtyPathExcluded("skills-lock.json.bak", DEFAULT_DIRTY_EXCLUDES)).toBe(false);
+    expect(isDirtyPathExcluded(".idea/a", [".idea"])).toBe(true);
+  });
+});
+
+async function initRepoWithBaseCommit(name: string): Promise<string> {
+  const repoDir = await initGitRepo(name);
+  await writeRepoFile(repoDir, "base.txt", "base\n");
+  await git(repoDir, ["add", "base.txt"]);
+  await commit(repoDir, "base commit", "2026-05-04T12:00:00Z");
+  return repoDir;
+}
+
+async function writeRepoFile(repoDir: string, path: string, content: string): Promise<void> {
+  await mkdir(dirname(join(repoDir, path)), { recursive: true });
+  await writeFile(join(repoDir, path), content, "utf8");
+}
 
 type CommitFixture = {
   subject: string;

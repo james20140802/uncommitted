@@ -8,6 +8,7 @@ import {
 import { resolveConfigPaths } from "./config-paths.js";
 import type { ProjectRecord, ProjectsFile } from "./project-registry.js";
 import { todayLocal } from "./local-date.js";
+import { loadGitDirtyExcludes } from "./source-config.js";
 
 export type CollectGitCommandErrorCode =
   | "invalid-projects-file"
@@ -62,6 +63,7 @@ export async function collectGitForRegisteredProjects(
 ): Promise<CollectGitCommandResult> {
   const paths = resolveConfigPaths({ homeDir: options.homeDir });
   const projectsFile = await readProjectsFile(paths.projectsFile);
+  const dirtyExcludes = await loadGitDirtyExcludes(paths.configFile);
   const projects = projectsFile.projects.filter((project) => project.enabled);
   const now = options.now ? options.now() : new Date().toISOString();
   const targetDate = todayLocal(now);
@@ -80,7 +82,8 @@ export async function collectGitForRegisteredProjects(
     try {
       const activity = await collectGitActivity({
         projectRoot: project.gitRoot,
-        targetDate
+        targetDate,
+        dirtyExcludes
       });
       const event: GitActivityEvent = {
         schemaVersion: 1,

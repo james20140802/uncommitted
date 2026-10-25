@@ -78,9 +78,38 @@ export type GitActivity = {
   };
 };
 
+/**
+ * Agent tool config paths that are never "work" the user did; counting them as
+ * uncommitted files let them dominate stories. Matched against repo-root
+ * relative porcelain paths.
+ */
+export const DEFAULT_DIRTY_EXCLUDES: readonly string[] = [
+  ".claude/",
+  ".agents/",
+  ".codex/",
+  "skills-lock.json"
+];
+
+/**
+ * Entries ending in `/` match by prefix; other entries match the exact path or
+ * anything beneath `entry/`. No glob support.
+ */
+export function isDirtyPathExcluded(
+  path: string,
+  excludes: readonly string[]
+): boolean {
+  return excludes.some((entry) =>
+    entry.endsWith("/")
+      ? path === entry || path.startsWith(entry)
+      : path === entry || path.startsWith(`${entry}/`)
+  );
+}
+
 export type CollectGitActivityOptions = {
   projectRoot: string;
   targetDate: string;
+  /** Extra excluded paths, added on top of DEFAULT_DIRTY_EXCLUDES. */
+  dirtyExcludes?: readonly string[];
 };
 
 type ParsedCommit = GitActivityCommit;
@@ -90,7 +119,10 @@ export async function collectGitActivity(
 ): Promise<GitActivity> {
   const gitRoot = await findGitRoot(options.projectRoot);
   const commits = await collectCommits(gitRoot, options.targetDate);
-  const dirty = await collectDirtyStatus(gitRoot);
+  const dirty = await collectDirtyStatus(gitRoot, [
+    ...DEFAULT_DIRTY_EXCLUDES,
+    ...(options.dirtyExcludes ?? [])
+  ]);
   const totals = commits.reduce(
     (accumulator, commit) => ({
       commits: accumulator.commits + 1,
@@ -202,7 +234,8 @@ function parseGitLog(stdout: string): ParsedCommit[] {
 }
 
 async function collectDirtyStatus(
-  gitRoot: string
+  gitRoot: string,
+  excludes: readonly string[]
 ): Promise<GitActivity["dirty"]> {
   const { stdout } = await execFileAsync("git", [
     "-C",
@@ -213,7 +246,8 @@ async function collectDirtyStatus(
   const files = stdout
     .split("\n")
     .filter(Boolean)
-    .map(parseDirtyStatusLine);
+    .map(parseDirtyStatusLine)
+    .filter((file) => !isDirtyPathExcluded(file.path, excludes));
   const totals = createEmptyDirtyTotals();
 
   for (const file of files) {
@@ -385,6 +419,7 @@ export type CollectGitActivitySignalsOptions = {
   projectId: string;
   projectRoot: string;
   targetDate: string;
+  dirtyExcludes?: readonly string[];
 };
 
 export async function collectGitActivitySignals(
@@ -392,7 +427,8 @@ export async function collectGitActivitySignals(
 ): Promise<ActivitySignal[]> {
   const activity = await collectGitActivity({
     projectRoot: options.projectRoot,
-    targetDate: options.targetDate
+    targetDate: options.targetDate,
+    dirtyExcludes: options.dirtyExcludes
   });
 
   const signals: ActivitySignal[] = [];
