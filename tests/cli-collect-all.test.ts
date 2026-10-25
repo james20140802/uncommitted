@@ -110,6 +110,27 @@ describe("cli collect all orchestration", () => {
     expect(out).toContain("Source 'github': success");
   });
 
+  it("exits 2 before running any source when sources.git.dirtyExcludes is malformed", async () => {
+    const { io, stderr } = createIo();
+    const directory = await mkdtemp(
+      join(tmpdir(), "uncommitted-collect-all-bad-excludes-")
+    );
+    const homeDir = join(directory, "home");
+    const config = configWithSources();
+    (config.sources as Record<string, Record<string, unknown>>).git.dirtyExcludes = ".idea/";
+    await writeConfig(homeDir, config);
+
+    const calls: SourceName[] = [];
+    const exitCode = await runCli(["collect", "all"], io, {
+      homeDir,
+      collectInvokers: createStubInvokers({}, calls)
+    });
+
+    expect(exitCode).toBe(2);
+    expect(calls).toEqual([]);
+    expect(stderr.join("\n")).toContain("dirtyExcludes");
+  });
+
   it("isolates per-source failures: one throws, others succeed, exit 0", async () => {
     const { io, stdout } = createIo();
     const directory = await mkdtemp(

@@ -174,6 +174,26 @@ describe("loadGitDirtyExcludes", () => {
     await expect(loadGitDirtyExcludes(configFile)).rejects.toBeInstanceOf(SourceConfigError);
   });
 
+  it("normalizes whitespace and a leading ./ to the porcelain form", async () => {
+    const configFile = await writeConfig({
+      schemaVersion: 1,
+      sources: { git: { dirtyExcludes: [" .idea/ ", "./tmp/", "notes.tmp"] } }
+    });
+    await expect(loadGitDirtyExcludes(configFile)).resolves.toEqual([
+      ".idea/",
+      "tmp/",
+      "notes.tmp"
+    ]);
+  });
+
+  it("rejects absolute entries that could never match", async () => {
+    const configFile = await writeConfig({
+      schemaVersion: 1,
+      sources: { git: { dirtyExcludes: ["/notes.tmp"] } }
+    });
+    await expect(loadGitDirtyExcludes(configFile)).rejects.toBeInstanceOf(SourceConfigError);
+  });
+
   it("rejects empty-string entries", async () => {
     const configFile = await writeConfig({
       schemaVersion: 1,

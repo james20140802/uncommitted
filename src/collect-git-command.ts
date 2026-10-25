@@ -63,7 +63,6 @@ export async function collectGitForRegisteredProjects(
 ): Promise<CollectGitCommandResult> {
   const paths = resolveConfigPaths({ homeDir: options.homeDir });
   const projectsFile = await readProjectsFile(paths.projectsFile);
-  const dirtyExcludes = await loadGitDirtyExcludes(paths.configFile);
   const projects = projectsFile.projects.filter((project) => project.enabled);
   const now = options.now ? options.now() : new Date().toISOString();
   const targetDate = todayLocal(now);
@@ -75,6 +74,7 @@ export async function collectGitForRegisteredProjects(
     );
   }
 
+  const dirtyExcludes = await loadGitDirtyExcludes(paths.configFile);
   const successes: CollectGitSuccess[] = [];
   const failures: CollectGitFailure[] = [];
 

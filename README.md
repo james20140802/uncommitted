@@ -123,6 +123,10 @@ All commands are run as `uncommitted <command> [subcommand]`. Run `uncommitted -
 
 If you use GitHub-sourced collection, prefer setting the `GITHUB_TOKEN` environment variable over storing a token in `config.json`; `init` does not manage `githubToken`, and storing it as plaintext in config is discouraged. `uncommitted doctor` reports only a masked status (env / config-plaintext / not-set) and never prints the token value.
 
+### Uncommitted file excludes
+
+`collect git` does not count agent tool config as uncommitted work: `.claude/`, `.agents/`, `.codex/`, and `skills-lock.json` are always excluded. Add your own repo-relative paths with `sources.git.dirtyExcludes` in `~/.uncommitted/config.json` (for example `["notes.tmp", ".idea/"]`). An entry ending in `/` matches everything under that directory; any other entry matches that exact path or the directory of that name. Glob patterns are not supported. A malformed value is a config error (exit 2).
+
 ### Carousel modes
 
 `carouselVisualStyle` in `~/.uncommitted/config.json` picks how carousel slides are drawn.

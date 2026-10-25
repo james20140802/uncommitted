@@ -100,7 +100,7 @@ export function isDirtyPathExcluded(
 ): boolean {
   return excludes.some((entry) =>
     entry.endsWith("/")
-      ? path === entry || path.startsWith(entry)
+      ? path.startsWith(entry)
       : path === entry || path.startsWith(`${entry}/`)
   );
 }

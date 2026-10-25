@@ -4,6 +4,7 @@ import { collectGitForRegisteredProjects } from "./collect-git-command.js";
 import { collectGitHubForRegisteredProjects } from "./collect-github-command.js";
 import { resolveConfigPaths } from "./config-paths.js";
 import {
+  loadGitDirtyExcludes,
   loadSourceConfig,
   SOURCE_NAMES,
   type SourceName
@@ -63,6 +64,12 @@ export async function runCollectAll(
 ): Promise<CollectAllSummary> {
   const paths = resolveConfigPaths({ homeDir: options.homeDir });
   const sourceConfig = await loadSourceConfig(paths.configFile);
+  // Validate git's dirtyExcludes before any source runs: a malformed value is
+  // a config error (exit 2), not a per-source failure that a successful
+  // claude/codex collection could mask on a scheduled run.
+  if (sourceConfig.git.enabled) {
+    await loadGitDirtyExcludes(paths.configFile);
+  }
   const invokers = resolveInvokerMap(options);
 
   const entries: CollectAllEntry[] = [];
