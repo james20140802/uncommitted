@@ -250,4 +250,59 @@ describe("harness noise", () => {
     expect(result.signals).toEqual([]);
     expect(result.conversation).toHaveLength(1);
   });
+
+  const SLASH_BLOCK =
+    "<command-message>babysit is running…</command-message>\n<command-name>/babysit</command-name>\n<command-args>PR 145</command-args>";
+  const userLine = (content: unknown) =>
+    line({
+      type: "user",
+      timestamp: "2026-06-13T05:00:00.000Z",
+      message: { content }
+    });
+
+  it("keeps the request of a slash command as a user-turn signal", () => {
+    const result = parseClaudeSession({
+      projectId: "p1",
+      contents: userLine(SLASH_BLOCK)
+    });
+
+    expect(result.signals).toHaveLength(1);
+    expect(result.signals[0]?.kind).toBe("claude-user-turn");
+    expect(result.signals[0]?.summary).toBe("/babysit PR 145");
+    expect(result.conversation[0]?.text).toBe(SLASH_BLOCK);
+  });
+
+  it("extracts the slash command request without a command-message line", () => {
+    const result = parseClaudeSession({
+      projectId: "p1",
+      contents: userLine(
+        "<command-name>/babysit</command-name>\n<command-args>PR 145</command-args>"
+      )
+    });
+
+    expect(result.signals.map((s) => s.summary)).toEqual(["/babysit PR 145"]);
+  });
+
+  it("stays silent for slash commands without arguments", () => {
+    const contents = [
+      userLine("<command-name>/clear</command-name>"),
+      userLine("<command-name>/clear</command-name>\n<command-args></command-args>")
+    ].join("\n");
+
+    expect(parseClaudeSession({ projectId: "p1", contents }).signals).toEqual([]);
+  });
+
+  it("joins a slash command request with the next block of the same turn", () => {
+    const result = parseClaudeSession({
+      projectId: "p1",
+      contents: userLine([
+        { type: "text", text: SLASH_BLOCK },
+        { type: "text", text: "그리고 테스트도" }
+      ])
+    });
+
+    expect(result.signals.map((s) => s.summary)).toEqual([
+      "/babysit PR 145\n그리고 테스트도"
+    ]);
+  });
 });
