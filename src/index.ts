@@ -96,7 +96,8 @@ export {
   createAiProvider,
   generateStructured,
   loadAiProviderConfig,
-  MockAiProvider
+  MockAiProvider,
+  resolveAiModel
 } from "./ai-provider.js";
 export type {
   AiGenerationErrorCode,
@@ -116,6 +117,7 @@ export type {
   JsonValue,
   LoadAiProviderConfigOptions,
   MockAiProviderOptions,
+  ResolvedAiModel,
   SafeActivitySummary,
   SafeProjectSummary,
   SafeRecurringThread,

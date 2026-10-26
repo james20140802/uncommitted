@@ -121,6 +121,77 @@ describe("doctor command", () => {
     expect(getDoctorExitCode(report)).toBe(2);
   });
 
+  describe("AI model", () => {
+    const runDoctor = async (
+      config: Parameters<typeof createHomeWithConfig>[0]
+    ) =>
+      createDoctorReport({
+        homeDir: await createHomeWithConfig(config),
+        env: {},
+        nodeVersion: "v22.13.0",
+        checkCommand: async () => ({ ok: true, detail: "git version 2.49.0" })
+      });
+
+    it("shows the provider default model when aiModel is not set", async () => {
+      const report = await runDoctor({ aiProvider: "openai" });
+
+      expect(report.checks).toContainEqual(
+        expect.objectContaining({
+          id: "ai-model",
+          status: "pass",
+          message: "openai · gpt-6.1-sol (default)"
+        })
+      );
+      expect(formatDoctorReport(report)).toContain(
+        "[pass] AI model: openai · gpt-6.1-sol (default)"
+      );
+    });
+
+    it("shows the configured aiModel instead of the default", async () => {
+      const report = await runDoctor({
+        aiProvider: "anthropic",
+        aiModel: "claude-opus-5-5"
+      });
+
+      expect(report.checks).toContainEqual(
+        expect.objectContaining({
+          id: "ai-model",
+          status: "pass",
+          message: "anthropic · claude-opus-5-5 (config aiModel)"
+        })
+      );
+    });
+
+    it("says no model is used for providers that do not call a model", async () => {
+      const report = await runDoctor({ aiProvider: "mock" });
+
+      expect(report.checks).toContainEqual(
+        expect.objectContaining({
+          id: "ai-model",
+          status: "pass",
+          message: "mock · no model"
+        })
+      );
+    });
+
+    it.each([
+      ["a non-string", 42],
+      ["an empty string", ""]
+    ])("fails as a config error when aiModel is %s", async (_label, aiModel) => {
+      const report = await runDoctor({ aiProvider: "openai", aiModel });
+
+      expect(report.checks).toContainEqual(
+        expect.objectContaining({
+          id: "ai-model",
+          status: "fail",
+          message: "aiModel must be a non-empty string.",
+          exitCode: 2
+        })
+      );
+      expect(getDoctorExitCode(report)).toBe(2);
+    });
+  });
+
   it("fails when a required directory is not writable", async () => {
     const homeDir = await createHomeWithConfig();
     const blockedDirectory = join(homeDir, ".uncommitted", "logs");
@@ -377,6 +448,7 @@ describe("doctor command", () => {
 async function createHomeWithConfig(
   overrides: Partial<{
     aiProvider: string;
+    aiModel: unknown;
     draftRoot: string;
     githubToken: string;
   }> = {}
@@ -401,7 +473,8 @@ async function createHomeWithConfig(
       roastLevel: 2,
       ...(overrides.githubToken !== undefined
         ? { githubToken: overrides.githubToken }
-        : {})
+        : {}),
+      ...("aiModel" in overrides ? { aiModel: overrides.aiModel } : {})
     })}\n`,
     "utf8"
   );

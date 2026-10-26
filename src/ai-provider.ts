@@ -1,6 +1,11 @@
 import process from "node:process";
 import { resolveConfigPaths } from "./config-paths.js";
-import { isRoastLevel, loadGlobalConfig } from "./global-config.js";
+import {
+  INVALID_AI_MODEL_MESSAGE,
+  isRoastLevel,
+  loadGlobalConfig,
+  parseAiModel
+} from "./global-config.js";
 import { isPersona, selectPersona } from "./persona.js";
 import { emailPattern } from "./redaction.js";
 import { isRecord } from "./type-guards.js";
@@ -117,6 +122,8 @@ export interface AiProvider {
 
 export type AiProviderConfig = {
   provider: AiProviderName;
+  /** Config `aiModel` override; the provider default applies when absent. */
+  model?: string;
   persona: string;
   roastLevel: number;
 };
@@ -162,7 +169,6 @@ type OpenAiCompatibleProviderMetadata = {
   name: OpenAiCompatibleProviderName;
   endpoint: string;
   envKey: string;
-  model: string;
 };
 
 export type AiGenerationErrorCode =
@@ -207,6 +213,15 @@ const providerNames: readonly AiProviderName[] = [
   "mistral",
   "openrouter"
 ];
+/**
+ * UNC-310: provider default models, checked against each provider's model
+ * docs on 2026-10-25. Config `aiModel` overrides these without a release.
+ */
+const defaultAiModels = {
+  openai: "gpt-6.1-sol",
+  openrouter: "openai/gpt-6.1-sol",
+  anthropic: "claude-sonnet-5-5"
+} as const;
 const defaultProviderTimeoutMs = 300_000;
 const providerTimeoutEnvKey = "UNCOMMITTED_AI_TIMEOUT_MS";
 const openAiCompatibleProviders: Record<
@@ -216,14 +231,12 @@ const openAiCompatibleProviders: Record<
   openai: {
     name: "openai",
     endpoint: "https://api.openai.com/v1/chat/completions",
-    envKey: "OPENAI_API_KEY",
-    model: "gpt-5.5"
+    envKey: "OPENAI_API_KEY"
   },
   openrouter: {
     name: "openrouter",
     endpoint: "https://openrouter.ai/api/v1/chat/completions",
-    envKey: "OPENROUTER_API_KEY",
-    model: "openai/gpt-5.5"
+    envKey: "OPENROUTER_API_KEY"
   }
 };
 
@@ -286,14 +299,46 @@ export async function loadAiProviderConfig(
     throw new AiGenerationError("AI provider is not supported.", "invalid-config");
   }
 
+  const aiModel = parseAiModel(outcome.value);
+
+  if (!aiModel.ok) {
+    throw new AiGenerationError(INVALID_AI_MODEL_MESSAGE, "invalid-config");
+  }
+
   return {
     provider,
+    model: aiModel.model,
     // Config `persona` may be a structured `Persona` (written by `init` /
     // `persona set`) or a legacy free-text string. `selectPersona` normalizes
     // both to a structured persona; its backstory is the free-text voice this
     // legacy `AiProviderConfig.persona` string carries.
     persona: selectPersona(outcome.value).identity.backstory,
     roastLevel: outcome.value.roastLevel
+  };
+}
+
+export type ResolvedAiModel = {
+  model?: string;
+  /** `none` = the provider never calls a model (`none`, `mock`, unimplemented). */
+  source: "config" | "default" | "none";
+};
+
+/** The model `createAiProvider` would send for `provider`, and where it came from. */
+export function resolveAiModel(
+  provider: AiProviderName,
+  aiModel?: string
+): ResolvedAiModel {
+  if (!Object.prototype.hasOwnProperty.call(defaultAiModels, provider)) {
+    return { source: "none" };
+  }
+
+  if (aiModel !== undefined) {
+    return { model: aiModel, source: "config" };
+  }
+
+  return {
+    model: defaultAiModels[provider as keyof typeof defaultAiModels],
+    source: "default"
   };
 }
 
@@ -321,6 +366,7 @@ export function createAiProvider(
     return new OpenAiCompatibleProvider({
       apiKey,
       metadata,
+      model: config.model ?? defaultAiModels[config.provider],
       timeoutMs: resolveProviderTimeoutMs(options),
       transport: options.transport ?? defaultFetchTransport
     });
@@ -338,7 +384,7 @@ export function createAiProvider(
 
     return new AnthropicProvider({
       apiKey,
-      model: "claude-sonnet-4-6",
+      model: config.model ?? defaultAiModels.anthropic,
       timeoutMs: resolveProviderTimeoutMs(options),
       transport: options.transport ?? defaultFetchTransport
     });
@@ -538,12 +584,13 @@ class OpenAiCompatibleProvider implements AiProvider {
     private readonly options: {
       apiKey: string;
       metadata: OpenAiCompatibleProviderMetadata;
+      model: string;
       timeoutMs: number;
       transport: AiProviderHttpTransport;
     }
   ) {
     this.name = options.metadata.name;
-    this.model = options.metadata.model;
+    this.model = options.model;
   }
 
   async generateStructured(
@@ -559,7 +606,7 @@ class OpenAiCompatibleProvider implements AiProvider {
           Authorization: `Bearer ${this.options.apiKey}`,
           "Content-Type": "application/json"
         },
-        body: JSON.stringify(createChatCompletionBody(request, this.options.metadata)),
+        body: JSON.stringify(createChatCompletionBody(request, this.model)),
         signal: controller.signal
       });
 
@@ -628,7 +675,7 @@ class AnthropicProvider implements AiProvider {
       }
 
       return {
-        responseJson: extractAnthropicToolUseContent(await readResponseJson(response))
+        responseJson: extractAnthropicTextContent(await readResponseJson(response))
       };
     } catch (error) {
       if (error instanceof AiGenerationError) {
@@ -661,10 +708,10 @@ async function defaultFetchTransport(
 
 function createChatCompletionBody(
   request: AiStructuredGenerationRequest,
-  metadata: OpenAiCompatibleProviderMetadata
+  model: string
 ): JsonObject {
   return {
-    model: metadata.model,
+    model,
     messages: [
       {
         role: "system",
@@ -697,7 +744,7 @@ function createResponseFormat(task: AiGenerationTask): JsonObject {
 }
 
 // UNC-261 / T3: story-card task가 더해지며 네 갈래가 되어 중첩 삼항으로는
-// 더 읽히지 않는다. createResponseFormat과 createAnthropicToolDefinition이
+// 더 읽히지 않는다. createResponseFormat과 createAnthropicMessagesBody가
 // 같은 (name/schema) 매핑을 쓰므로 조회 함수 하나로 합쳐 중복을 없앤다.
 function createTaskSchemaDefinition(task: AiGenerationTask): {
   name: string;
@@ -726,7 +773,7 @@ function createTaskSchemaDefinition(task: AiGenerationTask): {
 
 /**
  * JSON schema for the mood/angle/pacing engine's MoodPlan output (UNC-212).
- * Wired into both createResponseFormat and createAnthropicToolDefinition for
+ * Wired into both createResponseFormat and createAnthropicMessagesBody for
  * the story-plan task (UNC-213). `formatName` is intentionally absent — it is
  * set internally (== mood), never requested from the AI provider.
  */
@@ -901,11 +948,15 @@ function createAnthropicMessagesBody(
   request: AiStructuredGenerationRequest,
   model: string
 ): JsonObject {
-  const { toolName, schema } = createAnthropicToolDefinition(request.task);
+  const { schema } = createTaskSchemaDefinition(request.task);
 
+  // UNC-310: Claude 5.5 models reject forced tool use (`tool_choice` "tool")
+  // with a 400, so the schema rides on structured outputs instead. Thinking
+  // can't be disabled there and shares `max_tokens` with the JSON body,
+  // hence the larger budget.
   return {
     model,
-    max_tokens: 4096,
+    max_tokens: 16_000,
     system: [
       request.instructions,
       "The response_format JSON schema is authoritative.",
@@ -918,42 +969,29 @@ function createAnthropicMessagesBody(
         content: JSON.stringify({ task: request.task, input: request.input })
       }
     ],
-    tools: [
-      {
-        name: toolName,
-        description: "Return the structured output for this task.",
-        strict: true,
-        input_schema: schema
-      }
-    ],
-    tool_choice: { type: "tool", name: toolName }
+    output_config: {
+      format: { type: "json_schema", schema }
+    }
   };
 }
 
-function createAnthropicToolDefinition(task: AiGenerationTask): {
-  toolName: string;
-  schema: JsonObject;
-} {
-  const { name, schema } = createTaskSchemaDefinition(task);
-
-  return { toolName: name, schema };
-}
-
-function extractAnthropicToolUseContent(value: unknown): string {
+// Structured outputs return the JSON in a `text` block; current Claude models
+// can put `thinking` blocks before it, so select by type, never by position.
+function extractAnthropicTextContent(value: unknown): string {
   if (!isRecord(value) || !Array.isArray(value.content) || value.content.length === 0) {
     throwInvalidProviderJson();
   }
 
-  const toolUseBlock = (value.content as unknown[]).find(
+  const textBlock = (value.content as unknown[]).find(
     (block): block is Record<string, unknown> =>
-      isRecord(block) && block.type === "tool_use"
+      isRecord(block) && block.type === "text"
   );
 
-  if (!toolUseBlock || !isRecord(toolUseBlock.input)) {
+  if (!textBlock || typeof textBlock.text !== "string") {
     throwInvalidProviderJson();
   }
 
-  return JSON.stringify(toolUseBlock.input);
+  return textBlock.text;
 }
 
 async function readResponseJson(
