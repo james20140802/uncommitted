@@ -447,6 +447,21 @@ describe("dirty path excludes", () => {
     expect(activity.dirty.files).toEqual([]);
   });
 
+  it("excludes and decodes Git-quoted non-ASCII paths", async () => {
+    const repoDir = await initRepoWithBaseCommit("exclude-quoted-repo");
+    // Pin Git's default so a developer's global quotepath=false cannot mask the bug.
+    await git(repoDir, ["config", "core.quotepath", "true"]);
+    await writeRepoFile(repoDir, ".claude/한글.md", "a\n");
+    await git(repoDir, ["add", ".claude/한글.md"]);
+    await commit(repoDir, "add korean note", "2026-05-04T12:00:00Z");
+    await writeRepoFile(repoDir, ".claude/한글.md", "b\n");
+    await writeRepoFile(repoDir, "노트.txt", "keep\n");
+
+    const activity = await collectGitActivity({ projectRoot: repoDir, targetDate: "2026-05-05" });
+
+    expect(activity.dirty.files).toEqual([{ path: "노트.txt", status: "untracked" }]);
+  });
+
   it("adds dirtyExcludes on top of the defaults", async () => {
     const repoDir = await initRepoWithBaseCommit("exclude-custom-repo");
     await writeRepoFile(repoDir, ".idea/workspace.xml", "<x/>\n");
