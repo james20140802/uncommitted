@@ -103,6 +103,10 @@ describe("extractSlashCommandRequest", () => {
     [
       "<command-name>babysit</command-name>\n<command-args>PR 145</command-args>",
       "/babysit PR 145"
+    ],
+    [
+      "\n  <command-name>/review</command-name>\n<command-args>\n  PR 145\n  CI도 봐줘\n</command-args>",
+      "/review PR 145\n  CI도 봐줘"
     ]
   ])("extracts %j", (block, expected) => {
     expect(extractSlashCommandRequest(block)).toBe(expected);
