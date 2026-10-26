@@ -45,18 +45,54 @@ export function listEnabledSources(config: unknown): SourceName[] {
 export async function loadSourceConfig(
   configFilePath: string
 ): Promise<SourceConfigMap> {
+  return buildSourceConfigMap(await readSourceConfigValue(configFilePath));
+}
+
+/**
+ * User-added dirty excludes from `sources.git.dirtyExcludes`. Entries are
+ * normalized to the repo-root-relative form porcelain reports (trimmed, no
+ * leading `./`); absolute or empty entries are a config error because they
+ * could never match and would fail silently.
+ */
+export async function loadGitDirtyExcludes(
+  configFilePath: string
+): Promise<string[]> {
+  const config = await readSourceConfigValue(configFilePath);
+  const git = isRecord(config) && isRecord(config.sources) ? config.sources.git : undefined;
+  const value = isRecord(git) ? git.dirtyExcludes : undefined;
+
+  if (value === undefined) {
+    return [];
+  }
+
+  const entries = Array.isArray(value)
+    ? value.map((entry) =>
+        typeof entry === "string" ? entry.trim().replace(/^(\.\/)+/, "") : ""
+      )
+    : [];
+
+  if (
+    !Array.isArray(value) ||
+    entries.some((entry) => entry === "" || entry.startsWith("/"))
+  ) {
+    throw new SourceConfigError(
+      "Config error: sources.git.dirtyExcludes must be an array of non-empty, repo-relative path strings."
+    );
+  }
+
+  return entries;
+}
+
+async function readSourceConfigValue(configFilePath: string): Promise<unknown> {
   const outcome = await loadGlobalConfig(configFilePath);
 
   switch (outcome.status) {
     // A missing config file is a valid first-run state: default everything on.
     case "missing":
-      return buildSourceConfigMap({});
+      return {};
     // Any other read error (permissions, I/O) must surface rather than
     // silently enabling all sources.
     case "read-error":
-      throw new SourceConfigError(
-        `Config error: ${configFilePath} is unreadable or malformed. Fix or remove the file.`
-      );
     case "parse-error":
       throw new SourceConfigError(
         `Config error: ${configFilePath} is unreadable or malformed. Fix or remove the file.`
@@ -71,7 +107,7 @@ export async function loadSourceConfig(
           `Config error: ${configFilePath} is unreadable or malformed. Fix or remove the file.`
         );
       }
-      return buildSourceConfigMap(outcome.value);
+      return outcome.value;
   }
 }
 

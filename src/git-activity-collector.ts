@@ -78,9 +78,38 @@ export type GitActivity = {
   };
 };
 
+/**
+ * Agent tool config paths that are never "work" the user did; counting them as
+ * uncommitted files let them dominate stories. Matched against repo-root
+ * relative porcelain paths.
+ */
+export const DEFAULT_DIRTY_EXCLUDES: readonly string[] = [
+  ".claude/",
+  ".agents/",
+  ".codex/",
+  "skills-lock.json"
+];
+
+/**
+ * Entries ending in `/` match by prefix; other entries match the exact path or
+ * anything beneath `entry/`. No glob support.
+ */
+export function isDirtyPathExcluded(
+  path: string,
+  excludes: readonly string[]
+): boolean {
+  return excludes.some((entry) =>
+    entry.endsWith("/")
+      ? path.startsWith(entry)
+      : path === entry || path.startsWith(`${entry}/`)
+  );
+}
+
 export type CollectGitActivityOptions = {
   projectRoot: string;
   targetDate: string;
+  /** Extra excluded paths, added on top of DEFAULT_DIRTY_EXCLUDES. */
+  dirtyExcludes?: readonly string[];
 };
 
 type ParsedCommit = GitActivityCommit;
@@ -90,7 +119,10 @@ export async function collectGitActivity(
 ): Promise<GitActivity> {
   const gitRoot = await findGitRoot(options.projectRoot);
   const commits = await collectCommits(gitRoot, options.targetDate);
-  const dirty = await collectDirtyStatus(gitRoot);
+  const dirty = await collectDirtyStatus(gitRoot, [
+    ...DEFAULT_DIRTY_EXCLUDES,
+    ...(options.dirtyExcludes ?? [])
+  ]);
   const totals = commits.reduce(
     (accumulator, commit) => ({
       commits: accumulator.commits + 1,
@@ -202,7 +234,8 @@ function parseGitLog(stdout: string): ParsedCommit[] {
 }
 
 async function collectDirtyStatus(
-  gitRoot: string
+  gitRoot: string,
+  excludes: readonly string[]
 ): Promise<GitActivity["dirty"]> {
   const { stdout } = await execFileAsync("git", [
     "-C",
@@ -213,7 +246,8 @@ async function collectDirtyStatus(
   const files = stdout
     .split("\n")
     .filter(Boolean)
-    .map(parseDirtyStatusLine);
+    .map(parseDirtyStatusLine)
+    .filter((file) => !isDirtyPathExcluded(file.path, excludes));
   const totals = createEmptyDirtyTotals();
 
   for (const file of files) {
@@ -283,12 +317,48 @@ function unquoteGitPath(path: string): string {
     return path;
   }
 
-  try {
-    return JSON.parse(path) as string;
-  } catch {
-    return path;
+  // Git C-quotes paths and, with the default core.quotepath, writes non-ASCII
+  // bytes as octal escapes, so decode to raw bytes before reading UTF-8.
+  const bytes: number[] = [];
+  const body = path.slice(1, -1);
+
+  for (let index = 0; index < body.length; index += 1) {
+    const char = body[index];
+
+    if (char !== "\\") {
+      bytes.push(...Buffer.from(char, "utf8"));
+      continue;
+    }
+
+    const next = body[index + 1];
+    const octal = /^[0-7]{3}/.exec(body.slice(index + 1));
+
+    if (octal) {
+      bytes.push(Number.parseInt(octal[0], 8));
+      index += 3;
+      continue;
+    }
+
+    if (next === undefined) {
+      return path;
+    }
+
+    bytes.push(GIT_QUOTE_ESCAPES[next] ?? next.charCodeAt(0));
+    index += 1;
   }
+
+  return Buffer.from(bytes).toString("utf8");
 }
+
+const GIT_QUOTE_ESCAPES: Record<string, number> = {
+  a: 0x07,
+  b: 0x08,
+  f: 0x0c,
+  n: 0x0a,
+  r: 0x0d,
+  t: 0x09,
+  v: 0x0b
+};
 
 function mapDirtyStatus(statusCode: string): DirtyFileStatus {
   if (statusCode === "??") {
@@ -385,6 +455,7 @@ export type CollectGitActivitySignalsOptions = {
   projectId: string;
   projectRoot: string;
   targetDate: string;
+  dirtyExcludes?: readonly string[];
 };
 
 export async function collectGitActivitySignals(
@@ -392,7 +463,8 @@ export async function collectGitActivitySignals(
 ): Promise<ActivitySignal[]> {
   const activity = await collectGitActivity({
     projectRoot: options.projectRoot,
-    targetDate: options.targetDate
+    targetDate: options.targetDate,
+    dirtyExcludes: options.dirtyExcludes
   });
 
   const signals: ActivitySignal[] = [];

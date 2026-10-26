@@ -7,6 +7,7 @@ import {
   SourceConfigError,
   isSourceEnabled,
   listEnabledSources,
+  loadGitDirtyExcludes,
   loadSourceConfig
 } from "../src/source-config.js";
 
@@ -123,5 +124,81 @@ describe("loadSourceConfig", () => {
     await expect(loadSourceConfig(configFile)).rejects.toBeInstanceOf(
       SourceConfigError
     );
+  });
+});
+
+describe("loadGitDirtyExcludes", () => {
+  async function writeConfig(content: unknown): Promise<string> {
+    const home = await mkdtemp(join(tmpdir(), "uncommitted-dirty-excludes-"));
+    await mkdir(join(home, ".uncommitted"), { recursive: true });
+    const configFile = join(home, ".uncommitted", "config.json");
+    await writeFile(configFile, JSON.stringify(content));
+    return configFile;
+  }
+
+  it("returns [] when the config file is missing", async () => {
+    const home = await mkdtemp(join(tmpdir(), "uncommitted-dirty-excludes-"));
+    await expect(
+      loadGitDirtyExcludes(join(home, ".uncommitted", "config.json"))
+    ).resolves.toEqual([]);
+  });
+
+  it("returns [] when sources.git is absent", async () => {
+    const configFile = await writeConfig({ schemaVersion: 1 });
+    await expect(loadGitDirtyExcludes(configFile)).resolves.toEqual([]);
+  });
+
+  it("returns the configured entries as-is", async () => {
+    const configFile = await writeConfig({
+      schemaVersion: 1,
+      sources: { git: { enabled: true, dirtyExcludes: ["a/", "b.txt"] } }
+    });
+    await expect(loadGitDirtyExcludes(configFile)).resolves.toEqual(["a/", "b.txt"]);
+  });
+
+  it("rejects a non-array value with a dirtyExcludes message", async () => {
+    const configFile = await writeConfig({
+      schemaVersion: 1,
+      sources: { git: { dirtyExcludes: ".idea/" } }
+    });
+    const promise = loadGitDirtyExcludes(configFile);
+    await expect(promise).rejects.toBeInstanceOf(SourceConfigError);
+    await expect(promise).rejects.toThrow(/dirtyExcludes/);
+  });
+
+  it("rejects non-string entries", async () => {
+    const configFile = await writeConfig({
+      schemaVersion: 1,
+      sources: { git: { dirtyExcludes: [1] } }
+    });
+    await expect(loadGitDirtyExcludes(configFile)).rejects.toBeInstanceOf(SourceConfigError);
+  });
+
+  it("normalizes whitespace and a leading ./ to the porcelain form", async () => {
+    const configFile = await writeConfig({
+      schemaVersion: 1,
+      sources: { git: { dirtyExcludes: [" .idea/ ", "./tmp/", "notes.tmp"] } }
+    });
+    await expect(loadGitDirtyExcludes(configFile)).resolves.toEqual([
+      ".idea/",
+      "tmp/",
+      "notes.tmp"
+    ]);
+  });
+
+  it("rejects absolute entries that could never match", async () => {
+    const configFile = await writeConfig({
+      schemaVersion: 1,
+      sources: { git: { dirtyExcludes: ["/notes.tmp"] } }
+    });
+    await expect(loadGitDirtyExcludes(configFile)).rejects.toBeInstanceOf(SourceConfigError);
+  });
+
+  it("rejects empty-string entries", async () => {
+    const configFile = await writeConfig({
+      schemaVersion: 1,
+      sources: { git: { dirtyExcludes: [""] } }
+    });
+    await expect(loadGitDirtyExcludes(configFile)).rejects.toBeInstanceOf(SourceConfigError);
   });
 });
