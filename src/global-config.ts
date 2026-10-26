@@ -21,6 +21,12 @@ export interface GlobalConfig {
   draftRoot: string;
   scheduleTime: string;
   aiProvider: string;
+  /**
+   * Optional model ID that replaces the provider's default model (UNC-310),
+   * so a newer model can be adopted without a release. Not managed by `init`
+   * — the user adds it by hand. Validated by {@link parseAiModel}.
+   */
+  aiModel?: string;
   carouselVisualStyle: CarouselVisualStyleMode;
   persona: Persona;
   roastLevel: number;
@@ -224,4 +230,29 @@ export function selectProviderKey(
     return value[field] as string;
   }
   return null;
+}
+
+/** Short, actionable message shared by every reader that rejects `aiModel`. */
+export const INVALID_AI_MODEL_MESSAGE = "aiModel must be a non-empty string.";
+
+/**
+ * Validate the optional `aiModel` field of a parsed config. Absent means "use
+ * the provider default"; anything other than a non-blank string is a config
+ * error rather than a silent fallback, so a typo never quietly runs the
+ * default model. The model ID is returned trimmed.
+ */
+export function parseAiModel(
+  value: unknown
+): { ok: true; model?: string } | { ok: false } {
+  const aiModel = isRecord(value) ? value.aiModel : undefined;
+
+  if (aiModel === undefined) {
+    return { ok: true };
+  }
+
+  if (typeof aiModel !== "string" || aiModel.trim() === "") {
+    return { ok: false };
+  }
+
+  return { ok: true, model: aiModel.trim() };
 }

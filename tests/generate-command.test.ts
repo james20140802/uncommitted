@@ -6,10 +6,12 @@ import { promisify } from "node:util";
 import { describe, expect, it, vi } from "vitest";
 import type {
   AiProvider,
+  AiProviderHttpTransport,
   AiProviderRawResponse,
   AiStructuredGenerationRequest
 } from "../src/ai-provider.js";
 import { runCli } from "../src/cli.js";
+import { runGenerateCommand } from "../src/generate-command.js";
 import type { GitActivityEvent } from "../src/collect-git-command.js";
 import { writeIncompleteDraftMarker } from "../src/draft-storage.js";
 import type { CaptionResult, DiaryDraft } from "../src/diary-generator.js";
@@ -59,6 +61,56 @@ function createIo() {
 }
 
 describe("generate command", () => {
+  describe("aiModel config (UNC-310)", () => {
+    it("sends the configured aiModel and records it in metadata.json", async () => {
+      const fixture = await createRegisteredProjectFixture();
+      await patchConfig(fixture.homeDir, {
+        aiProvider: "openai",
+        aiModel: "gpt-custom-x",
+        // story-card keeps the image provider (which would call the network
+        // with any OPENAI_API_KEY in the environment) out of this test.
+        carouselVisualStyle: "story-card"
+      });
+      await writeGitEvent(fixture.project, "2026-05-12");
+
+      const requestedModels: string[] = [];
+      const result = await runGenerateCommand(["today"], {
+        homeDir: fixture.homeDir,
+        now: () => "2026-05-12T23:30:00.000Z",
+        aiProviderOptions: {
+          env: { OPENAI_API_KEY: "test-key" },
+          transport: createChatCompletionTransport(requestedModels)
+        }
+      });
+      const metadata = (await readJson(join(result.outputDir, "metadata.json"))) as {
+        provider: string;
+        model?: string;
+      };
+
+      expect(requestedModels.length).toBeGreaterThan(0);
+      expect(new Set(requestedModels)).toEqual(new Set(["gpt-custom-x"]));
+      expect(metadata).toMatchObject({ provider: "openai", model: "gpt-custom-x" });
+    });
+
+    it.each([
+      ["a non-string", 42],
+      ["an empty string", "  "]
+    ])("exits with a config error when aiModel is %s", async (_label, aiModel) => {
+      const { io, stderr } = createIo();
+      const fixture = await createRegisteredProjectFixture();
+      await patchConfig(fixture.homeDir, { aiModel });
+
+      const exitCode = await runCli(["generate", "today"], io, {
+        homeDir: fixture.homeDir,
+        now: () => "2026-05-12T23:30:00.000Z",
+        aiProvider: new TaskAwareProvider()
+      });
+
+      expect(exitCode).toBe(2);
+      expect(stderr).toEqual(["aiModel must be a non-empty string."]);
+    });
+  });
+
   it("generates today's text draft from collected Git activity and manual notes", async () => {
     const { io, stdout, stderr } = createIo();
     const fixture = await createRegisteredProjectFixture();
@@ -1656,6 +1708,49 @@ async function writeConfig(homeDir: string, draftRoot: string): Promise<void> {
     `${JSON.stringify({ schemaVersion: 1, formats: [] })}\n`,
     "utf8"
   );
+}
+
+async function patchConfig(
+  homeDir: string,
+  patch: Record<string, unknown>
+): Promise<void> {
+  const configFile = join(homeDir, ".uncommitted", "config.json");
+  const config = JSON.parse(await readFile(configFile, "utf8")) as Record<string, unknown>;
+
+  await writeFile(configFile, `${JSON.stringify({ ...config, ...patch }, null, 2)}\n`, "utf8");
+}
+
+/**
+ * OpenAI chat-completions stand-in that answers every task with the same
+ * fixtures `TaskAwareProvider` uses, while recording the requested model.
+ */
+function createChatCompletionTransport(requestedModels: string[]): AiProviderHttpTransport {
+  const fixtures = new TaskAwareProvider();
+
+  return async (_url, request) => {
+    const body = JSON.parse(request.body) as {
+      model: string;
+      messages: Array<{ role: string; content: string }>;
+    };
+    const userMessage = JSON.parse(body.messages[1]?.content ?? "{}") as {
+      task: AiStructuredGenerationRequest["task"];
+      input: AiStructuredGenerationRequest["input"];
+    };
+    const { responseJson } = await fixtures.generateStructured({
+      schemaVersion: 1,
+      task: userMessage.task,
+      instructions: body.messages[0]?.content ?? "",
+      input: userMessage.input
+    });
+
+    requestedModels.push(body.model);
+
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ choices: [{ message: { content: responseJson } }] })
+    };
+  };
 }
 
 async function writeConfigWithPersona(

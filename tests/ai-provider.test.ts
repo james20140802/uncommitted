@@ -11,7 +11,8 @@ import {
   generateStructuredWithRetry,
   isSafeActivitySummary,
   loadAiProviderConfig,
-  MockAiProvider
+  MockAiProvider,
+  resolveAiModel
 } from "../src/ai-provider.js";
 import type {
   AiProvider,
@@ -36,6 +37,30 @@ describe("AI provider abstraction", () => {
       provider: "mock",
       persona: "dry reviewer",
       roastLevel: 4
+    });
+  });
+
+  it("carries a configured aiModel into the provider config", async () => {
+    const homeDir = await createHomeWithConfig({
+      aiProvider: "openai",
+      aiModel: "  gpt-custom-x  "
+    });
+
+    await expect(loadAiProviderConfig({ homeDir })).resolves.toMatchObject({
+      provider: "openai",
+      model: "gpt-custom-x"
+    });
+  });
+
+  it.each([
+    ["a non-string", 42],
+    ["an empty string", "   "]
+  ])("rejects %s aiModel as a config error", async (_label, aiModel) => {
+    const homeDir = await createHomeWithConfig({ aiProvider: "openai", aiModel });
+
+    await expect(loadAiProviderConfig({ homeDir })).rejects.toMatchObject({
+      code: "invalid-config",
+      message: "aiModel must be a non-empty string."
     });
   });
 
@@ -171,7 +196,7 @@ describe("AI provider abstraction", () => {
       };
     };
 
-    expect(body.model).toBe("gpt-5.5");
+    expect(body.model).toBe("gpt-6.1-sol");
     expect(body.response_format).toMatchObject({
       type: "json_schema",
       json_schema: {
@@ -326,7 +351,7 @@ describe("AI provider abstraction", () => {
       };
     };
 
-    expect(body.model).toBe("openai/gpt-5.5");
+    expect(body.model).toBe("openai/gpt-6.1-sol");
     expect(body.response_format).toMatchObject({
       type: "json_schema",
       json_schema: {
@@ -402,6 +427,60 @@ describe("AI provider abstraction", () => {
     );
   });
 
+  it.each([
+    ["openai", "OPENAI_API_KEY", { choices: [{ message: { content: "{}" } }] }],
+    ["openrouter", "OPENROUTER_API_KEY", { choices: [{ message: { content: "{}" } }] }],
+    ["anthropic", "ANTHROPIC_API_KEY", { content: [{ type: "text", text: "{}" }] }]
+  ] as const)(
+    "sends a configured model instead of the %s default",
+    async (providerName, envKey, responseBody) => {
+      const calls: Array<{ url: string; request: AiProviderHttpRequest }> = [];
+      const provider = createAiProvider(
+        {
+          provider: providerName,
+          model: "custom-model-x",
+          persona: "dry reviewer",
+          roastLevel: 3
+        },
+        {
+          env: { [envKey]: "test-secret" },
+          transport: createTransport(calls, responseBody)
+        }
+      );
+
+      await generateStructured(
+        provider,
+        createAiGenerationRequest({
+          task: "story-plan",
+          instructions: "Return JSON.",
+          summary: createQuietSummary()
+        })
+      );
+
+      expect(provider.model).toBe("custom-model-x");
+      expect(
+        (JSON.parse(calls[0]?.request.body ?? "{}") as { model?: string }).model
+      ).toBe("custom-model-x");
+    }
+  );
+
+  it("resolves the model doctor reports for each provider", () => {
+    expect(resolveAiModel("openai")).toEqual({ model: "gpt-6.1-sol", source: "default" });
+    expect(resolveAiModel("openrouter")).toEqual({
+      model: "openai/gpt-6.1-sol",
+      source: "default"
+    });
+    expect(resolveAiModel("anthropic")).toEqual({
+      model: "claude-sonnet-5-5",
+      source: "default"
+    });
+    expect(resolveAiModel("anthropic", "claude-opus-5-5")).toEqual({
+      model: "claude-opus-5-5",
+      source: "config"
+    });
+    expect(resolveAiModel("mock", "ignored")).toEqual({ source: "none" });
+  });
+
   it("creates an Anthropic provider with environment credentials and safe JSON requests", async () => {
     const calls: Array<{ url: string; request: AiProviderHttpRequest }> = [];
     const provider = createAiProvider(
@@ -414,13 +493,9 @@ describe("AI provider abstraction", () => {
         env: { ANTHROPIC_API_KEY: "sk-ant-test-secret" },
         transport: createTransport(calls, {
           content: [
-            {
-              type: "tool_use",
-              name: "uncommitted_story_format_plan",
-              input: { title: "Anthropic provider day", beats: ["Configured", "Generated"] }
-            }
+            { type: "text", text: JSON.stringify({ title: "Anthropic provider day", beats: ["Configured", "Generated"] }) }
           ],
-          stop_reason: "tool_use"
+          stop_reason: "end_turn"
         })
       }
     );
@@ -451,31 +526,30 @@ describe("AI provider abstraction", () => {
       max_tokens?: number;
       system?: string;
       messages?: Array<{ role: string; content: string }>;
-      tools?: Array<{
-        name: string;
-        description: string;
-        strict?: boolean;
-        input_schema: unknown;
-      }>;
-      tool_choice?: { type: string; name: string };
+      output_config?: { format?: { type?: string; schema?: unknown } };
+      tools?: unknown;
+      tool_choice?: unknown;
     };
 
-    expect(body.model).toBe("claude-sonnet-4-6");
+    expect(body.model).toBe("claude-sonnet-5-5");
     expect(typeof body.max_tokens).toBe("number");
-    expect(body.max_tokens).toBeGreaterThan(0);
+    // Thinking can't be turned off on current Claude models and shares this
+    // budget with the JSON body, so 4096 is no longer enough headroom.
+    expect(body.max_tokens).toBeGreaterThanOrEqual(16_000);
     expect(typeof body.system).toBe("string");
     expect(body.messages).toHaveLength(1);
     expect(body.messages?.[0]?.role).toBe("user");
     expect(typeof body.messages?.[0]?.content).toBe("string");
-    expect(body.tools).toHaveLength(1);
-    expect(body.tools?.[0]?.name).toBe("uncommitted_story_format_plan");
-    expect(body.tools?.[0]?.strict).toBe(true);
-    expect(typeof body.tools?.[0]?.input_schema).toBe("object");
-    expect(body.tool_choice).toEqual({ type: "tool", name: "uncommitted_story_format_plan" });
+    // Forced tool use returns 400 on Claude 5.5 models; structured outputs
+    // carry the schema instead.
+    expect(body.output_config?.format?.type).toBe("json_schema");
+    expect(typeof body.output_config?.format?.schema).toBe("object");
+    expect(body.tools).toBeUndefined();
+    expect(body.tool_choice).toBeUndefined();
     expect(JSON.stringify(body)).not.toContain("sk-ant-test-secret");
   });
 
-  it("uses the MoodPlan schema for the Anthropic story-plan tool, not the legacy formatName schema", async () => {
+  it("uses the MoodPlan schema for the Anthropic story-plan output, not the legacy formatName schema", async () => {
     const calls: Array<{ url: string; request: AiProviderHttpRequest }> = [];
     const provider = createAiProvider(
       {
@@ -487,13 +561,9 @@ describe("AI provider abstraction", () => {
         env: { ANTHROPIC_API_KEY: "sk-ant-test-secret" },
         transport: createTransport(calls, {
           content: [
-            {
-              type: "tool_use",
-              name: "uncommitted_story_format_plan",
-              input: { mood: "grind" }
-            }
+            { type: "text", text: JSON.stringify({ mood: "grind" }) }
           ],
-          stop_reason: "tool_use"
+          stop_reason: "end_turn"
         })
       }
     );
@@ -508,12 +578,14 @@ describe("AI provider abstraction", () => {
     );
 
     const body = JSON.parse(calls[0]?.request.body ?? "{}") as {
-      tools?: Array<{
-        input_schema?: { required?: string[]; properties?: Record<string, unknown> };
-      }>;
+      output_config?: {
+        format?: {
+          schema?: { required?: string[]; properties?: Record<string, unknown> };
+        };
+      };
     };
 
-    const schema = body.tools?.[0]?.input_schema;
+    const schema = body.output_config?.format?.schema;
     expect(schema?.required).toContain("mood");
     expect(schema?.required).not.toContain("formatName");
     expect(schema?.properties?.formatName).toBeUndefined();
@@ -531,13 +603,9 @@ describe("AI provider abstraction", () => {
         env: { ANTHROPIC_API_KEY: "sk-ant-test-secret" },
         transport: createTransport(calls, {
           content: [
-            {
-              type: "tool_use",
-              name: "uncommitted_diary_draft",
-              input: { title: "Draft day", slides: [], altText: "A quiet day." }
-            }
+            { type: "text", text: JSON.stringify({ title: "Draft day", slides: [], altText: "A quiet day." }) }
           ],
-          stop_reason: "tool_use"
+          stop_reason: "end_turn"
         })
       }
     );
@@ -552,12 +620,14 @@ describe("AI provider abstraction", () => {
     );
 
     const body = JSON.parse(calls[0]?.request.body ?? "{}") as {
-      tools?: Array<{ name: string }>;
-      tool_choice?: { type: string; name: string };
+      output_config?: {
+        format?: { schema?: { required?: string[] } };
+      };
     };
 
-    expect(body.tools?.[0]?.name).toBe("uncommitted_diary_draft");
-    expect(body.tool_choice?.name).toBe("uncommitted_diary_draft");
+    expect(body.output_config?.format?.schema?.required).toEqual(
+      expect.arrayContaining(["title", "slides", "altText"])
+    );
   });
 
   it("creates an Anthropic provider that uses the story card plan schema for the story-card task", async () => {
@@ -572,13 +642,9 @@ describe("AI provider abstraction", () => {
         env: { ANTHROPIC_API_KEY: "sk-ant-test-secret" },
         transport: createTransport(calls, {
           content: [
-            {
-              type: "tool_use",
-              name: "uncommitted_story_card_plan",
-              input: { cards: [] }
-            }
+            { type: "text", text: JSON.stringify({ cards: [] }) }
           ],
-          stop_reason: "tool_use"
+          stop_reason: "end_turn"
         })
       }
     );
@@ -593,22 +659,17 @@ describe("AI provider abstraction", () => {
     );
 
     const body = JSON.parse(calls[0]?.request.body ?? "{}") as {
-      tools?: Array<{
-        name: string;
-        strict?: boolean;
-        input_schema?: { required?: string[]; properties?: Record<string, unknown> };
-      }>;
-      tool_choice?: { type: string; name: string };
+      output_config?: {
+        format?: {
+          type?: string;
+          schema?: { required?: string[]; properties?: Record<string, unknown> };
+        };
+      };
     };
 
-    expect(body.tools?.[0]?.name).toBe("uncommitted_story_card_plan");
-    expect(body.tools?.[0]?.strict).toBe(true);
-    expect(body.tool_choice).toEqual({
-      type: "tool",
-      name: "uncommitted_story_card_plan"
-    });
+    expect(body.output_config?.format?.type).toBe("json_schema");
 
-    const schema = body.tools?.[0]?.input_schema;
+    const schema = body.output_config?.format?.schema;
     expect(schema?.required).toContain("cards");
     expect(schema?.required).not.toContain("title");
     expect(schema?.properties?.title).toBeUndefined();
@@ -871,7 +932,7 @@ describe("AI provider abstraction", () => {
     });
   });
 
-  it("fails before downstream generation when Anthropic response has no tool_use block", async () => {
+  it("reads the JSON text block when an Anthropic response starts with thinking blocks", async () => {
     const provider = createAiProvider(
       {
         provider: "anthropic",
@@ -881,7 +942,38 @@ describe("AI provider abstraction", () => {
       {
         env: { ANTHROPIC_API_KEY: "sk-ant-test-secret" },
         transport: createTransport([], {
-          content: [{ type: "text", text: "no tool used" }],
+          content: [
+            { type: "thinking", thinking: "", signature: "sig" },
+            { type: "text", text: JSON.stringify({ mood: "grind" }) }
+          ],
+          stop_reason: "end_turn"
+        })
+      }
+    );
+
+    await expect(
+      generateStructured(
+        provider,
+        createAiGenerationRequest({
+          task: "story-plan",
+          instructions: "Return JSON.",
+          summary: createQuietSummary()
+        })
+      )
+    ).resolves.toMatchObject({ data: { mood: "grind" } });
+  });
+
+  it("fails before downstream generation when Anthropic response has no text block", async () => {
+    const provider = createAiProvider(
+      {
+        provider: "anthropic",
+        persona: "dry reviewer",
+        roastLevel: 3
+      },
+      {
+        env: { ANTHROPIC_API_KEY: "sk-ant-test-secret" },
+        transport: createTransport([], {
+          content: [{ type: "thinking", thinking: "", signature: "sig" }],
           stop_reason: "end_turn"
         })
       }
@@ -903,7 +995,7 @@ describe("AI provider abstraction", () => {
     });
   });
 
-  it("fails when Anthropic tool_use input is not valid JSON-serializable structure", async () => {
+  it("fails when the Anthropic text block is not valid JSON", async () => {
     const provider = createAiProvider(
       {
         provider: "anthropic",
@@ -913,8 +1005,8 @@ describe("AI provider abstraction", () => {
       {
         env: { ANTHROPIC_API_KEY: "sk-ant-test-secret" },
         transport: createTransport([], {
-          content: [{ type: "tool_use", name: "x", input: "not an object" }],
-          stop_reason: "tool_use"
+          content: [{ type: "text", text: "not json" }],
+          stop_reason: "end_turn"
         })
       }
     );
@@ -1406,7 +1498,12 @@ describe("SafeActivitySummary.recurringThreads (UNC-276 / T4)", () => {
 });
 
 async function createHomeWithConfig(
-  overrides: Partial<{ aiProvider: string; persona: string; roastLevel: number }> = {}
+  overrides: Partial<{
+    aiProvider: string;
+    aiModel: unknown;
+    persona: string;
+    roastLevel: number;
+  }> = {}
 ): Promise<string> {
   const homeDir = await mkdtemp(join(tmpdir(), "uncommitted-ai-provider-"));
   const configDir = join(homeDir, ".uncommitted");
@@ -1420,7 +1517,8 @@ async function createHomeWithConfig(
       scheduleTime: "23:30",
       aiProvider: overrides.aiProvider ?? "none",
       persona: overrides.persona ?? "wry coworker",
-      roastLevel: overrides.roastLevel ?? 2
+      roastLevel: overrides.roastLevel ?? 2,
+      ...("aiModel" in overrides ? { aiModel: overrides.aiModel } : {})
     })}\n`,
     "utf8"
   );

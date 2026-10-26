@@ -10,7 +10,8 @@ import {
   createAiProvider,
   type AiProvider,
   type AiProviderConfig,
-  type AiProviderName
+  type AiProviderName,
+  type CreateAiProviderOptions
 } from "./ai-provider.js";
 import {
   createCarouselHtmlCards,
@@ -26,8 +27,10 @@ import { gateMemoryForInjection } from "./memory-safety-gate.js";
 import { readCoreFacts } from "./persona-core-facts.js";
 import { reflectProjectThreads } from "./reflection.js";
 import {
+  INVALID_AI_MODEL_MESSAGE,
   isRoastLevel,
   loadGlobalConfig,
+  parseAiModel,
   type GlobalConfig
 } from "./global-config.js";
 import { isPersona, selectPersona, type Persona } from "./persona.js";
@@ -119,6 +122,8 @@ export type GenerateCommandOptions = {
   homeDir?: string;
   now?: () => string;
   aiProvider?: AiProvider;
+  /** Env/transport overrides for the config-built provider (tests). */
+  aiProviderOptions?: CreateAiProviderOptions;
   imageAssetProvider?: ImageAssetProvider;
 };
 
@@ -386,7 +391,8 @@ export async function runGenerateCommand(
   );
 
   const provider =
-    options.aiProvider ?? createAiProvider(toAiProviderConfig(config));
+    options.aiProvider ??
+    createAiProvider(toAiProviderConfig(config), options.aiProviderOptions);
   const recentFormats = await loadRecentStoryFormatHistory({
     homeDir: options.homeDir
   });
@@ -1013,6 +1019,11 @@ async function readGenerateConfig(
   }
 
   const parsed = outcome.value;
+  const aiModel = parseAiModel(parsed);
+
+  if (!aiModel.ok) {
+    throw new GenerateCommandError(INVALID_AI_MODEL_MESSAGE, "invalid-config");
+  }
 
   return {
     draftRoot: resolveConfigPaths({
@@ -1020,6 +1031,7 @@ async function readGenerateConfig(
       draftRoot: parsed.draftRoot
     }).defaultDraftRoot,
     provider: parsed.aiProvider,
+    model: aiModel.model,
     carouselVisualStyle: resolveCarouselVisualStyle(parsed.carouselVisualStyle),
     persona: selectPersona(parsed),
     roastLevel: parsed.roastLevel
@@ -1038,6 +1050,7 @@ async function readGenerateConfig(
 function toAiProviderConfig(config: GenerateConfig): AiProviderConfig {
   return {
     provider: config.provider,
+    model: config.model,
     persona: config.persona.identity.backstory,
     roastLevel: config.roastLevel
   };

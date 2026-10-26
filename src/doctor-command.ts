@@ -4,8 +4,15 @@ import { access } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import process from "node:process";
 import { promisify } from "node:util";
+import { resolveAiModel, type AiProviderName } from "./ai-provider.js";
 import { resolveConfigPaths } from "./config-paths.js";
-import { loadGlobalConfig, selectGitHubToken, type GlobalConfig } from "./global-config.js";
+import {
+  INVALID_AI_MODEL_MESSAGE,
+  loadGlobalConfig,
+  parseAiModel,
+  selectGitHubToken,
+  type GlobalConfig
+} from "./global-config.js";
 import { describeGitHubTokenStatus } from "./github-token-safety.js";
 import { isRecord } from "./type-guards.js";
 
@@ -120,6 +127,10 @@ export async function createDoctorReport(
 
   if (config) {
     checks.push(createAiApiKeyCheck(config.aiProvider, env));
+    const aiModelCheck = createAiModelCheck(config);
+    if (aiModelCheck) {
+      checks.push(aiModelCheck);
+    }
     checks.push(createGitHubTokenCheck(config, env));
   }
 
@@ -391,6 +402,42 @@ function createAiApiKeyCheck(
     status: "pass",
     message: `${envKey} is set.`
   };
+}
+
+/**
+ * UNC-310: shows which model `generate` will send, so a config `aiModel`
+ * override (or the provider default) is visible before a run. An unsupported
+ * provider is already reported by the AI API key check, so it is skipped here.
+ */
+function createAiModelCheck(config: DoctorConfig): DoctorCheck | undefined {
+  const provider = config.aiProvider.trim().toLowerCase();
+
+  if (!Object.prototype.hasOwnProperty.call(aiProviderEnvKeys, provider)) {
+    return undefined;
+  }
+
+  // Read from the raw config: `aiModel` may hold a non-string a user typed.
+  const aiModel = parseAiModel(config);
+
+  if (!aiModel.ok) {
+    return {
+      id: "ai-model",
+      label: "AI model",
+      status: "fail",
+      message: INVALID_AI_MODEL_MESSAGE,
+      exitCode: 2
+    };
+  }
+
+  const resolved = resolveAiModel(provider as AiProviderName, aiModel.model);
+  const message =
+    resolved.model === undefined
+      ? `${provider} · no model`
+      : `${provider} · ${resolved.model} (${
+          resolved.source === "config" ? "config aiModel" : "default"
+        })`;
+
+  return { id: "ai-model", label: "AI model", status: "pass", message };
 }
 
 function createGitHubTokenCheck(
