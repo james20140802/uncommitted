@@ -40,6 +40,24 @@ function isApprovalJson(text: string): boolean {
   }
 }
 
+const SLASH_COMMAND_START = /^<command-(?:message|name)>/;
+const SLASH_COMMAND_NAME = /<command-name>([\s\S]*?)<\/command-name>/;
+const SLASH_COMMAND_ARGS = /<command-args>([\s\S]*?)<\/command-args>/;
+
+/**
+ * A slash-command block (`<command-name>/babysit</command-name>` +
+ * `<command-args>PR 145</command-args>`) is noise as raw markup, but its
+ * args are what the user actually asked for. Returns `/name args`, or null
+ * when the block is not a slash command or carries no args.
+ */
+export function extractSlashCommandRequest(block: string): string | null {
+  if (!SLASH_COMMAND_START.test(block.trimStart())) return null;
+  const name = SLASH_COMMAND_NAME.exec(block)?.[1]?.trim().replace(/^\/+/, "");
+  const args = SLASH_COMMAND_ARGS.exec(block)?.[1]?.trim();
+  if (!name || !args) return null;
+  return `/${name} ${args}`;
+}
+
 /** Tool-call signal kinds (`claude-tool`, `codex-tool`, …): harness noise, not story material. */
 export function isToolSignalKind(kind: string): boolean {
   return kind.endsWith("-tool");

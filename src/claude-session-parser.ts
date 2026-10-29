@@ -1,5 +1,5 @@
 import type { ActivitySignal } from "./event-source.js";
-import { isHarnessNoise } from "./harness-noise.js";
+import { extractSlashCommandRequest, isHarnessNoise } from "./harness-noise.js";
 
 export type ConversationTurn = {
   role: "user" | "assistant";
@@ -52,7 +52,12 @@ export function parseClaudeSession(
       conversation.push({ role: "user", text: blocks.join("\n"), timestamp });
       // Judge noise per block: harness blocks (e.g. an injected
       // <system-reminder>) often sit next to the real prompt in one message.
-      const signalText = blocks.filter((block) => !isHarnessNoise(block)).join("\n");
+      // A slash command's <command-args> is the user's real request: swap the
+      // markup for `/name args` before the noise check.
+      const signalText = blocks
+        .map((block) => extractSlashCommandRequest(block) ?? block)
+        .filter((block) => !isHarnessNoise(block))
+        .join("\n");
       if (signalText.trim() !== "") {
         signals.push(
           makeSignal(input.projectId, timestamp, "claude-user-turn", signalText)

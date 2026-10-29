@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { isHarnessNoise, isMemoryNoiseNote, isToolNameOnlyNote } from "../src/harness-noise.js";
+import {
+  extractSlashCommandRequest,
+  isHarnessNoise,
+  isMemoryNoiseNote,
+  isToolNameOnlyNote
+} from "../src/harness-noise.js";
 
 describe("isHarnessNoise", () => {
   it.each([
@@ -82,5 +87,39 @@ describe("isToolNameOnlyNote regex safety", () => {
 
   it("still matches multi-segment mcp names", () => {
     expect(isToolNameOnlyNote("mcp__linear-sangchu__get_issue")).toBe(true);
+  });
+});
+
+describe("extractSlashCommandRequest", () => {
+  it.each([
+    [
+      "<command-message>babysit is running…</command-message>\n<command-name>/babysit</command-name>\n<command-args>PR 145</command-args>",
+      "/babysit PR 145"
+    ],
+    [
+      "<command-name>/babysit</command-name>\n<command-args>PR 145</command-args>",
+      "/babysit PR 145"
+    ],
+    [
+      "<command-name>babysit</command-name>\n<command-args>PR 145</command-args>",
+      "/babysit PR 145"
+    ],
+    [
+      "\n  <command-name>/review</command-name>\n<command-args>\n  PR 145\n  CI도 봐줘\n</command-args>",
+      "/review PR 145\n  CI도 봐줘"
+    ]
+  ])("extracts %j", (block, expected) => {
+    expect(extractSlashCommandRequest(block)).toBe(expected);
+  });
+
+  it.each([
+    "<command-name>/clear</command-name>",
+    "<command-name>/clear</command-name>\n<command-args></command-args>",
+    "<command-name>/x</command-name>\n<command-args>   </command-args>",
+    "<command-message>review</command-message>",
+    "<command-args>PR 145</command-args>",
+    "PR 128 끝까지 봐줘"
+  ])("returns null for %j", (block) => {
+    expect(extractSlashCommandRequest(block)).toBeNull();
   });
 });
