@@ -773,13 +773,28 @@ describe("story manuscript feeds card slots (UNC-307)", () => {
     expect(buildSafeStoryManuscript(raw)).toEqual(sent);
   });
 
-  it("drops slides that are blank after masking, and treats an all-blank manuscript as absent", async () => {
+  it("keeps blank-after-masking slides in position, and treats an all-blank manuscript as absent", async () => {
+    // "Card N compresses slide N" — dropping a middle slide would shift alignment.
     expect(
       buildSafeStoryManuscript([
         { title: "  ", body: "\n" },
-        { title: "정상", body: "본문" }
+        { title: "정상", body: "본문" },
+        { title: "", body: "" },
+        { title: "마지막", body: "끝" }
       ])
-    ).toEqual([{ title: "정상", body: "본문" }]);
+    ).toEqual([
+      { title: "", body: "" },
+      { title: "정상", body: "본문" },
+      { title: "", body: "" },
+      { title: "마지막", body: "끝" }
+    ]);
+
+    expect(
+      buildSafeStoryManuscript([
+        { title: " ", body: " " },
+        { title: "", body: "\n" }
+      ])
+    ).toEqual([]);
 
     const { provider, requests } = createCapturingProvider([validResponse]);
 
@@ -794,6 +809,25 @@ describe("story manuscript feeds card slots (UNC-307)", () => {
     expect(requests[0].instructions).not.toContain(
       STORY_MANUSCRIPT_CARD_RULES[0]
     );
+  });
+
+  it("applies the draft safety rulebook too — phone numbers never reach the provider", async () => {
+    const raw = [
+      { title: "연락처 415-555-1234", body: "전화는 (415) 555-1234 로 왔다." }
+    ];
+    const { provider, requests } = createCapturingProvider([validResponse]);
+
+    await generateStoryCardPlan({
+      activitySummary: createSummary(),
+      moodPlan: createMoodPlan(1),
+      provider,
+      storyManuscript: raw
+    });
+
+    const sent = JSON.stringify(requests[0].input.storyManuscript);
+
+    expect(sent).not.toContain("555-1234");
+    expect(sent).toContain("[redacted-phone]");
   });
 
   it("keeps the manuscript and its rules on the retry request", async () => {

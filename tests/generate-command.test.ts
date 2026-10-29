@@ -1571,11 +1571,9 @@ describe("generate command", () => {
 
     expect(exitCode).toBe(0);
     expect(stderr).toEqual([]);
-    expect(manuscript).toHaveLength(slides.length);
-    expect(manuscript?.[0]).toEqual({
-      title: slides[0].title,
-      body: slides[0].body
-    });
+    expect(manuscript).toEqual(
+      slides.map((slide) => ({ title: slide.title, body: slide.body }))
+    );
   });
 });
 

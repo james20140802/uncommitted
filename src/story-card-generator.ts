@@ -11,19 +11,19 @@ import {
   type SafeRecurringThread,
   type SafeStoryManuscriptSlide
 } from "./ai-provider.js";
-import { redactArchitectureDisclosure } from "./architecture-disclosure.js";
 import {
   buildKoreanEnglishMixLine,
   buildKoreanSurfaceLines
 } from "./korean-surface-instructions.js";
 import type { PersonaLangMix } from "./persona.js";
 import { buildRecurringThreadInstructionLines } from "./recurring-thread-instructions.js";
+import { sanitizeText } from "./redaction.js";
+import { checkDraftSafety } from "./safety-report.js";
 import {
   STORY_CARD_VIOLATIONS,
   validateStoryCardPlanEntries,
   type StoryCardEntryOutcome
 } from "./story-card-plan.js";
-import { sanitizeText } from "./redaction.js";
 import { listStoryCardCandidateProjections } from "./story-card-registry.js";
 import type { StoryCardCandidate } from "./story-card-slots.js";
 import type { MoodPlan } from "./story-format-plan.js";
@@ -99,19 +99,25 @@ export const STORY_MANUSCRIPT_CARD_RULES: readonly string[] = [
 ];
 
 /**
- * UNC-307: 원고를 AI 입력에 싣기 전 마스킹한다. 순서는 캡션·스토리와 같은
- * 관례(비밀·경로 → 아키텍처 폭로)이며, 마스킹 뒤 제목·본문이 모두 빈
- * 슬라이드는 버린다.
+ * UNC-307: 원고를 AI 입력에 싣기 전 마스킹한다. 캡션 표면 텍스트(UNC-227)와
+ * 같은 규칙집 — sanitizeText 뒤 checkDraftSafety(전화번호·시크릿·DB 자격증명·
+ * 사설 원격·아키텍처 폭로 등) — 을 태운다. "카드 N은 슬라이드 N을 압축한다"가
+ * 위치에 의존하므로 마스킹 뒤 비어 버린 슬라이드도 빈 항목으로 자리를 지키고,
+ * 모든 슬라이드가 비었을 때만 원고가 없는 것으로 본다(빈 배열).
  */
 export function buildSafeStoryManuscript(
   slides: readonly { title: string; body: string }[]
 ): SafeStoryManuscriptSlide[] {
   const mask = (text: string): string =>
-    redactArchitectureDisclosure(sanitizeText(text).value).value.trim();
+    checkDraftSafety(sanitizeText(text).value).redactedText.trim();
+  const masked = slides.map((slide) => ({
+    title: mask(slide.title),
+    body: mask(slide.body)
+  }));
 
-  return slides
-    .map((slide) => ({ title: mask(slide.title), body: mask(slide.body) }))
-    .filter((slide) => slide.title !== "" || slide.body !== "");
+  return masked.every((slide) => slide.title === "" && slide.body === "")
+    ? []
+    : masked;
 }
 
 type StoryCardProviderData = JsonObject & { cards?: JsonValue };
