@@ -65,6 +65,16 @@ export type SafeStoryCardGist = {
   lines: string[];
 };
 
+/**
+ * UNC-307: 카드 슬롯 생성에 넘기는 그날의 story 원고 한 장. 카드가 활동
+ * 요약만 보면 업무 일지 말투가 되므로, 이미 안전 처리된 슬라이드 문장을
+ * 함께 보여 준다(마스킹은 story-card-generator의 buildSafeStoryManuscript).
+ */
+export type SafeStoryManuscriptSlide = {
+  title: string;
+  body: string;
+};
+
 type SafeActivitySummaryBase = {
   schemaVersion: 1;
   targetDate: string;
@@ -83,6 +93,7 @@ type SafeActivitySummaryBase = {
 export type SafeActivitySummary = SafeActivitySummaryBase & {
   recurringThreads?: SafeRecurringThread[];
   storyCardGist?: SafeStoryCardGist[];
+  storyManuscript?: SafeStoryManuscriptSlide[];
 };
 
 export type AiGenerationRequestOptions = {
@@ -1237,7 +1248,10 @@ export function isSafeActivitySummary(value: JsonValue): value is SafeActivitySu
         value.recurringThreads.every(isSafeRecurringThread))) &&
     (value.storyCardGist === undefined ||
       (Array.isArray(value.storyCardGist) &&
-        value.storyCardGist.every(isSafeStoryCardGist)))
+        value.storyCardGist.every(isSafeStoryCardGist))) &&
+    (value.storyManuscript === undefined ||
+      (Array.isArray(value.storyManuscript) &&
+        value.storyManuscript.every(isSafeStoryManuscriptSlide)))
   );
 }
 
@@ -1256,6 +1270,16 @@ function isSafeStoryCardGist(value: unknown): value is SafeStoryCardGist {
     typeof value.cardType === "string" &&
     Array.isArray(value.lines) &&
     value.lines.every((line) => typeof line === "string")
+  );
+}
+
+function isSafeStoryManuscriptSlide(
+  value: unknown
+): value is SafeStoryManuscriptSlide {
+  return (
+    isRecord(value) &&
+    typeof value.title === "string" &&
+    typeof value.body === "string"
   );
 }
 

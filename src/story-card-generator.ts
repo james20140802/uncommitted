@@ -8,8 +8,10 @@ import {
   type JsonObject,
   type JsonValue,
   type SafeActivitySummary,
-  type SafeRecurringThread
+  type SafeRecurringThread,
+  type SafeStoryManuscriptSlide
 } from "./ai-provider.js";
+import { redactArchitectureDisclosure } from "./architecture-disclosure.js";
 import {
   buildKoreanEnglishMixLine,
   buildKoreanSurfaceLines
@@ -21,6 +23,7 @@ import {
   validateStoryCardPlanEntries,
   type StoryCardEntryOutcome
 } from "./story-card-plan.js";
+import { sanitizeText } from "./redaction.js";
 import { listStoryCardCandidateProjections } from "./story-card-registry.js";
 import type { StoryCardCandidate } from "./story-card-slots.js";
 import type { MoodPlan } from "./story-format-plan.js";
@@ -75,7 +78,41 @@ export type GenerateStoryCardPlanOptions = {
    * 카드 프롬프트에 싣는다. 생략하면 generateDiaryDraft와 같이 "low".
    */
   koreanEnglishMix?: PersonaLangMix;
+  /**
+   * UNC-307: 이미 만들어진 그날의 story 슬라이드(원문). 카드는 원고 생성 뒤에
+   * 돌기 때문에 호출부가 `generatedDraft.slides`를 그대로 넘길 수 있다.
+   * 안전 처리는 여기서 한다(buildSafeStoryManuscript). 비어 있으면 종전처럼
+   * 활동 요약만으로 카드를 만든다.
+   */
+  storyManuscript?: readonly { title: string; body: string }[];
 };
+
+/**
+ * UNC-307: 원고가 있는 날에만 카드 지시문에 붙는 규칙. 카드가 원고의 장면·
+ * 비유·말투를 이어받되, 글자 수 제한 안으로 압축하고 사실은 새로 만들지
+ * 않게 한다.
+ */
+export const STORY_MANUSCRIPT_CARD_RULES: readonly string[] = [
+  "input.storyManuscript is today's story manuscript, one entry per slide. Card N should mainly compress slide N.",
+  "Carry over the manuscript's scenes, metaphors and voice, but compress them to fit each slot's maxLength — do not paste manuscript sentences verbatim.",
+  "Do not introduce any fact that is in neither the manuscript nor the input summary. If they conflict, follow the input summary's facts and use the manuscript only for voice and scene."
+];
+
+/**
+ * UNC-307: 원고를 AI 입력에 싣기 전 마스킹한다. 순서는 캡션·스토리와 같은
+ * 관례(비밀·경로 → 아키텍처 폭로)이며, 마스킹 뒤 제목·본문이 모두 빈
+ * 슬라이드는 버린다.
+ */
+export function buildSafeStoryManuscript(
+  slides: readonly { title: string; body: string }[]
+): SafeStoryManuscriptSlide[] {
+  const mask = (text: string): string =>
+    redactArchitectureDisclosure(sanitizeText(text).value).value.trim();
+
+  return slides
+    .map((slide) => ({ title: mask(slide.title), body: mask(slide.body) }))
+    .filter((slide) => slide.title !== "" || slide.body !== "");
+}
 
 type StoryCardProviderData = JsonObject & { cards?: JsonValue };
 
@@ -101,6 +138,7 @@ export function buildStoryCardInstructions(options: {
   candidates: readonly StoryCardCandidate[];
   recurringThreads?: SafeRecurringThread[];
   koreanEnglishMix?: PersonaLangMix;
+  hasStoryManuscript?: boolean;
 }): string {
   const lines = [
     `Choose exactly ${options.cardCount} cards for today's carousel and fill in their slots.`,
@@ -125,7 +163,9 @@ export function buildStoryCardInstructions(options: {
     ...buildKoreanSurfaceLines("card"),
     buildKoreanEnglishMixLine(options.koreanEnglishMix ?? "low"),
     // UNC-229 / T6: 캡션(T5)과 **같은 모듈이 소유한 같은 문장**을 붙인다.
-    ...buildRecurringThreadInstructionLines(options.recurringThreads)
+    ...buildRecurringThreadInstructionLines(options.recurringThreads),
+    // UNC-307: 원고가 있을 때만 압축 규칙을 붙인다(없으면 출력 불변).
+    ...(options.hasStoryManuscript ? ["", ...STORY_MANUSCRIPT_CARD_RULES] : [])
   ];
 
   return lines.join("\n");
@@ -288,6 +328,14 @@ export async function generateStoryCardPlan(
     options.candidates ??
     listStoryCardCandidateProjections(options.activitySummary);
   const cardCount = options.cardCount ?? options.moodPlan.pacing.suggestedSlideCount;
+  const storyManuscript = buildSafeStoryManuscript(options.storyManuscript ?? []);
+  const hasStoryManuscript = storyManuscript.length > 0;
+  const safeInput = buildSafeStoryCardInput(options.activitySummary);
+
+  if (hasStoryManuscript) {
+    safeInput.storyManuscript = storyManuscript;
+  }
+
   const request = createAiGenerationRequest({
     task: "story-card",
     instructions: buildStoryCardInstructions({
@@ -295,9 +343,10 @@ export async function generateStoryCardPlan(
       cardCount,
       candidates,
       recurringThreads: options.activitySummary.recurringThreads,
-      koreanEnglishMix: options.koreanEnglishMix
+      koreanEnglishMix: options.koreanEnglishMix,
+      hasStoryManuscript
     }),
-    summary: buildSafeStoryCardInput(options.activitySummary)
+    summary: safeInput
   });
 
   let lastOutcomes: StoryCardEntryOutcome[] | undefined;

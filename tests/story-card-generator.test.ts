@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { ActivitySummary } from "../src/activity-summary.js";
-import type {
-  AiProvider,
-  AiProviderRawResponse,
-  AiStructuredGenerationRequest
+import {
+  createAiGenerationRequest,
+  type AiProvider,
+  type AiProviderRawResponse,
+  type AiStructuredGenerationRequest
 } from "../src/ai-provider.js";
 import type { MoodPlan } from "../src/story-format-plan.js";
 import { listStoryCardCandidateProjections } from "../src/story-card-registry.js";
@@ -15,8 +16,11 @@ import {
   KOREAN_SURFACE_RULES,
   buildKoreanEnglishMixLine
 } from "../src/korean-surface-instructions.js";
+import { ARCHITECTURE_DISCLOSURE_REPLACEMENT } from "../src/architecture-disclosure.js";
 import {
   STORY_CARD_MAX_ATTEMPTS,
+  STORY_MANUSCRIPT_CARD_RULES,
+  buildSafeStoryManuscript,
   buildStoryCardInstructions,
   generateStoryCardPlan
 } from "../src/story-card-generator.js";
@@ -617,6 +621,202 @@ describe("story card instructions follow the Korean surface rules (UNC-286)", ()
     for (const instructions of seenInstructions) {
       expect(instructions).toContain(buildKoreanEnglishMixLine("high"));
       expect(instructions).toContain(KOREAN_SURFACE_RULES.exceptions);
+    }
+  });
+});
+
+describe("story manuscript feeds card slots (UNC-307)", () => {
+  const manuscript = [
+    { title: "소수점", body: "소수점은 작지만, 행정력은 충분하다." },
+    { title: "마감", body: "회의실 예약 시스템처럼 평화롭고 단호했다." }
+  ];
+  const validResponse = cardResponse([
+    { type: "typo", slots: [{ name: "headline", lines: ["짧은 제목"] }] }
+  ]);
+
+  /** 요청을 전부 캡처하는 프로바이더. responses는 순서대로 소비한다. */
+  function createCapturingProvider(responses: string[]): {
+    provider: AiProvider;
+    requests: AiStructuredGenerationRequest[];
+  } {
+    const requests: AiStructuredGenerationRequest[] = [];
+    const provider: AiProvider = {
+      name: "mock",
+      model: "stub",
+      async generateStructured(
+        request: AiStructuredGenerationRequest
+      ): Promise<AiProviderRawResponse> {
+        requests.push(request);
+
+        return {
+          responseJson: responses[Math.min(requests.length - 1, responses.length - 1)]
+        };
+      }
+    };
+
+    return { provider, requests };
+  }
+
+  it("puts today's slide titles and bodies into the card prompt input (AC1)", async () => {
+    const { provider, requests } = createCapturingProvider([validResponse]);
+
+    await generateStoryCardPlan({
+      activitySummary: createSummary(),
+      moodPlan: createMoodPlan(1),
+      provider,
+      storyManuscript: manuscript
+    });
+
+    expect(requests[0].input.storyManuscript).toEqual(manuscript);
+  });
+
+  it("adds the compress-the-manuscript and no-new-facts rules to the instructions (AC2)", async () => {
+    const { provider, requests } = createCapturingProvider([validResponse]);
+
+    await generateStoryCardPlan({
+      activitySummary: createSummary(),
+      moodPlan: createMoodPlan(1),
+      provider,
+      storyManuscript: manuscript
+    });
+
+    for (const rule of STORY_MANUSCRIPT_CARD_RULES) {
+      expect(requests[0].instructions).toContain(rule);
+    }
+
+    const candidates = listStoryCardCandidateProjections(createSummary());
+    const withRules = buildStoryCardInstructions({
+      quiet: true,
+      cardCount: 1,
+      candidates,
+      hasStoryManuscript: true
+    });
+    const without = buildStoryCardInstructions({
+      quiet: true,
+      cardCount: 1,
+      candidates
+    });
+
+    for (const rule of STORY_MANUSCRIPT_CARD_RULES) {
+      expect(withRules).toContain(rule);
+      expect(without).not.toContain(rule);
+    }
+  });
+
+  it.each([
+    ["omitted", undefined],
+    ["empty", []]
+  ])(
+    "falls back to the summary-only input when the manuscript is %s (AC3)",
+    async (_label, storyManuscript) => {
+      const { provider, requests } = createCapturingProvider([validResponse]);
+
+      const result = await generateStoryCardPlan({
+        activitySummary: createSummary(),
+        moodPlan: createMoodPlan(1),
+        provider,
+        storyManuscript
+      });
+
+      expect(result.outcomes[0].status).toBe("accepted");
+      expect(requests[0].input).not.toHaveProperty("storyManuscript");
+
+      for (const rule of STORY_MANUSCRIPT_CARD_RULES) {
+        expect(requests[0].instructions).not.toContain(rule);
+      }
+
+      // 요청 생성이 지시문도 한 번 마스킹하므로, 같은 경로를 거친 기대값과 비교한다.
+      expect(requests[0].instructions).toBe(
+        createAiGenerationRequest({
+          task: "story-card",
+          instructions: buildStoryCardInstructions({
+            quiet: true,
+            cardCount: 1,
+            candidates: listStoryCardCandidateProjections(createSummary())
+          }),
+          summary: requests[0].input
+        }).instructions
+      );
+    }
+  );
+
+  it("passes only masked manuscript text — emails, absolute paths and architecture disclosure are redacted (AC4)", async () => {
+    const disclosure =
+      "Hardened the route guard so only allowlisted admins hit the server-side authorization check.";
+    const raw = [
+      {
+        title: "민감",
+        body: `dev@example.com 이 /Users/me/secret/app.ts 를 고쳤다. ${disclosure}`
+      }
+    ];
+    const { provider, requests } = createCapturingProvider([validResponse]);
+
+    await generateStoryCardPlan({
+      activitySummary: createSummary(),
+      moodPlan: createMoodPlan(1),
+      provider,
+      storyManuscript: raw
+    });
+
+    const sent = requests[0].input.storyManuscript as {
+      title: string;
+      body: string;
+    }[];
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0].body).not.toContain("dev@example.com");
+    expect(sent[0].body).not.toContain("/Users/me/secret");
+    expect(sent[0].body).not.toContain("route guard");
+    expect(sent[0].body).toContain("[redacted-email]");
+    expect(sent[0].body).toContain("[redacted-path]");
+    expect(sent[0].body).toContain(ARCHITECTURE_DISCLOSURE_REPLACEMENT);
+    expect(buildSafeStoryManuscript(raw)).toEqual(sent);
+  });
+
+  it("drops slides that are blank after masking, and treats an all-blank manuscript as absent", async () => {
+    expect(
+      buildSafeStoryManuscript([
+        { title: "  ", body: "\n" },
+        { title: "정상", body: "본문" }
+      ])
+    ).toEqual([{ title: "정상", body: "본문" }]);
+
+    const { provider, requests } = createCapturingProvider([validResponse]);
+
+    await generateStoryCardPlan({
+      activitySummary: createSummary(),
+      moodPlan: createMoodPlan(1),
+      provider,
+      storyManuscript: [{ title: " ", body: " " }]
+    });
+
+    expect(requests[0].input).not.toHaveProperty("storyManuscript");
+    expect(requests[0].instructions).not.toContain(
+      STORY_MANUSCRIPT_CARD_RULES[0]
+    );
+  });
+
+  it("keeps the manuscript and its rules on the retry request", async () => {
+    const { provider, requests } = createCapturingProvider([
+      cardResponse([
+        { type: "typo", slots: [{ name: "headline", lines: ["가".repeat(80)] }] }
+      ]),
+      validResponse
+    ]);
+
+    await generateStoryCardPlan({
+      activitySummary: createSummary(),
+      moodPlan: createMoodPlan(1),
+      provider,
+      storyManuscript: manuscript
+    });
+
+    expect(requests).toHaveLength(2);
+    expect(requests[0].input.storyManuscript).toEqual(manuscript);
+    expect(requests[1].input.storyManuscript).toEqual(manuscript);
+
+    for (const rule of STORY_MANUSCRIPT_CARD_RULES) {
+      expect(requests[1].instructions).toContain(rule);
     }
   });
 });
