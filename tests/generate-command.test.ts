@@ -1529,6 +1529,52 @@ describe("generate command", () => {
       "story-card-failure.json"
     );
   });
+
+  // UNC-307: 카드는 이미 원고(일기) 생성 뒤에 돌므로, 그날 슬라이드를
+  // 그대로 카드 입력의 원고로 넘긴다.
+  it("sends the day's story slides as the card manuscript (UNC-307)", async () => {
+    const { io, stderr } = createIo();
+    const fixture = await createRegisteredProjectFixture();
+    const slides = Array.from({ length: 3 }, (_, index) => ({
+      index: index + 1,
+      title: `Slide ${index + 1}`,
+      body: `Slide ${index + 1} body text for the manuscript fixture.`,
+      visualMood: "compact terminal summary"
+    }));
+    const provider = new TaskAwareProvider({
+      plan: createStoryFormatPlan({ suggestedSlideCount: 3 }),
+      draft: createProviderDraft({ slides }),
+      storyCards: {
+        cards: slides.map((_, index) => ({
+          type: "typo",
+          slots: [
+            { name: "headline", lines: [`카드 ${index + 1}`] },
+            { name: "kicker", lines: ["uncommitted"] }
+          ]
+        }))
+      }
+    });
+
+    await writeGitEvent(fixture.project, "2026-05-12");
+
+    const exitCode = await runCli(["generate", "today"], io, {
+      homeDir: fixture.homeDir,
+      now: () => "2026-05-12T23:30:00.000Z",
+      aiProvider: provider
+    });
+    const storyCardRequest = provider.requests.find(
+      (request) => request.task === "story-card"
+    );
+    const manuscript = storyCardRequest?.input.storyManuscript as
+      | { title: string; body: string }[]
+      | undefined;
+
+    expect(exitCode).toBe(0);
+    expect(stderr).toEqual([]);
+    expect(manuscript).toEqual(
+      slides.map((slide) => ({ title: slide.title, body: slide.body }))
+    );
+  });
 });
 
 class TaskAwareProvider implements AiProvider {

@@ -441,7 +441,10 @@ export async function runGenerateCommand(
       // 아니라 **이미 만들어진 슬라이드 장수**만큼 요청한다.
       cardCount: generatedDraft.slides.length,
       // UNC-286: 스토리와 같은 페르소나 혼용 설정을 카드 프롬프트에도 넘긴다.
-      koreanEnglishMix: config.persona.voice.koreanEnglishMix
+      koreanEnglishMix: config.persona.voice.koreanEnglishMix,
+      // UNC-307: 카드는 이미 원고 생성 뒤에 돌므로 순서 변경 없이 그날
+      // 슬라이드를 넘긴다. 마스킹은 generateStoryCardPlan 안에서 한다.
+      storyManuscript: generatedDraft.slides
     });
   } catch (error) {
     storyCardGeneration = undefined;
