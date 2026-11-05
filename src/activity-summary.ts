@@ -52,7 +52,8 @@ export type ActivitySummaryInput = {
   // reflected by `reflectProjectThreads` (see reflection.ts). Optional and
   // additive: when present, the top `THREAD_TOP_K` active threads (ranked by
   // `recencyDecay` against `generatedAt`) are injected into the existing
-  // `unfinishedThreads`/`possibleJokes` slots alongside the single-day content.
+  // `unfinishedThreads`/`possibleJokes` slots alongside the single-day content
+  // (possibleJokes has no single-day content on active days — see UNC-288).
   memoryThreads?: MemoryThread[];
   // Durable, always-present persona facts (e.g. "prefers TDD") read from
   // `persona.json` via `readCoreFacts`. When present, prepended to
@@ -658,6 +659,9 @@ function selectTopMemoryThreads(
   return { unfinishedThreadNotes, jokeNotes, recurringThreads };
 }
 
+// UNC-288: active days get no code-authored jokes. Fixed lines keyed on
+// uncommitted files or blockers ended every draft the same way and were not
+// real activity — only memory jokeNotes (appended by the caller) may follow.
 function buildPossibleJokes(activityLevel: ActivityLevel): string[] {
   if (activityLevel === "none") {
     return ["Quiet day, but the draft still has to admit nothing exploded."];

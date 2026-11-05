@@ -201,7 +201,8 @@ describe("story card default slots", () => {
 });
 
 describe("typo default slots without jokes (UNC-288)", () => {
-  const typo = storyCardRegistry.find((kind) => kind.id === "typo")!;
+  const typo = storyCardRegistry.find((kind) => kind.id === "typo");
+  if (typo === undefined) throw new Error("typo story card kind is not registered");
 
   it("falls back to smallWins[0] when possibleJokes is empty", () => {
     const slots = typo.buildDefaultSlots({

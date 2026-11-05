@@ -18,9 +18,9 @@ export type ActivitySynthesis = {
  *   - unfinishedThreads
  *   - blockersOrConfusion
  *
- * possibleJokes is derived separately because it depends on aggregate
- * presence/absence flags (hasBlockers, hasUncommittedChanges) rather than
- * on individual signals.
+ * possibleJokes is not derived from signals at all: it carries only the
+ * quiet-day line and memory jokeNotes (UNC-288 — no fixed jokes keyed on
+ * blocker or uncommitted-file presence).
  *
  * Behavior is keyed on (kind, summary), never on source type. Unknown
  * kinds are treated as opaque — only the summary text drives synthesis.
