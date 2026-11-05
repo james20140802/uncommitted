@@ -48,6 +48,46 @@ describe("activity-summary memory injection", () => {
     expect(summary.possibleJokes).toContain("the flaky test strikes again");
   });
 
+  it("keeps only memory jokeNotes in possibleJokes when uncommitted files exist (UNC-288)", () => {
+    const summary = buildActivitySummary({
+      ...baseInput(),
+      gitEvents: [
+        {
+          schemaVersion: 1,
+          source: "git",
+          targetDate: "2026-07-15",
+          collectedAt: "2026-07-15T09:00:00.000Z",
+          project: { id: "cli", name: "CLI" },
+          activity: {
+            schemaVersion: 1,
+            targetDate: "2026-07-15",
+            repository: { rootName: "cli-repo" },
+            commits: [],
+            totals: { commits: 0, filesChanged: 0, insertions: 0, deletions: 0 },
+            dirty: {
+              files: [{ path: "src/a.ts", status: "modified" }],
+              totals: {
+                modified: 1,
+                added: 0,
+                deleted: 0,
+                renamed: 0,
+                copied: 0,
+                untracked: 0,
+                other: 0
+              }
+            }
+          }
+        }
+      ],
+      memoryThreads: [
+        thread({ id: "j", kind: "running-joke", note: "the flaky test strikes again" })
+      ]
+    });
+
+    expect(summary.unfinishedThreads).toContain("1 uncommitted file remains in CLI.");
+    expect(summary.possibleJokes).toEqual(["the flaky test strikes again"]);
+  });
+
   it("routes win-kind threads into possibleJokes alongside running-joke", () => {
     const summary = buildActivitySummary({
       ...baseInput(),

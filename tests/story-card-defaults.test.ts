@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ActivitySummary } from "../src/activity-summary.js";
 import { validateStoryCardPlanEntries } from "../src/story-card-plan.js";
+import { TYPO_FALLBACK_HEADLINE } from "../src/story-card-kind-typo.js";
 import { storyCardRegistry } from "../src/story-card-registry.js";
 import { readSlotLines, readSlotText } from "../src/story-card-slots.js";
 
@@ -196,5 +197,23 @@ describe("story card default slots", () => {
         )}`
       ).toBe("accepted");
     }
+  });
+});
+
+describe("typo default slots without jokes (UNC-288)", () => {
+  const typo = storyCardRegistry.find((kind) => kind.id === "typo")!;
+
+  it("falls back to smallWins[0] when possibleJokes is empty", () => {
+    const slots = typo.buildDefaultSlots({
+      summary: createSummary({ possibleJokes: [], smallWins: ["shipped export"] })
+    });
+    expect(slots.headline).toBe("shipped export");
+  });
+
+  it("falls back to TYPO_FALLBACK_HEADLINE when both are empty", () => {
+    const slots = typo.buildDefaultSlots({
+      summary: createSummary({ possibleJokes: [], smallWins: [] })
+    });
+    expect(slots.headline).toBe(TYPO_FALLBACK_HEADLINE);
   });
 });

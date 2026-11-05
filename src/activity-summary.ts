@@ -333,10 +333,7 @@ export function buildActivitySummary(
     new Date(input.generatedAt)
   );
   const possibleJokes = [
-    ...buildPossibleJokes(activityLevel, {
-      hasBlockers: synthesis.blockersOrConfusion.length > 0,
-      hasUncommittedChanges: uncommittedFiles.length > 0
-    }),
+    ...buildPossibleJokes(activityLevel),
     ...jokeNotes
   ];
   const unfinishedThreadsWithMemory = [
@@ -661,28 +658,12 @@ function selectTopMemoryThreads(
   return { unfinishedThreadNotes, jokeNotes, recurringThreads };
 }
 
-function buildPossibleJokes(
-  activityLevel: ActivityLevel,
-  options: {
-    hasBlockers: boolean;
-    hasUncommittedChanges: boolean;
-  }
-): string[] {
+function buildPossibleJokes(activityLevel: ActivityLevel): string[] {
   if (activityLevel === "none") {
     return ["Quiet day, but the draft still has to admit nothing exploded."];
   }
 
-  const jokes: string[] = [];
-
-  if (options.hasUncommittedChanges) {
-    jokes.push("The working tree kept a few tabs open for tomorrow.");
-  }
-
-  if (options.hasBlockers) {
-    jokes.push("The day left a breadcrumb trail of blockers instead of a victory lap.");
-  }
-
-  return jokes;
+  return [];
 }
 
 function buildPublicSafetyNotes(options: {

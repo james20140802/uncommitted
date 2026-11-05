@@ -98,7 +98,7 @@ describe("activity summary", () => {
     expect(summary.unfinishedThreads).toContain(
       "2 uncommitted files remain in CLI."
     );
-    expect(summary.possibleJokes).toContain(
+    expect(summary.possibleJokes).not.toContain(
       "The working tree kept a few tabs open for tomorrow."
     );
     const serialized = JSON.stringify(summary);
@@ -211,6 +211,44 @@ describe("activity summary", () => {
     expect(serialized).not.toContain("dev@example.com");
     expect(serialized).not.toContain("/Users/me/private");
     expect(serialized).not.toContain("github.com/acme/private");
+  });
+
+  it("does not inject fixed jokes for uncommitted files or blockers (UNC-288)", () => {
+    const summary = buildActivitySummary(
+      createInput({
+        gitEvents: [
+          createGitEvent({
+            projectId: "cli",
+            projectName: "CLI",
+            commits: [
+              createCommit({
+                subject: "refactor note parsing",
+                filesChanged: 1,
+                insertions: 2,
+                deletions: 1
+              })
+            ],
+            dirtyFiles: [{ path: "src/note-command.ts", status: "modified" }]
+          })
+        ],
+        manualNotes: [
+          {
+            schemaVersion: 1,
+            id: "note-blocker",
+            timestamp: "2026-05-12T15:00:00.000Z",
+            date: "2026-05-12",
+            projectId: "cli",
+            text: "Blocked by unclear edge case.",
+            source: "manual"
+          }
+        ]
+      })
+    );
+
+    expect(summary.blockersOrConfusion.length).toBeGreaterThan(0);
+    expect(summary.unfinishedThreads).toContain("1 uncommitted file remains in CLI.");
+    expect(summary.possibleJokes).toEqual([]);
+    expect(JSON.stringify(summary.possibleJokes)).not.toContain("breadcrumb");
   });
 
   it("merges mixed Git and manual context without raw diffs or raw code", () => {
