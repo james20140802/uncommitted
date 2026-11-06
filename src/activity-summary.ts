@@ -52,7 +52,8 @@ export type ActivitySummaryInput = {
   // reflected by `reflectProjectThreads` (see reflection.ts). Optional and
   // additive: when present, the top `THREAD_TOP_K` active threads (ranked by
   // `recencyDecay` against `generatedAt`) are injected into the existing
-  // `unfinishedThreads`/`possibleJokes` slots alongside the single-day content.
+  // `unfinishedThreads`/`possibleJokes` slots alongside the single-day content
+  // (possibleJokes has no single-day content on active days — see UNC-288).
   memoryThreads?: MemoryThread[];
   // Durable, always-present persona facts (e.g. "prefers TDD") read from
   // `persona.json` via `readCoreFacts`. When present, prepended to
@@ -333,10 +334,7 @@ export function buildActivitySummary(
     new Date(input.generatedAt)
   );
   const possibleJokes = [
-    ...buildPossibleJokes(activityLevel, {
-      hasBlockers: synthesis.blockersOrConfusion.length > 0,
-      hasUncommittedChanges: uncommittedFiles.length > 0
-    }),
+    ...buildPossibleJokes(activityLevel),
     ...jokeNotes
   ];
   const unfinishedThreadsWithMemory = [
@@ -661,28 +659,15 @@ function selectTopMemoryThreads(
   return { unfinishedThreadNotes, jokeNotes, recurringThreads };
 }
 
-function buildPossibleJokes(
-  activityLevel: ActivityLevel,
-  options: {
-    hasBlockers: boolean;
-    hasUncommittedChanges: boolean;
-  }
-): string[] {
+// UNC-288: active days get no code-authored jokes. Fixed lines keyed on
+// uncommitted files or blockers ended every draft the same way and were not
+// real activity — only memory jokeNotes (appended by the caller) may follow.
+function buildPossibleJokes(activityLevel: ActivityLevel): string[] {
   if (activityLevel === "none") {
     return ["Quiet day, but the draft still has to admit nothing exploded."];
   }
 
-  const jokes: string[] = [];
-
-  if (options.hasUncommittedChanges) {
-    jokes.push("The working tree kept a few tabs open for tomorrow.");
-  }
-
-  if (options.hasBlockers) {
-    jokes.push("The day left a breadcrumb trail of blockers instead of a victory lap.");
-  }
-
-  return jokes;
+  return [];
 }
 
 function buildPublicSafetyNotes(options: {
