@@ -16,7 +16,7 @@ import {
   buildKoreanSurfaceLines
 } from "./korean-surface-instructions.js";
 import type { PersonaLangMix } from "./persona.js";
-import { buildRecurringThreadInstructionLines } from "./recurring-thread-instructions.js";
+import { buildRecurringThreadCardInstructionLines } from "./recurring-thread-instructions.js";
 import { sanitizeText } from "./redaction.js";
 import { checkDraftSafety } from "./safety-report.js";
 import {
@@ -138,6 +138,13 @@ function describeCandidate(candidate: StoryCardCandidate): string {
   return [`  * ${candidate.id}`, ...slots].join("\n");
 }
 
+// UNC-309: 카드 헤더가 이미 날짜를 보여 주고, 입력 요약의 집계 숫자를 슬롯에
+// 그대로 나열하면 데이터 덤프처럼 읽힌다. 카드 슬롯 전용 규칙이다.
+export const STORY_CARD_SURFACE_RULES: readonly string[] = [
+  "- Do not repeat today's date in any slot. The card header already shows the date.",
+  "- Do not list raw aggregate counts from the input summary in a slot (e.g. '변경 묶음 10개 · 파일 10개' in the typo kicker). If a number helps, use at most one inside a natural phrase; otherwise leave the optional slot out."
+];
+
 export function buildStoryCardInstructions(options: {
   quiet: boolean;
   cardCount: number;
@@ -160,6 +167,7 @@ export function buildStoryCardInstructions(options: {
     "- Do NOT emit HTML or any markup. Slot values are plain text.",
     "- Do NOT invent a card label, heading number, or caption — labels are added by the code, not by you.",
     "- Do NOT invent commits, bugs, features, or activity that is not in the input summary.",
+    ...STORY_CARD_SURFACE_RULES,
     "- The same card type may be used more than once if it genuinely fits.",
     options.quiet
       ? "Today is a quiet day. Say so honestly — a quiet day is valid content. Do not manufacture activity to fill the cards."
@@ -169,7 +177,7 @@ export function buildStoryCardInstructions(options: {
     ...buildKoreanSurfaceLines("card"),
     buildKoreanEnglishMixLine(options.koreanEnglishMix ?? "low"),
     // UNC-229 / T6: 캡션(T5)과 **같은 모듈이 소유한 같은 문장**을 붙인다.
-    ...buildRecurringThreadInstructionLines(options.recurringThreads),
+    ...buildRecurringThreadCardInstructionLines(options.recurringThreads),
     // UNC-307: 원고가 있을 때만 압축 규칙을 붙인다(없으면 출력 불변).
     ...(options.hasStoryManuscript ? ["", ...STORY_MANUSCRIPT_CARD_RULES] : [])
   ];

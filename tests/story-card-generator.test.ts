@@ -9,7 +9,11 @@ import {
 import type { MoodPlan } from "../src/story-format-plan.js";
 import { listStoryCardCandidateProjections } from "../src/story-card-registry.js";
 import { STORY_CARD_VIOLATIONS } from "../src/story-card-plan.js";
-import { RECURRING_THREAD_INSTRUCTIONS } from "../src/recurring-thread-instructions.js";
+import {
+  RECURRING_THREAD_CARD_INSTRUCTIONS,
+  RECURRING_THREAD_INSTRUCTIONS,
+  buildRecurringThreadCardInstructionLines
+} from "../src/recurring-thread-instructions.js";
 import { buildCaptionInstructions } from "../src/diary-generator.js";
 import { PERSONA_PRESETS } from "../src/persona.js";
 import {
@@ -19,6 +23,7 @@ import {
 import { ARCHITECTURE_DISCLOSURE_REPLACEMENT } from "../src/architecture-disclosure.js";
 import {
   STORY_CARD_MAX_ATTEMPTS,
+  STORY_CARD_SURFACE_RULES,
   STORY_MANUSCRIPT_CARD_RULES,
   buildSafeStoryManuscript,
   buildStoryCardInstructions,
@@ -545,6 +550,60 @@ describe("카드 슬롯 누적 대비 지시문 (UNC-278 / T6)", () => {
       "Do not manufacture activity to fill the cards."
     );
     expect(instructions).toContain(RECURRING_THREAD_INSTRUCTIONS.noInventedCount);
+  });
+});
+
+describe("UNC-309: 카드 데이터 형식 노출 방지", () => {
+  const recurring = [
+    { note: "merge cleanup", occurrenceCount: 4, lastSeenDate: "2026-10-24" }
+  ];
+  const base = (quiet = false) => ({
+    quiet,
+    cardCount: 4,
+    candidates: listStoryCardCandidateProjections(createSummary())
+  });
+
+  it("adds the card-only no-data-format sentence next to the shared ones when threads exist", () => {
+    const instructions = buildStoryCardInstructions({
+      ...base(),
+      recurringThreads: recurring
+    });
+
+    expect(instructions).toContain(RECURRING_THREAD_CARD_INSTRUCTIONS.noDataFormat);
+    expect(instructions).toContain(RECURRING_THREAD_INSTRUCTIONS.noInventedCount);
+  });
+
+  it("keeps the caption prompt free of the card-only sentence", () => {
+    const caption = buildCaptionInstructions({
+      quiet: false,
+      persona: PERSONA_PRESETS["시니컬한 관찰자"].persona,
+      moodPlan: createMoodPlan(),
+      recurringThreads: recurring
+    });
+
+    expect(caption).toContain(RECURRING_THREAD_INSTRUCTIONS.noInventedCount);
+    expect(caption).not.toContain(RECURRING_THREAD_CARD_INSTRUCTIONS.noDataFormat);
+  });
+
+  it("leaves the prompt byte-identical when recurringThreads is empty", () => {
+    const without = buildStoryCardInstructions(base());
+    const withEmpty = buildStoryCardInstructions({ ...base(), recurringThreads: [] });
+
+    expect(withEmpty).toBe(without);
+    expect(withEmpty).not.toContain(RECURRING_THREAD_CARD_INSTRUCTIONS.noDataFormat);
+  });
+
+  it.each([true, false])("carries the surface rules (quiet=%s)", (quiet) => {
+    const instructions = buildStoryCardInstructions(base(quiet));
+
+    for (const rule of STORY_CARD_SURFACE_RULES) {
+      expect(instructions).toContain(rule);
+    }
+  });
+
+  it("returns no card lines without recurring threads", () => {
+    expect(buildRecurringThreadCardInstructionLines(undefined)).toEqual([]);
+    expect(buildRecurringThreadCardInstructionLines([])).toEqual([]);
   });
 });
 

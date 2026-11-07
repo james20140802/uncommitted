@@ -5,6 +5,10 @@
  *
  * 표현 계약은 "누적 N번 + 최근 등장일"뿐이다. "연속 N일"·streak은 계약에서
  * 영구 제외이며, 모델이 둘을 섞으면 사실이 틀어지므로 명시적으로 금지한다.
+ *
+ * UNC-309: 카드 슬롯에서는 모델이 누적 횟수·날짜를 "4번째 기록, 마지막 확인
+ * 2026-10-24" 같은 데이터 라벨로 그대로 베껴 쓰는 문제가 있어, 카드 전용 문장
+ * (`RECURRING_THREAD_CARD_INSTRUCTIONS`)을 따로 둔다. 캡션 프롬프트에는 붙이지 않는다.
  */
 import type { SafeRecurringThread } from "./ai-provider.js";
 
@@ -39,4 +43,23 @@ export function buildRecurringThreadInstructionLines(
     RECURRING_THREAD_INSTRUCTIONS.noStreak,
     RECURRING_THREAD_INSTRUCTIONS.notNewMaterial
   ];
+}
+
+/** UNC-309: 카드 프롬프트에만 붙는 문장. 캡션 프롬프트는 이 문장을 쓰지 않는다. */
+export const RECURRING_THREAD_CARD_INSTRUCTIONS = {
+  noDataFormat:
+    "- On cards, never write the count or date as a data label — no '4번째 기록', no '마지막 확인 2026-10-24', no 'N번째 기록 · 마지막 확인 YYYY-MM-DD' tails. If the repetition matters, fold it into the sentence as natural Korean (e.g. '또 이 정리를 했다', '이번이 네 번째다'), and never restate a date."
+} as const;
+
+/** 카드용: 공통 지시문 뒤에 데이터 형식 금지 한 줄을 덧붙인다. 스레드가 없으면 `[]`. */
+export function buildRecurringThreadCardInstructionLines(
+  recurringThreads: SafeRecurringThread[] | undefined
+): string[] {
+  const shared = buildRecurringThreadInstructionLines(recurringThreads);
+
+  if (shared.length === 0) {
+    return [];
+  }
+
+  return [...shared, RECURRING_THREAD_CARD_INSTRUCTIONS.noDataFormat];
 }
