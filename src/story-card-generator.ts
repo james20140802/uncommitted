@@ -141,7 +141,7 @@ function describeCandidate(candidate: StoryCardCandidate): string {
 // UNC-309: 카드 헤더가 이미 날짜를 보여 주고, 입력 요약의 집계 숫자를 슬롯에
 // 그대로 나열하면 데이터 덤프처럼 읽힌다. 카드 슬롯 전용 규칙이다.
 export const STORY_CARD_SURFACE_RULES: readonly string[] = [
-  "- Do not repeat today's date in any slot. The card header already shows the date.",
+  "- Do not repeat the draft's date (targetDate in the input) in any slot. The card already shows the date.",
   "- Do not list raw aggregate counts from the input summary in a slot (e.g. '변경 묶음 10개 · 파일 10개' in the typo kicker). If a number helps, use at most one inside a natural phrase; otherwise leave the optional slot out."
 ];
 
@@ -176,7 +176,8 @@ export function buildStoryCardInstructions(options: {
     // UNC-286: 스토리·캡션과 **같은 모듈이 소유한 같은 문장**을 붙인다.
     ...buildKoreanSurfaceLines("card"),
     buildKoreanEnglishMixLine(options.koreanEnglishMix ?? "low"),
-    // UNC-229 / T6: 캡션(T5)과 **같은 모듈이 소유한 같은 문장**을 붙인다.
+    // UNC-229 / T6: 캡션(T5)과 **같은 모듈이 소유한 같은 문장**을 붙이고,
+    // UNC-309: 카드에서만 데이터 라벨 금지 한 줄을 덧붙인다.
     ...buildRecurringThreadCardInstructionLines(options.recurringThreads),
     // UNC-307: 원고가 있을 때만 압축 규칙을 붙인다(없으면 출력 불변).
     ...(options.hasStoryManuscript ? ["", ...STORY_MANUSCRIPT_CARD_RULES] : [])

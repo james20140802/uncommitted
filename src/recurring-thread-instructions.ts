@@ -48,7 +48,7 @@ export function buildRecurringThreadInstructionLines(
 /** UNC-309: 카드 프롬프트에만 붙는 문장. 캡션 프롬프트는 이 문장을 쓰지 않는다. */
 export const RECURRING_THREAD_CARD_INSTRUCTIONS = {
   noDataFormat:
-    "- On cards, this overrides the instruction above about when it was last seen: never write the count or date as a data label — no '4번째 기록', no '마지막 확인 2026-10-24', no 'N번째 기록 · 마지막 확인 YYYY-MM-DD' tails, and never write a YYYY-MM-DD date. If the repetition matters, fold it into the sentence as natural Korean (e.g. '또 이 정리를 했다', '이번이 네 번째다', '지난주에도')."
+    "- On cards, this overrides the instruction above about when it was last seen: never write the count or date as a data label — no '4번째 기록', no '마지막 확인 2026-10-24', no 'N번째 기록 · 마지막 확인 YYYY-MM-DD' tails, and never write a YYYY-MM-DD date. If the repetition matters, fold it into the sentence as natural Korean without a number or time phrase you were not given (e.g. '또 이 정리를 했다', '이번에도')."
 } as const;
 
 /** 카드용: 공통 지시문 뒤에 데이터 형식 금지 한 줄을 덧붙인다. 스레드가 없으면 `[]`. */
