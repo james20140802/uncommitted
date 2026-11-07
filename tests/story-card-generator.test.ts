@@ -571,6 +571,9 @@ describe("UNC-309: 카드 데이터 형식 노출 방지", () => {
 
     expect(instructions).toContain(RECURRING_THREAD_CARD_INSTRUCTIONS.noDataFormat);
     expect(instructions).toContain(RECURRING_THREAD_INSTRUCTIONS.noInventedCount);
+    // useCumulative의 lastSeenDate 지시를 카드에서는 명시적으로 덮어쓴다.
+    expect(instructions).toContain(RECURRING_THREAD_INSTRUCTIONS.useCumulative);
+    expect(instructions).toContain("this overrides the instruction above");
   });
 
   it("keeps the caption prompt free of the card-only sentence", () => {
