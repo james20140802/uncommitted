@@ -10,8 +10,11 @@ import {
   INVALID_AI_MODEL_MESSAGE,
   loadGlobalConfig,
   parseAiModel,
+  PROVIDER_KEY_CONFIG_FIELDS,
   selectGitHubToken,
-  type GlobalConfig
+  selectProviderKey,
+  type GlobalConfig,
+  type ProviderEnvKey
 } from "./global-config.js";
 import { describeGitHubTokenStatus } from "./github-token-safety.js";
 import { isRecord } from "./type-guards.js";
@@ -126,7 +129,7 @@ export async function createDoctorReport(
   ];
 
   if (config) {
-    checks.push(createAiApiKeyCheck(config.aiProvider, env));
+    checks.push(createAiApiKeyCheck(config, env));
     const aiModelCheck = createAiModelCheck(config);
     if (aiModelCheck) {
       checks.push(aiModelCheck);
@@ -357,10 +360,10 @@ async function createLegacyExportCheck(
 }
 
 function createAiApiKeyCheck(
-  aiProvider: string,
+  config: DoctorConfig,
   env: Record<string, string | undefined>
 ): DoctorCheck {
-  const normalizedProvider = aiProvider.trim().toLowerCase();
+  const normalizedProvider = config.aiProvider.trim().toLowerCase();
   const providerIsSupported = Object.prototype.hasOwnProperty.call(
     aiProviderEnvKeys,
     normalizedProvider
@@ -387,20 +390,33 @@ function createAiApiKeyCheck(
     };
   }
 
-  if (!env[envKey]) {
+  const envValue = env[envKey];
+  if (typeof envValue === "string" && envValue.trim() !== "") {
     return {
       id: "ai-api-key",
       label: "AI API key",
-      status: "warn",
-      message: `${envKey} is not set.`
+      status: "pass",
+      message: `${envKey} is set.`
+    };
+  }
+
+  if (
+    Object.prototype.hasOwnProperty.call(PROVIDER_KEY_CONFIG_FIELDS, envKey) &&
+    selectProviderKey(config, envKey as ProviderEnvKey) !== null
+  ) {
+    return {
+      id: "ai-api-key",
+      label: "AI API key",
+      status: "pass",
+      message: `${envKey} is stored in config for scheduled runs.`
     };
   }
 
   return {
     id: "ai-api-key",
     label: "AI API key",
-    status: "pass",
-    message: `${envKey} is set.`
+    status: "warn",
+    message: `${envKey} is not set.`
   };
 }
 

@@ -443,6 +443,102 @@ describe("doctor command", () => {
       expect(tokenCheck?.message.toLowerCase()).toContain("config");
     });
   });
+
+  describe("AI API key from config", () => {
+    const storedKey = "sk-storedSecretValue1234567890";
+
+    async function runAiKeyCheck(
+      config: Parameters<typeof createHomeWithConfig>[0],
+      env: Record<string, string | undefined>
+    ) {
+      const report = await createDoctorReport({
+        homeDir: await createHomeWithConfig(config),
+        env,
+        nodeVersion: "v22.13.0",
+        checkCommand: async () => ({ ok: true, detail: "git version 2.49.0" })
+      });
+      return {
+        report,
+        check: report.checks.find((c) => c.id === "ai-api-key")
+      };
+    }
+
+    it("passes with a config-source message when the key is only in config", async () => {
+      const { report, check } = await runAiKeyCheck(
+        { aiProvider: "openai", openaiApiKey: storedKey },
+        {}
+      );
+
+      expect(check?.status).toBe("pass");
+      expect(check?.message).toBe("OPENAI_API_KEY is stored in config for scheduled runs.");
+      expect(formatDoctorReport(report)).not.toContain(storedKey);
+      expect(JSON.stringify(report)).not.toContain(storedKey);
+    });
+
+    it("prefers env when the key is in both env and config", async () => {
+      const { report, check } = await runAiKeyCheck(
+        { aiProvider: "openai", openaiApiKey: storedKey },
+        { OPENAI_API_KEY: "env-key-value-abc" }
+      );
+
+      expect(check?.status).toBe("pass");
+      expect(check?.message).toBe("OPENAI_API_KEY is set.");
+      for (const secret of [storedKey, "env-key-value-abc"]) {
+        expect(formatDoctorReport(report)).not.toContain(secret);
+        expect(JSON.stringify(report)).not.toContain(secret);
+      }
+    });
+
+    it("treats a whitespace-only env key as not set and falls back to config", async () => {
+      const { check } = await runAiKeyCheck(
+        { aiProvider: "openai", openaiApiKey: storedKey },
+        { OPENAI_API_KEY: "   " }
+      );
+
+      expect(check?.status).toBe("pass");
+      expect(check?.message).toBe("OPENAI_API_KEY is stored in config for scheduled runs.");
+    });
+
+    it("warns when a whitespace-only env key has no config fallback", async () => {
+      const { check } = await runAiKeyCheck(
+        { aiProvider: "openai" },
+        { OPENAI_API_KEY: "   " }
+      );
+
+      expect(check?.status).toBe("warn");
+      expect(check?.message).toBe("OPENAI_API_KEY is not set.");
+    });
+
+    it("ignores a key stored for a different provider", async () => {
+      const { check } = await runAiKeyCheck(
+        { aiProvider: "openai", anthropicApiKey: storedKey },
+        {}
+      );
+
+      expect(check?.status).toBe("warn");
+      expect(check?.message).toBe("OPENAI_API_KEY is not set.");
+    });
+
+    it("checks only env for providers without a config field", async () => {
+      const { check } = await runAiKeyCheck(
+        { aiProvider: "google", openaiApiKey: storedKey },
+        {}
+      );
+
+      expect(check?.status).toBe("warn");
+      expect(check?.message).toBe("GOOGLE_API_KEY is not set.");
+    });
+
+    it("treats an empty-string config key as not stored", async () => {
+      const { check } = await runAiKeyCheck(
+        { aiProvider: "openrouter", openrouterApiKey: "" },
+        {}
+      );
+
+      expect(check?.status).toBe("warn");
+      expect(check?.message).toBe("OPENROUTER_API_KEY is not set.");
+    });
+  });
 });
 
 async function createHomeWithConfig(
@@ -451,6 +547,9 @@ async function createHomeWithConfig(
     aiModel: unknown;
     draftRoot: string;
     githubToken: string;
+    openaiApiKey: string;
+    openrouterApiKey: string;
+    anthropicApiKey: string;
   }> = {}
 ): Promise<string> {
   const homeDir = await mkdtemp(join(tmpdir(), "uncommitted-doctor-"));
@@ -474,6 +573,11 @@ async function createHomeWithConfig(
       ...(overrides.githubToken !== undefined
         ? { githubToken: overrides.githubToken }
         : {}),
+      ...Object.fromEntries(
+        (["openaiApiKey", "openrouterApiKey", "anthropicApiKey"] as const)
+          .filter((field) => overrides[field] !== undefined)
+          .map((field) => [field, overrides[field]])
+      ),
       ...("aiModel" in overrides ? { aiModel: overrides.aiModel } : {})
     })}\n`,
     "utf8"
