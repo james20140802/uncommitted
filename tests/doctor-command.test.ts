@@ -573,15 +573,11 @@ async function createHomeWithConfig(
       ...(overrides.githubToken !== undefined
         ? { githubToken: overrides.githubToken }
         : {}),
-      ...(overrides.openaiApiKey !== undefined
-        ? { openaiApiKey: overrides.openaiApiKey }
-        : {}),
-      ...(overrides.openrouterApiKey !== undefined
-        ? { openrouterApiKey: overrides.openrouterApiKey }
-        : {}),
-      ...(overrides.anthropicApiKey !== undefined
-        ? { anthropicApiKey: overrides.anthropicApiKey }
-        : {}),
+      ...Object.fromEntries(
+        (["openaiApiKey", "openrouterApiKey", "anthropicApiKey"] as const)
+          .filter((field) => overrides[field] !== undefined)
+          .map((field) => [field, overrides[field]])
+      ),
       ...("aiModel" in overrides ? { aiModel: overrides.aiModel } : {})
     })}\n`,
     "utf8"

@@ -129,7 +129,7 @@ export async function createDoctorReport(
   ];
 
   if (config) {
-    checks.push(createAiApiKeyCheck(config.aiProvider, env, config));
+    checks.push(createAiApiKeyCheck(config, env));
     const aiModelCheck = createAiModelCheck(config);
     if (aiModelCheck) {
       checks.push(aiModelCheck);
@@ -360,11 +360,10 @@ async function createLegacyExportCheck(
 }
 
 function createAiApiKeyCheck(
-  aiProvider: string,
-  env: Record<string, string | undefined>,
-  config: unknown
+  config: DoctorConfig,
+  env: Record<string, string | undefined>
 ): DoctorCheck {
-  const normalizedProvider = aiProvider.trim().toLowerCase();
+  const normalizedProvider = config.aiProvider.trim().toLowerCase();
   const providerIsSupported = Object.prototype.hasOwnProperty.call(
     aiProviderEnvKeys,
     normalizedProvider
