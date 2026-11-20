@@ -552,19 +552,26 @@ async function findReusableContainer(
     return undefined;
   }
 
+  // The saved container may already be live if a publish response was lost:
+  // start over only once Meta positively says it can no longer be published.
   const stage = "컨테이너 재사용 확인";
-  const code = await graph
-    .get(`/${id}`, { fields: "status_code" }, stage)
-    .then((body) => (typeof body.status_code === "string" ? body.status_code : ""))
-    .catch(() => "");
+  const body = await graph.get(`/${id}`, { fields: "status_code" }, stage);
+  const code = typeof body.status_code === "string" ? body.status_code : "";
   if (code === "PUBLISHED") {
     throw new PublishStop(ALREADY_PUBLISHED_CONTAINER_MESSAGE, PUBLISH_FAILED_EXIT_CODE, stage);
   }
   if (code === "FINISHED" || code === "IN_PROGRESS") {
     return { id, createdAt };
   }
-  io.stdout("재시도: 기존 컨테이너를 쓸 수 없어 처음부터 게시합니다.");
-  return undefined;
+  if (code === "ERROR" || code === "EXPIRED") {
+    io.stdout(`재시도: 기존 컨테이너가 ${code} 상태라 처음부터 게시합니다.`);
+    return undefined;
+  }
+  throw new PublishStop(
+    `기존 컨테이너 상태를 확인하지 못했습니다 (${code || "응답에 상태 없음"}). 중복 게시를 막으려고 멈춥니다. 잠시 뒤 다시 --retry 하세요.`,
+    PUBLISH_FAILED_EXIT_CODE,
+    stage
+  );
 }
 
 async function readPublishAttempt(draftPath: string): Promise<PublishAttempt | null> {

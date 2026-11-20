@@ -80,6 +80,8 @@ type FakeGraphOptions = {
   permalinkError?: boolean;
   /** HTTP statuses media_publish returns before succeeding (UNC-298). */
   publishFailures?: number[];
+  /** Container status lookups answer 500 (UNC-298). */
+  containerStatusError?: boolean;
 };
 
 function fakeGraph(options: FakeGraphOptions = {}) {
@@ -146,6 +148,9 @@ function fakeGraph(options: FakeGraphOptions = {}) {
       return json({ id: "media-1", permalink: PERMALINK });
     }
     if (method === "GET" && /^\/(child-\d+|carousel-1)$/.test(path)) {
+      if (options.containerStatusError) {
+        return json({ error: { message: "Service unavailable", code: 2 } }, 500);
+      }
       const id = path.slice(1);
       const check = checks.get(id) ?? 0;
       checks.set(id, check + 1);
@@ -765,5 +770,42 @@ describe("publish instagram failure record and --retry (UNC-298)", () => {
     expect(result.exitCode).toBe(7);
     expect(result.stderr).toContain("게시 실패 [게시]");
     expect(env.graph.writes().filter((w) => w.path.endsWith("/media_publish")).length).toBe(3);
+  });
+
+  it("--retry stops without uploading when the stored container's status cannot be read", async () => {
+    const env = await setup({ graph: { publishError: true } });
+    await run(["publish", "instagram", "--yes"], env.options);
+    const putsBefore = env.s3.count("PUT");
+
+    const graph = fakeGraph({ containerStatusError: true });
+    const result = await run(["publish", "instagram", "--retry", "--yes"], {
+      ...env.options,
+      graphFetch: graph.fetch,
+      now: () => "2026-11-21T10:00:00.000Z"
+    });
+
+    expect(result.exitCode).toBe(7);
+    expect(result.stderr).toContain("컨테이너 재사용 확인");
+    expect(env.s3.count("PUT")).toBe(putsBefore);
+    expect(graph.writes()).toEqual([]);
+    expect(await readAttempt(env.draftPath)).toMatchObject({ carouselContainerId: "carousel-1" });
+  });
+
+  it("--retry starts over when the stored container has EXPIRED", async () => {
+    const env = await setup({ graph: { publishError: true } });
+    await run(["publish", "instagram", "--yes"], env.options);
+    const putsBefore = env.s3.count("PUT");
+
+    const graph = fakeGraph({
+      status: (id) => ({ status_code: id === "carousel-1" ? "EXPIRED" : "FINISHED" })
+    });
+    const result = await run(["publish", "instagram", "--retry", "--yes"], {
+      ...env.options,
+      graphFetch: graph.fetch,
+      now: () => "2026-11-21T10:00:00.000Z"
+    });
+
+    expect(result.stdout).toContain("EXPIRED");
+    expect(env.s3.count("PUT")).toBeGreaterThan(putsBefore);
   });
 });
