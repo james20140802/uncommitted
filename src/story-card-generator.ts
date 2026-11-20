@@ -1,4 +1,5 @@
 import type { ActivitySummary } from "./activity-summary.js";
+import { buildAltitudeLines } from "./altitude-instructions.js";
 import {
   AiGenerationError,
   createAiGenerationRequest,
@@ -173,6 +174,9 @@ export function buildStoryCardInstructions(options: {
       ? "Today is a quiet day. Say so honestly — a quiet day is valid content. Do not manufacture activity to fill the cards."
       : "Anchor each card in the actual activity given in the input summary.",
     "",
+    // UNC-308: story 원고와 **같은 모듈이 소유한 같은 고도 규칙 문장**을 붙인다.
+    // 원고 압축 규칙보다 앞에 둬, 원고에서 온 내부 개념어도 바꿔 쓰게 한다.
+    ...buildAltitudeLines("card"),
     // UNC-286: 스토리·캡션과 **같은 모듈이 소유한 같은 문장**을 붙인다.
     ...buildKoreanSurfaceLines("card"),
     buildKoreanEnglishMixLine(options.koreanEnglishMix ?? "low"),

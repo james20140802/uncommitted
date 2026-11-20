@@ -1,4 +1,8 @@
 import { describe, expect, it } from "vitest";
+import {
+  ALTITUDE_RULES,
+  buildAltitudeLines
+} from "../src/altitude-instructions.js";
 import { AiGenerationError, MockAiProvider } from "../src/ai-provider.js";
 import type {
   AiProvider,
@@ -1800,6 +1804,37 @@ describe("caption generator", () => {
       expect(captionInstructions).toContain(line);
       expect(diaryInstructions).toContain(line);
     }
+  });
+
+  it("widens the story manuscript altitude rule to project-internal concepts, sharing the card sentence (UNC-308)", async () => {
+    const provider = new MockAiProvider({
+      response: createProviderDraft()
+    });
+
+    await generateDiaryDraft({
+      activitySummary: createActivitySummary(),
+      storyFormatPlan: createStoryFormatPlan({ suggestedSlideCount: 4 }),
+      provider,
+      persona: "wry coworker",
+      roastLevel: 2
+    });
+
+    const diaryInstructions = provider.requests[0]?.instructions ?? "";
+
+    for (const line of buildAltitudeLines("card")) {
+      expect(diaryInstructions).toContain(line);
+    }
+    expect(diaryInstructions).toContain(ALTITUDE_RULES.insiderTerms);
+  });
+
+  it("leaves the caption altitude rule unchanged (UNC-308 out of scope)", () => {
+    const captionInstructions = buildCaptionInstructions({
+      quiet: false,
+      persona: captionTestPersona,
+      moodPlan: captionTestMoodPlan
+    });
+
+    expect(captionInstructions).not.toContain(ALTITUDE_RULES.insiderTerms);
   });
 
   it("still rejects a quiet-day caption that hides fabrication behind universal framing (UNC-251)", async () => {

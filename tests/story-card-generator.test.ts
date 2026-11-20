@@ -22,6 +22,10 @@ import {
 } from "../src/korean-surface-instructions.js";
 import { ARCHITECTURE_DISCLOSURE_REPLACEMENT } from "../src/architecture-disclosure.js";
 import {
+  ALTITUDE_RULES,
+  buildAltitudeLines
+} from "../src/altitude-instructions.js";
+import {
   STORY_CARD_MAX_ATTEMPTS,
   STORY_CARD_SURFACE_RULES,
   STORY_MANUSCRIPT_CARD_RULES,
@@ -138,6 +142,41 @@ describe("buildStoryCardInstructions", () => {
 
     expect(instructions.toLowerCase()).toContain("html");
     expect(instructions.toLowerCase()).toContain("label");
+  });
+
+  it("attaches the shared altitude and insider-term rule to the card prompt (UNC-308)", () => {
+    for (const hasStoryManuscript of [false, true]) {
+      const instructions = buildStoryCardInstructions({
+        quiet: false,
+        cardCount: 4,
+        candidates: listStoryCardCandidateProjections(createSummary()),
+        hasStoryManuscript
+      });
+
+      for (const line of buildAltitudeLines("card")) {
+        expect(instructions).toContain(line);
+      }
+    }
+  });
+
+  it("keeps manuscript compression and summary-facts-first rules alongside the altitude rule (UNC-308)", () => {
+    const instructions = buildStoryCardInstructions({
+      quiet: false,
+      cardCount: 4,
+      candidates: listStoryCardCandidateProjections(createSummary()),
+      hasStoryManuscript: true
+    });
+
+    for (const line of STORY_MANUSCRIPT_CARD_RULES) {
+      expect(instructions).toContain(line);
+    }
+    expect(instructions).toContain(
+      "- Do NOT invent commits, bugs, features, or activity that is not in the input summary."
+    );
+    // 고도 규칙은 원고 압축 규칙보다 먼저 나와, 원고에서 온 내부 개념어도 바꿔 쓰게 한다
+    expect(instructions.indexOf(ALTITUDE_RULES.insiderTerms)).toBeLessThan(
+      instructions.indexOf(STORY_MANUSCRIPT_CARD_RULES[0]!)
+    );
   });
 });
 
