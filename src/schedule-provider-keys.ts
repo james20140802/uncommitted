@@ -170,7 +170,7 @@ type ProviderKeyUpdate = {
  * (collision-resistant name; cleaned up on failure) is created at 0600 and
  * renamed over the target — the secret never sits on disk at a looser mode.
  */
-async function atomicWriteConfig(
+export async function atomicWriteConfig(
   configFile: string,
   config: Record<string, unknown>
 ): Promise<void> {
