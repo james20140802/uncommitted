@@ -1,4 +1,4 @@
-import { mkdtemp, open, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, open, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DraftStorageError, readLatestDraftPointer } from "./draft-storage.js";
@@ -7,7 +7,12 @@ import {
   resolveLatestRevForDate,
   resolveSpecificRev
 } from "./draft-revision-resolver.js";
-import { ExportCommandError, exportErrorExitCode, readSafetyInfo } from "./export-command.js";
+import {
+  assertDraftIsComplete,
+  ExportCommandError,
+  exportErrorExitCode,
+  readSafetyInfo
+} from "./export-command.js";
 import {
   GRAPH_API_BASE,
   type GraphFetch,
@@ -91,21 +96,176 @@ export async function runPublishInstagram(
   rawIo: PublishIo
 ): Promise<number> {
   const secrets: string[] = [];
-  const io: PublishIo = {
-    stdout: (line) => rawIo.stdout(scrubOutput(line, secrets)),
-    stderr: (line) => rawIo.stderr(scrubOutput(line, secrets))
-  };
+  const io = scrubbedIo(rawIo, secrets);
 
-  let workDir: string | undefined;
-  let lockPath: string | undefined;
   try {
     const parsed = parseArgs(args);
     const draft = await resolveDraft(deps.draftRoot, parsed);
+    const result = await executePublish(draft, parsed, deps, io, secrets);
+    if (result.kind === "published") {
+      io.stdout(`게시됨: ${result.permalink ?? `media ID ${result.mediaId}`}`);
+    }
+    return 0;
+  } catch (error) {
+    const stop = toPublishStop(error);
+    io.stderr(
+      stop.stage
+        ? `게시 실패 [${stop.stage}]: ${stop.message}${stop.stage === "게시" || stop.stage === "게시 기록 저장" ? "" : " Instagram에는 게시되지 않았습니다."}`
+        : stop.message
+    );
+    return stop.exitCode;
+  }
+}
 
+// ---------------------------------------------------------------------------
+// Scheduled auto-publish (UNC-297)
+// ---------------------------------------------------------------------------
+
+/** Why a scheduled run did not publish. A skip is not a failure. */
+export type PublishSkipReason =
+  | "safety-warning"
+  | "safety-blocked"
+  | "incomplete-draft"
+  | "already-published"
+  | "user-skip"
+  | "no-draft";
+
+/** Result of one automatic publish attempt; drives `schedule status` and the log. */
+export type PublishOutcome =
+  | {
+      kind: "published";
+      date: string;
+      revision: string;
+      mediaId: string;
+      permalink: string | null;
+    }
+  | { kind: "skipped"; reason: PublishSkipReason; date: string; revision?: string }
+  | { kind: "failed"; stage: string; message: string; date: string; revision?: string };
+
+/** Stage name when a failure happens before any Graph API step (account, hosting config). */
+export const PUBLISH_PREPARE_STAGE = "게시 준비";
+
+/**
+ * Publish the latest revision of `date` without asking (`--yes` semantics).
+ * Never throws: skip conditions come back as `skipped` before any account,
+ * keychain or network access, and every failure comes back as `failed` with
+ * the stage it happened in. Progress lines go to `io`, scrubbed of secrets.
+ */
+export async function autoPublishInstagram(
+  deps: PublishDeps,
+  options: { date: string },
+  rawIo: PublishIo
+): Promise<PublishOutcome> {
+  const secrets: string[] = [];
+  const io = scrubbedIo(rawIo, secrets);
+  const date = options.date;
+  let revision: string | undefined;
+
+  try {
+    const resolved = await resolveLatestRevForDate(deps.draftRoot, date);
+    if (!resolved) {
+      return { kind: "skipped", reason: "no-draft", date };
+    }
+    revision = resolved.revision;
+    const draft: ResolvedDraft = { targetDate: date, revision, path: resolved.outputDir };
+
+    if (await readPublishRecord(draft.path)) {
+      return { kind: "skipped", reason: "already-published", date, revision };
+    }
+    if (!(await isDraftComplete(draft.path))) {
+      return { kind: "skipped", reason: "incomplete-draft", date, revision };
+    }
+    const safety = await readSafetyInfo(draft.path);
+    if (safety.status !== "safe") {
+      return {
+        kind: "skipped",
+        reason: safety.status === "blocked" ? "safety-blocked" : "safety-warning",
+        date,
+        revision
+      };
+    }
+
+    const result = await executePublish(
+      draft,
+      { yes: true, dryRun: false },
+      deps,
+      io,
+      secrets
+    );
+    if (result.kind === "published") {
+      return {
+        kind: "published",
+        date,
+        revision,
+        mediaId: result.mediaId,
+        permalink: result.permalink
+      };
+    }
+    // A concurrent run published it between our check and the lock.
+    return { kind: "skipped", reason: "already-published", date, revision };
+  } catch (error) {
+    const stop =
+      error instanceof PublishStop ||
+      error instanceof ExportCommandError ||
+      error instanceof HostingError
+        ? toPublishStop(error)
+        : new PublishStop(
+            error instanceof Error ? error.message : String(error),
+            PUBLISH_FAILED_EXIT_CODE
+          );
+    return {
+      kind: "failed",
+      stage: stop.stage ?? PUBLISH_PREPARE_STAGE,
+      message: scrubOutput(stop.message, secrets),
+      date,
+      ...(revision ? { revision } : {})
+    };
+  }
+}
+
+/** Draft has a carousel and caption and is not marked incomplete. */
+async function isDraftComplete(draftPath: string): Promise<boolean> {
+  try {
+    await assertDraftIsComplete(draftPath);
+    await readFile(join(draftPath, "caption.txt"), "utf8");
+    const pngs = (await readdir(join(draftPath, "carousel"))).filter((name) =>
+      name.toLowerCase().endsWith(".png")
+    );
+    return pngs.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Shared publish flow
+// ---------------------------------------------------------------------------
+
+type ExecuteResult =
+  | { kind: "already-published" }
+  | { kind: "dry-run" }
+  | { kind: "cancelled" }
+  | { kind: "published"; mediaId: string; permalink: string | null };
+
+/**
+ * Record check → lock → safety → account → hosting → media prep → quota →
+ * preview → confirm → carousel publish → record. Throws {@link PublishStop}
+ * with the stage on failure; callers decide how to report it.
+ */
+async function executePublish(
+  draft: ResolvedDraft,
+  parsed: Pick<PublishArgs, "yes" | "dryRun">,
+  deps: PublishDeps,
+  io: PublishIo,
+  secrets: string[]
+): Promise<ExecuteResult> {
+  let workDir: string | undefined;
+  let lockPath: string | undefined;
+  try {
     const existing = await readPublishRecord(draft.path);
     if (existing) {
       io.stdout(`이미 게시됨: ${existing.permalink ?? `(permalink 없음, media ID ${existing.mediaId})`}`);
-      return 0;
+      return { kind: "already-published" };
     }
 
     if (!parsed.dryRun) {
@@ -114,7 +274,7 @@ export async function runPublishInstagram(
       const raced = await readPublishRecord(draft.path);
       if (raced) {
         io.stdout(`이미 게시됨: ${raced.permalink ?? `(permalink 없음, media ID ${raced.mediaId})`}`);
-        return 0;
+        return { kind: "already-published" };
       }
     }
 
@@ -168,7 +328,7 @@ export async function runPublishInstagram(
     if (parsed.dryRun) {
       if (warning) io.stderr(warning);
       io.stdout("검증 통과. dry-run이라 업로드와 게시를 하지 않았습니다.");
-      return 0;
+      return { kind: "dry-run" };
     }
 
     if (parsed.yes) {
@@ -185,7 +345,7 @@ export async function runPublishInstagram(
         : "Instagram에 게시할까요? [y/N]";
       if (!(await deps.confirm(question))) {
         io.stdout("게시를 취소했습니다. 아무것도 올리지 않았습니다.");
-        return 0;
+        return { kind: "cancelled" };
       }
     }
 
@@ -268,16 +428,7 @@ export async function runPublishInstagram(
       });
     }
 
-    io.stdout(`게시됨: ${permalink ?? `media ID ${mediaId}`}`);
-    return 0;
-  } catch (error) {
-    const stop = toPublishStop(error);
-    io.stderr(
-      stop.stage
-        ? `게시 실패 [${stop.stage}]: ${stop.message}${stop.stage === "게시" || stop.stage === "게시 기록 저장" ? "" : " Instagram에는 게시되지 않았습니다."}`
-        : stop.message
-    );
-    return stop.exitCode;
+    return { kind: "published", mediaId, permalink };
   } finally {
     if (lockPath) {
       await rm(lockPath, { force: true });
@@ -286,6 +437,13 @@ export async function runPublishInstagram(
       await rm(workDir, { recursive: true, force: true });
     }
   }
+}
+
+function scrubbedIo(rawIo: PublishIo, secrets: string[]): PublishIo {
+  return {
+    stdout: (line) => rawIo.stdout(scrubOutput(line, secrets)),
+    stderr: (line) => rawIo.stderr(scrubOutput(line, secrets))
+  };
 }
 
 // ---------------------------------------------------------------------------
