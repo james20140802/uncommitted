@@ -1,4 +1,5 @@
 import type { ActivityLevel, ActivitySummary } from "./activity-summary.js";
+import { buildAltitudeLines } from "./altitude-instructions.js";
 import {
   AiGenerationError,
   createAiGenerationRequest,
@@ -443,16 +444,6 @@ function buildHighlights(summary: ActivitySummary, quiet: boolean): string[] {
 }
 
 /**
- * 고도 규칙 (UNC-248). 카드 슬롯 프롬프트와 캡션 프롬프트가 같은 문구를 쓰도록
- * 한 곳에서만 정의한다. 두 번째 줄은 "보편화가 지어내기로 번지는" 실패 모드를
- * 막는 경계이며, 첫 줄과 반드시 붙어 있어야 한다.
- */
-const ALTITUDE_RULE_LINES = [
-  "Altitude rule: raise the framing, never the facts. Describe the work you were given as a situation any developer would recognize, instead of naming the specific ticket, screen, module, or file it happened in.",
-  "Raising altitude means rewording the same event. It never means adding one: do not invent work, drama, stakes, or consequences the activity summary does not support. Universal does not mean vague: the framing must still be specific enough that only today's work fits it. If the line could be published unchanged on any other day, it is too high."
-] as const;
-
-/**
  * 반어(deadpan) 프레임 규칙 (UNC-249). 고도 규칙이 만든 보편 프레이밍을
  * "딱 잘라 진지하게" 전달하는 어조 기법이다. roastLevel과 직교하며 기존
  * roast 경계를 대체하지 않는다 — 세 번째 줄이 사람을 향한 반어를 명시적으로
@@ -492,7 +483,7 @@ function buildDiaryInstructions(options: {
     "Each slide must include index, title, body, and visualMood.",
     "Prefer 3-5 slides for quiet or low activity days; this is guidance, not a hard validation limit.",
     "Do not invent work, commits, bugs, features, shipped changes, or user activity.",
-    ...ALTITUDE_RULE_LINES,
+    ...buildAltitudeLines("story"),
     ...DEADPAN_FRAME_LINES,
     ...buildKoreanSurfaceLines("story"),
     buildKoreanEnglishMixLine(options.koreanEnglishMix),
@@ -615,7 +606,7 @@ export function buildCaptionInstructions(options: {
     quietInstruction,
     "If rawNarrativeProjection is present, you may use its turns as concrete anchors for what actually happened today; it is already safety-filtered. Never copy it verbatim and never invent work it does not support.",
     "Translate developer jargon and any project-internal English noun phrase (PR numbers, version tags, module or file names, commit hashes, internal screen names) into human stakes — what it actually meant for a person — instead of printing the raw term. Example: an \"archive-context PR\" becomes \"뒤로가기 버튼을 못 믿는 하루\", not the literal PR name. Someone who has never touched this project should still be able to read the caption and relate to it.",
-    ...ALTITUDE_RULE_LINES,
+    ...buildAltitudeLines("caption"),
     ...DEADPAN_FRAME_LINES,
     ...buildKoreanSurfaceLines("caption"),
     ...buildCaptionSkeletonLines(options.storyCardGist),
