@@ -186,6 +186,31 @@ uncommitted publish skip                   # 오늘 자동 게시를 막기
 
 매일 `schedule run-now`가 드래프트를 만든 뒤 safe 드래프트만 게시합니다. 지연, 건너뛰는 조건, 결과 확인은 `docs/scheduler.md`의 "Auto-publish to Instagram"을 보세요.
 
+## 11. 점검과 재시도
+
+```sh
+uncommitted doctor                          # Instagram 항목까지 한 번에 점검
+uncommitted publish instagram --retry --yes # 실패한 게시를 다시 시도
+```
+
+`doctor`는 Instagram이 연결돼 있으면 다음을 확인합니다. 토큰과 시크릿 값은 출력하지 않습니다.
+
+- 연결: 연결된 handle
+- 토큰: 유효·만료 여부와 남은 일수. 시스템 사용자 토큰은 자동 갱신이 없어서 7일 안에 만료되면 경고, 만료·무효면 실패(exit 2)로 표시하고 `uncommitted instagram connect`를 다시 하라고 안내합니다.
+- 권한: `instagram_content_publish`
+- 호스팅: `instagram host test`와 같은 업로드 → 공개 URL 확인 → 삭제를 실제로 한 번 합니다.
+- 게시 한도: 24시간 `content_publishing_limit` 사용량
+
+연결하지 않았다면 "연결 안 됨" 한 줄만 나오고 네트워크를 쓰지 않습니다. 스케줄 자동 게시가 켜져 있으면 `schedule status`에도 토큰 경고가 함께 나옵니다.
+
+게시가 실패하면 리비전 폴더에 `publish-attempt.json`(실패 단계, 메시지, 시각, 캐러셀 컨테이너 ID)이 남습니다. 토큰, 시크릿, presigned URL은 넣지 않습니다.
+
+- `--retry`는 이 기록에 24시간이 안 된 캐러셀 컨테이너가 있고 아직 쓸 수 있으면, 이미지를 다시 올리지 않고 `media_publish`만 다시 호출합니다. 컨테이너가 없거나 24시간이 지났거나 만료됐으면 처음부터 게시합니다.
+- 기록된 컨테이너가 이미 게시된 상태(PUBLISHED)면 중복 게시를 막으려고 멈춥니다. Instagram에서 게시물을 확인하세요.
+- 게시가 성공하면 `publish-attempt.json`을 지웁니다.
+
+Graph API의 일시적 오류(5xx, 네트워크 끊김)는 각 단계 안에서 2초, 5초 뒤 최대 2번 다시 시도합니다. 4xx는 다시 시도하지 않고 바로 실패를 보고합니다. `media_publish`는 다시 시도하기 전에 컨테이너가 이미 게시됐는지 확인합니다.
+
 ## 문제 해결
 
 | 메시지 | 원인과 조치 |
@@ -196,3 +221,4 @@ uncommitted publish skip                   # 오늘 자동 게시를 막기
 | 토큰을 검사하지 못했습니다 | 앱 시크릿이 다른 앱의 값이거나 틀렸습니다. 3-4의 값을 다시 저장하세요. |
 | 24시간 게시 한도에 도달했습니다 | Instagram API 게시 한도(24시간)를 다 썼습니다. 한도가 풀린 뒤 다시 실행하세요. |
 | 게시 실패 [하위 컨테이너 처리] | Meta가 이미지를 가져오지 못했거나 거절했습니다. 함께 나온 Meta 메시지를 보고, `uncommitted instagram host test`로 호스팅부터 확인하세요. |
+| 이 컨테이너는 이미 게시됐습니다 | 응답을 받기 전에 게시가 끝났습니다. Instagram에서 게시물을 확인하고, 맞다면 `publish-record.json`을 직접 남기세요. |

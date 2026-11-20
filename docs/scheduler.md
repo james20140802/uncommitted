@@ -162,6 +162,11 @@ latest revision of the day as a carousel without asking (`publish instagram
 The last result reads `건너뜀: <reason>` for a skip or `실패 [<stage>]: <message>`
 for a failure.
 
+When auto-publish is on, `schedule status` also checks the Instagram token and
+adds a `경고: Instagram 토큰 — …` line when it is missing, invalid, or expires
+within 7 days. After a failed run, `uncommitted publish instagram --retry --yes`
+retries that day's draft (see `docs/instagram-setup.md` section 11).
+
 ---
 
 ## Log files
