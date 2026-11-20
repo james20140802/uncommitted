@@ -41,8 +41,8 @@ export const commands: Command[] = [
   },
   {
     name: "instagram",
-    summary: "Connect an Instagram account for publishing.",
-    subcommands: ["connect", "status", "disconnect"]
+    summary: "Connect an Instagram account and image hosting for publishing.",
+    subcommands: ["connect", "status", "disconnect", "host"]
   },
   {
     name: "persona",

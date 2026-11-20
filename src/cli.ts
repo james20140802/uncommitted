@@ -111,6 +111,14 @@ import {
   instagramStatus
 } from "./instagram-account.js";
 import type { KeychainRunner } from "./keychain-store.js";
+import {
+  HOST_SET_USAGE,
+  type HostingFetch,
+  type HostSetInput,
+  imageHostingStatus,
+  setImageHosting,
+  testImageHosting
+} from "./instagram-hosting.js";
 
 /**
  * Thrown by readPreviewDraftRoot when config.json is unreadable, malformed,
@@ -186,6 +194,8 @@ export type CliOptions = {
   keychainRunner?: KeychainRunner;
   /** Injectable Meta Graph API fetch (tests). */
   graphFetch?: GraphFetch;
+  /** Injectable S3-compatible storage fetch for image hosting (tests). */
+  hostingFetch?: HostingFetch;
   /** Injectable stdin reader for `--*-from-stdin` options (tests). */
   readStdin?: () => Promise<string>;
 };
@@ -611,7 +621,10 @@ const INSTAGRAM_USAGE = [
   "Usage:",
   "  uncommitted instagram connect --ig-user-id <ID> [--app-id <ID>] [--token-from-stdin | --app-secret-from-stdin]",
   "  uncommitted instagram status",
-  "  uncommitted instagram disconnect"
+  "  uncommitted instagram disconnect",
+  "  uncommitted instagram host set --endpoint <https://...> --bucket <name> [--region auto] [--public-base-url <https://...>] [--keys-from-stdin]",
+  "  uncommitted instagram host status",
+  "  uncommitted instagram host test"
 ].join("\n");
 
 async function runInstagram(
@@ -668,6 +681,62 @@ async function runInstagram(
     result = await instagramStatus(deps);
   } else if (subcommand === "disconnect" && rest.length === 0) {
     result = await disconnectInstagram(deps);
+  } else if (subcommand === "host") {
+    return runInstagramHost(rest, io, options);
+  } else {
+    io.stderr(INSTAGRAM_USAGE);
+    return 1;
+  }
+
+  for (const line of result.stdout) io.stdout(line);
+  for (const line of result.stderr) io.stderr(line);
+  return result.exitCode;
+}
+
+const HOST_SET_FLAGS: Record<string, keyof Omit<HostSetInput, "keysFromStdin">> = {
+  "--endpoint": "endpoint",
+  "--bucket": "bucket",
+  "--region": "region",
+  "--public-base-url": "publicBaseUrl",
+  "--access-key-service": "accessKeyIdKeychainService",
+  "--secret-key-service": "secretAccessKeyKeychainService"
+};
+
+async function runInstagramHost(
+  args: string[],
+  io: CliIo,
+  options: CliOptions
+): Promise<number> {
+  const [subcommand, ...rest] = args;
+  const deps = {
+    homeDir: options.homeDir,
+    keychainRunner: options.keychainRunner,
+    hostingFetch: options.hostingFetch
+  };
+
+  let result: InstagramCommandResult;
+  if (subcommand === "set") {
+    const input: HostSetInput = {};
+    let keysFromStdin = false;
+    for (let i = 0; i < rest.length; i++) {
+      const field = HOST_SET_FLAGS[rest[i]];
+      if (field && i + 1 < rest.length) {
+        input[field] = rest[++i];
+      } else if (rest[i] === "--keys-from-stdin") {
+        keysFromStdin = true;
+      } else {
+        io.stderr(HOST_SET_USAGE);
+        return 1;
+      }
+    }
+    if (keysFromStdin) {
+      input.keysFromStdin = await (options.readStdin ?? readProcessStdin)();
+    }
+    result = await setImageHosting(input, deps);
+  } else if (subcommand === "status" && rest.length === 0) {
+    result = await imageHostingStatus(deps);
+  } else if (subcommand === "test" && rest.length === 0) {
+    result = await testImageHosting(deps);
   } else {
     io.stderr(INSTAGRAM_USAGE);
     return 1;

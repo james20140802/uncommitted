@@ -105,6 +105,58 @@ uncommitted instagram disconnect
 config의 연결 정보와 config에 저장한 비밀값을 지웁니다. 키체인 항목은 지우지 않고
 지우는 명령을 안내합니다.
 
+## 8. 게시용 이미지 임시 호스팅 (S3 호환)
+
+Instagram API는 이미지를 공개 URL로만 받습니다. 게시할 때 이미지를 S3 호환
+스토리지(Cloudflare R2, AWS S3 등)에 잠깐 올리고, 게시가 끝나면(성공이든 실패든)
+지웁니다. 객체 키는 `uncommitted/<랜덤>/01.jpg` 형태로, 날짜·프로젝트명·경로를 담지 않습니다.
+
+### 8-1. 버킷 준비 (R2 예시)
+
+1. Cloudflare 대시보드 → R2 → 버킷을 만듭니다.
+2. 버킷 설정 → 수명 주기 규칙에 "1일 후 삭제"를 넣어 둡니다(정리 실패 대비).
+3. R2 → API 토큰 관리 → 이 버킷 범위의 **객체 읽기/쓰기** 토큰을 만들고 access key ID와
+   secret access key를 받아 둡니다.
+4. endpoint는 `https://<계정ID>.r2.cloudflarestorage.com`, region은 `auto`입니다.
+
+### 8-2. 공개 URL 방식: presigned URL vs 공개 버킷
+
+- **presigned URL (기본, 권장)**: 버킷은 비공개로 두고, 게시할 때 1시간 동안만 유효한
+  서명된 GET URL을 Meta에 넘깁니다. 추가 설정이 필요 없습니다.
+- **공개 버킷 + base URL**: 버킷에 공개 도메인(r2.dev 또는 커스텀 도메인)을 연결했다면
+  `--public-base-url https://<도메인>`을 지정합니다. 이 경우 URL에 서명이 붙지 않고,
+  삭제 전까지 누구나 받을 수 있습니다.
+
+### 8-3. 키 저장과 설정
+
+키는 5번과 같은 순서(키체인 → config 0600)로 읽습니다.
+
+```sh
+# 키체인 (권장): 각 값을 복사한 뒤
+security add-generic-password -a uncommitted -s r2-access-key-id -w "$(pbpaste)"
+security add-generic-password -a uncommitted -s r2-secret-access-key -w "$(pbpaste)"
+
+uncommitted instagram host set --endpoint https://<계정ID>.r2.cloudflarestorage.com --bucket <버킷>
+```
+
+키체인을 쓰지 않으면 두 줄(access key ID, secret access key)을 stdin으로 넘겨 config(0600)에
+저장합니다.
+
+```sh
+printf '%s\n%s\n' <ACCESS_KEY_ID> <SECRET_ACCESS_KEY> | uncommitted instagram host set --endpoint <...> --bucket <...> --keys-from-stdin
+```
+
+키체인 항목 이름은 `--access-key-service`, `--secret-key-service`로 바꿀 수 있습니다.
+
+### 8-4. 확인
+
+```sh
+uncommitted instagram host status   # 설정과 키 출처(keychain/config)만 표시
+uncommitted instagram host test     # 업로드 → 익명 GET → 삭제 → 삭제 확인
+```
+
+`host test`는 성공하면 `호스팅 OK` 한 줄을, 실패하면 실패한 단계와 HTTP 상태를 한 줄로 알려 줍니다.
+
 ## 문제 해결
 
 | 메시지 | 원인과 조치 |
