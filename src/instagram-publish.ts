@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, open, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DraftStorageError, readLatestDraftPointer } from "./draft-storage.js";
@@ -36,6 +36,8 @@ import { isRecord } from "./type-guards.js";
 /** Exit code for a publish that failed after local validation (AGENTS.md). */
 export const PUBLISH_FAILED_EXIT_CODE = 7;
 export const PUBLISH_RECORD_FILE = "publish-record.json";
+/** Per-revision lock held from the record check until the record is written. */
+export const PUBLISH_LOCK_FILE = "publish.lock";
 export const CONTAINER_POLL_INTERVAL_MS = 60_000;
 export const CONTAINER_POLL_TIMEOUT_MS = 5 * 60_000;
 /** Fallback when Meta omits `config.quota_total` (documented 24-hour limit). */
@@ -95,6 +97,7 @@ export async function runPublishInstagram(
   };
 
   let workDir: string | undefined;
+  let lockPath: string | undefined;
   try {
     const parsed = parseArgs(args);
     const draft = await resolveDraft(deps.draftRoot, parsed);
@@ -103,6 +106,16 @@ export async function runPublishInstagram(
     if (existing) {
       io.stdout(`이미 게시됨: ${existing.permalink ?? `(permalink 없음, media ID ${existing.mediaId})`}`);
       return 0;
+    }
+
+    if (!parsed.dryRun) {
+      lockPath = await acquireRevisionLock(draft.path);
+      // Re-check under the lock: a concurrent run may have just finished.
+      const raced = await readPublishRecord(draft.path);
+      if (raced) {
+        io.stdout(`이미 게시됨: ${raced.permalink ?? `(permalink 없음, media ID ${raced.mediaId})`}`);
+        return 0;
+      }
     }
 
     const safety = await readSafetyInfo(draft.path);
@@ -188,6 +201,9 @@ export async function runPublishInstagram(
       clock: deps.clock ?? (() => Date.now())
     };
 
+    const publishedAt = (deps.now ?? (() => new Date().toISOString()))();
+    const baseRecord = { platform: "instagram" as const, publishedAt, safetyStatus: media.safetyStatus };
+
     let stage = "이미지 업로드";
     const mediaId = await withHostedImages(
       host,
@@ -221,10 +237,15 @@ export async function runPublishInstagram(
         await waitUntilFinished(graph, [carousel], stage, poll);
 
         stage = "게시";
-        return requireId(
+        const published = requireId(
           await graph.post(`/${account.igUserId}/media_publish`, { creation_id: carousel }, stage),
           stage
         );
+        // The post is live: persist it before cleanup or permalink lookup, so
+        // an interrupted run can never publish this revision again.
+        stage = "게시 기록 저장";
+        await writePublishRecord(draft.path, { ...baseRecord, mediaId: published, permalink: null });
+        return published;
       },
       { onWarning: (message) => io.stderr(message) }
     ).catch((error: unknown) => {
@@ -234,7 +255,6 @@ export async function runPublishInstagram(
       throw error;
     });
 
-    // The post is live from here on: record it before anything else can fail.
     let permalink: string | null = null;
     try {
       const body = await graph.get(`/${mediaId}`, { fields: "permalink" }, "permalink 조회");
@@ -242,27 +262,10 @@ export async function runPublishInstagram(
     } catch {
       io.stderr("게시는 됐지만 permalink를 읽지 못했습니다. Instagram 앱에서 확인하세요.");
     }
-
-    const record: PublishRecord = {
-      platform: "instagram",
-      mediaId,
-      permalink,
-      publishedAt: (deps.now ?? (() => new Date().toISOString()))(),
-      safetyStatus: media.safetyStatus
-    };
-    try {
-      await writeFile(
-        join(draft.path, PUBLISH_RECORD_FILE),
-        `${JSON.stringify(record, null, 2)}\n`,
-        "utf8"
-      );
-    } catch {
-      // The post is live; say so, or a re-run would post it twice.
-      throw new PublishStop(
-        `게시는 됐지만 ${PUBLISH_RECORD_FILE}을 쓰지 못했습니다 (${permalink ?? `media ID ${mediaId}`}). 다시 실행하기 전에 기록을 직접 남기세요.`,
-        PUBLISH_FAILED_EXIT_CODE,
-        "게시 기록 저장"
-      );
+    if (permalink) {
+      await writePublishRecord(draft.path, { ...baseRecord, mediaId, permalink }).catch(() => {
+        io.stderr(`게시 기록에 permalink를 추가하지 못했습니다 (media ID ${mediaId}는 기록됨).`);
+      });
     }
 
     io.stdout(`게시됨: ${permalink ?? `media ID ${mediaId}`}`);
@@ -276,6 +279,9 @@ export async function runPublishInstagram(
     );
     return stop.exitCode;
   } finally {
+    if (lockPath) {
+      await rm(lockPath, { force: true });
+    }
     if (workDir) {
       await rm(workDir, { recursive: true, force: true });
     }
@@ -351,6 +357,41 @@ async function resolveDraft(draftRoot: string, args: PublishArgs): Promise<Resol
     );
   }
   return { targetDate: args.date, revision: resolved.revision, path: resolved.outputDir };
+}
+
+async function writePublishRecord(draftPath: string, record: PublishRecord): Promise<void> {
+  try {
+    await writeFile(
+      join(draftPath, PUBLISH_RECORD_FILE),
+      `${JSON.stringify(record, null, 2)}\n`,
+      "utf8"
+    );
+  } catch {
+    // The post is live; say so, or a re-run would post it twice.
+    throw new PublishStop(
+      `게시는 됐지만 ${PUBLISH_RECORD_FILE}을 쓰지 못했습니다 (media ID ${record.mediaId}). 다시 실행하기 전에 기록을 직접 남기세요.`,
+      PUBLISH_FAILED_EXIT_CODE,
+      "게시 기록 저장"
+    );
+  }
+}
+
+/** Exclusive create: a second concurrent run for the same revision refuses. */
+async function acquireRevisionLock(draftPath: string): Promise<string> {
+  const lockPath = join(draftPath, PUBLISH_LOCK_FILE);
+  try {
+    const handle = await open(lockPath, "wx");
+    await handle.close();
+    return lockPath;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+      throw new PublishStop(
+        `이 리비전을 다른 게시가 진행 중입니다 (${PUBLISH_LOCK_FILE}). 진행 중인 게시가 없다면 Instagram에서 게시 여부를 확인한 뒤 ${PUBLISH_LOCK_FILE}을 지우고 다시 실행하세요.`,
+        1
+      );
+    }
+    throw error;
+  }
 }
 
 async function readPublishRecord(draftPath: string): Promise<PublishRecord | null> {

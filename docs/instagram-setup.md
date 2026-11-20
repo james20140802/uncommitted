@@ -174,6 +174,7 @@ uncommitted publish instagram --date 2026-11-20 --revision rev-002
 - safety `blocked`면 업로드 전에 거절합니다(exit 6). `warning`이면 확인 프롬프트에 경고를 함께 보여 주고, `--yes`면 경고를 출력한 뒤 진행합니다.
 - 게시가 끝나면 리비전 폴더에 `publish-record.json`(`platform`, `mediaId`, `permalink`, `publishedAt`, `safetyStatus`)을 남깁니다. 이 파일이 있는 리비전은 다시 게시하지 않고 `이미 게시됨: <permalink>`를 출력합니다.
 - 컨테이너 처리는 1분 간격으로 최대 5분 기다립니다.
+- 게시 중에는 리비전 폴더에 `publish.lock`을 만들어 같은 리비전의 동시 게시를 막고, 끝나면 지웁니다. 강제 종료 등으로 남았다면 Instagram에서 게시 여부를 확인한 뒤 지우세요. `media_publish`가 성공하면 정리·permalink 조회 전에 `publish-record.json`을 먼저 씁니다.
 - 실패하면 `게시 실패 [단계]: 메시지` 한 줄과 exit 7로 끝납니다. 업로드한 임시 이미지는 성공·실패와 관계없이 지웁니다. 토큰과 presigned URL 서명은 출력하지 않습니다.
 
 ## 문제 해결

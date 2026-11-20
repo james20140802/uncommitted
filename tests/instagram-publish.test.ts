@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import sharp from "sharp";
@@ -534,6 +534,42 @@ describe("publish instagram", () => {
     const record = await readRecord(env.draftPath);
     expect(record.mediaId).toBe("media-1");
     expect(record.permalink).toBeNull();
+  });
+
+  it("records the media ID right after media_publish, before hosting cleanup", async () => {
+    const env = await setup();
+    const atCleanup: (Record<string, unknown> | null)[] = [];
+    const s3Fetch = env.options.hostingFetch!;
+    env.options.hostingFetch = async (url, init) => {
+      if (init?.method === "DELETE") {
+        atCleanup.push(await readRecord(env.draftPath).catch(() => null));
+      }
+      return s3Fetch(url, init);
+    };
+
+    const result = await run(["publish", "instagram", "--yes"], env.options);
+
+    expect(result.exitCode).toBe(0);
+    expect(atCleanup.length).toBeGreaterThan(0);
+    for (const record of atCleanup) {
+      expect(record).toMatchObject({ mediaId: "media-1", permalink: null });
+    }
+    expect((await readRecord(env.draftPath)).permalink).toBe(PERMALINK);
+  });
+
+  it("refuses while another publish holds the revision lock, and releases its own lock", async () => {
+    const env = await setup();
+    await writeFile(join(env.draftPath, "publish.lock"), "");
+
+    const blocked = await run(["publish", "instagram", "--yes"], env.options);
+    expect(blocked.exitCode).toBe(1);
+    expect(blocked.stderr).toContain("publish.lock");
+    expectNothingUploaded(env);
+
+    await rm(join(env.draftPath, "publish.lock"));
+    const result = await run(["publish", "instagram", "--yes"], env.options);
+    expect(result.exitCode).toBe(0);
+    await expect(readFile(join(env.draftPath, "publish.lock"))).rejects.toThrow();
   });
 
   it("AC6: a reached content_publishing_limit stops before uploading", async () => {
