@@ -10,7 +10,7 @@ import {
   readSecret,
   removeConfigSecrets,
   writeConfigSecret
-} from "../src/secret-store.js";
+} from "../src/keychain-store.js";
 
 const SPEC = { keychainService: "some-service", configKey: "someSecret" };
 

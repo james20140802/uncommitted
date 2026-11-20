@@ -110,7 +110,7 @@ import {
   type InstagramCommandResult,
   instagramStatus
 } from "./instagram-account.js";
-import type { KeychainRunner } from "./secret-store.js";
+import type { KeychainRunner } from "./keychain-store.js";
 
 /**
  * Thrown by readPreviewDraftRoot when config.json is unreadable, malformed,

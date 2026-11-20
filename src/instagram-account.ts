@@ -8,7 +8,7 @@ import {
   type SecretSpec,
   updateGlobalConfig,
   writeConfigSecret
-} from "./secret-store.js";
+} from "./keychain-store.js";
 import { isRecord } from "./type-guards.js";
 
 /**

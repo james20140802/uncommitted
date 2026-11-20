@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { runCli, type CliOptions } from "../src/cli.js";
 import { clearGlobalConfigCache } from "../src/global-config.js";
 import { buildLaunchAgentPlist, captureProviderEnv } from "../src/scheduler.js";
-import type { KeychainRunner } from "../src/secret-store.js";
+import type { KeychainRunner } from "../src/keychain-store.js";
 
 const TOKEN = "EAAtest-system-user-token-0123456789";
 const APP_SECRET = "app-secret-abcdef0123456789";
