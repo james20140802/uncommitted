@@ -103,6 +103,14 @@ import type { CarouselHtmlToPngRenderer } from "./carousel-renderer.js";
 import type { ImageAssetProvider } from "./visual-assets.js";
 import { isRecord } from "./type-guards.js";
 import { todayLocal } from "./local-date.js";
+import {
+  connectInstagram,
+  disconnectInstagram,
+  type GraphFetch,
+  type InstagramCommandResult,
+  instagramStatus
+} from "./instagram-account.js";
+import type { KeychainRunner } from "./secret-store.js";
 
 /**
  * Thrown by readPreviewDraftRoot when config.json is unreadable, malformed,
@@ -174,6 +182,12 @@ export type CliOptions = {
    * exercising the live per-source collectors.
    */
   collectInvokers?: Partial<CollectInvokerMap>;
+  /** Injectable `security` runner for keychain secret reads (tests). */
+  keychainRunner?: KeychainRunner;
+  /** Injectable Meta Graph API fetch (tests). */
+  graphFetch?: GraphFetch;
+  /** Injectable stdin reader for `--*-from-stdin` options (tests). */
+  readStdin?: () => Promise<string>;
 };
 
 const defaultIo: CliIo = {
@@ -318,6 +332,10 @@ export async function runCli(
 
     if (command === "feedback") {
       return await runFeedback(commandArgs, io, options);
+    }
+
+    if (command === "instagram") {
+      return await runInstagram(commandArgs, io, options);
     }
 
     io.stderr(`Command not implemented yet: ${command}`);
@@ -587,6 +605,85 @@ async function runSchedule(
 
   io.stderr("Usage: uncommitted schedule <install|status|remove|run-now> [options]");
   return 1;
+}
+
+const INSTAGRAM_USAGE = [
+  "Usage:",
+  "  uncommitted instagram connect --ig-user-id <ID> [--app-id <ID>] [--token-from-stdin | --app-secret-from-stdin]",
+  "  uncommitted instagram status",
+  "  uncommitted instagram disconnect"
+].join("\n");
+
+async function runInstagram(
+  args: string[],
+  io: CliIo,
+  options: CliOptions
+): Promise<number> {
+  const [subcommand, ...rest] = args;
+  const deps = {
+    homeDir: options.homeDir,
+    keychainRunner: options.keychainRunner,
+    graphFetch: options.graphFetch
+  };
+
+  let result: InstagramCommandResult;
+  if (subcommand === "connect") {
+    let igUserId: string | undefined;
+    let appId: string | undefined;
+    let tokenFromStdin = false;
+    let appSecretFromStdin = false;
+    for (let i = 0; i < rest.length; i++) {
+      const arg = rest[i];
+      if ((arg === "--ig-user-id" || arg === "--app-id") && i + 1 < rest.length) {
+        if (arg === "--ig-user-id") igUserId = rest[i + 1];
+        else appId = rest[i + 1];
+        i++;
+      } else if (arg === "--token-from-stdin") {
+        tokenFromStdin = true;
+      } else if (arg === "--app-secret-from-stdin") {
+        appSecretFromStdin = true;
+      } else {
+        io.stderr(INSTAGRAM_USAGE);
+        return 1;
+      }
+    }
+    if (tokenFromStdin && appSecretFromStdin) {
+      io.stderr("--token-from-stdin과 --app-secret-from-stdin은 한 번에 하나만 쓸 수 있습니다.");
+      return 1;
+    }
+    const stdinValue =
+      tokenFromStdin || appSecretFromStdin
+        ? await (options.readStdin ?? readProcessStdin)()
+        : undefined;
+    result = await connectInstagram(
+      {
+        igUserId,
+        appId,
+        tokenFromStdin: tokenFromStdin ? stdinValue : undefined,
+        appSecretFromStdin: appSecretFromStdin ? stdinValue : undefined
+      },
+      deps
+    );
+  } else if (subcommand === "status" && rest.length === 0) {
+    result = await instagramStatus(deps);
+  } else if (subcommand === "disconnect" && rest.length === 0) {
+    result = await disconnectInstagram(deps);
+  } else {
+    io.stderr(INSTAGRAM_USAGE);
+    return 1;
+  }
+
+  for (const line of result.stdout) io.stdout(line);
+  for (const line of result.stderr) io.stderr(line);
+  return result.exitCode;
+}
+
+async function readProcessStdin(): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) {
+    chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : (chunk as Buffer));
+  }
+  return Buffer.concat(chunks).toString("utf8");
 }
 
 async function runPersona(
