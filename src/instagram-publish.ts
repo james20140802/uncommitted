@@ -1,4 +1,4 @@
-import { mkdtemp, open, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, open, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DraftStorageError, readLatestDraftPointer } from "./draft-storage.js";
@@ -125,6 +125,7 @@ export async function runPublishInstagram(
 export type PublishSkipReason =
   | "safety-warning"
   | "safety-blocked"
+  | "no-safety-report"
   | "incomplete-draft"
   | "already-published"
   | "user-skip"
@@ -175,11 +176,16 @@ export async function autoPublishInstagram(
     if (!(await isDraftComplete(draft.path))) {
       return { kind: "skipped", reason: "incomplete-draft", date, revision };
     }
-    const safety = await readSafetyInfo(draft.path);
-    if (safety.status !== "safe") {
+    // Unattended publishing needs an affirmative `safe` result: a missing or
+    // unreadable report is not treated as safe here (manual publish still is).
+    const safetyStatus = await readExistingSafetyStatus(draft.path);
+    if (safetyStatus === null) {
+      return { kind: "skipped", reason: "no-safety-report", date, revision };
+    }
+    if (safetyStatus !== "safe") {
       return {
         kind: "skipped",
-        reason: safety.status === "blocked" ? "safety-blocked" : "safety-warning",
+        reason: safetyStatus === "blocked" ? "safety-blocked" : "safety-warning",
         date,
         revision
       };
@@ -220,6 +226,16 @@ export async function autoPublishInstagram(
       date,
       ...(revision ? { revision } : {})
     };
+  }
+}
+
+/** Status from a present, valid `safety-report.json`; `null` when missing or unreadable. */
+async function readExistingSafetyStatus(draftPath: string): Promise<SafetyStatus | null> {
+  try {
+    await access(join(draftPath, "safety-report.json"));
+    return (await readSafetyInfo(draftPath)).status;
+  } catch {
+    return null;
   }
 }
 

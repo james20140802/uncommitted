@@ -143,8 +143,9 @@ latest revision of the day as a carousel without asking (`publish instagram
   `publish-skip.json` into the day's draft folder. The run checks it while
   waiting and right before publishing. It only affects auto-publish; manual
   `publish instagram` still works.
-- **Skipped, not failed** (exit 0): safety `warning` or `blocked`, an
-  incomplete draft, a revision that already has `publish-record.json`, a
+- **Skipped, not failed** (exit 0): safety `warning` or `blocked`, a missing
+  or unreadable `safety-report.json` (auto-publish needs an explicit `safe`;
+  manual `publish instagram` is unchanged), an incomplete draft, a revision that already has `publish-record.json`, a
   skipped day, or no draft. (A `blocked` day still exits 6 from the draft step,
   as before.)
 - **Failure** (exit 7): the draft stays as is, and the launchd job is not

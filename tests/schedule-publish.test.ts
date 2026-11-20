@@ -2,7 +2,11 @@ import { access, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import type { PublishDeps, PublishOutcome } from "../src/instagram-publish.js";
+import {
+  type PublishDeps,
+  type PublishOutcome,
+  runPublishInstagram
+} from "../src/instagram-publish.js";
 import {
   appendSchedulePublishLog,
   describePublishOutcome,
@@ -33,7 +37,7 @@ import {
 const DATE = "2026-11-20";
 
 type DraftOptions = {
-  safety?: "safe" | "warning" | "blocked";
+  safety?: "safe" | "warning" | "blocked" | "missing" | "malformed";
   metadataStatus?: "complete" | "incomplete";
   published?: boolean;
 };
@@ -46,16 +50,20 @@ async function scaffoldDraft(draftRoot: string, opts: DraftOptions = {}): Promis
     join(draftPath, "metadata.json"),
     JSON.stringify({ schemaVersion: 1, status: opts.metadataStatus ?? "complete" })
   );
-  await writeFile(
-    join(draftPath, "safety-report.json"),
-    JSON.stringify({
-      schemaVersion: 1,
-      status: opts.safety ?? "safe",
-      message: "check",
-      risks: [],
-      redactionsApplied: []
-    })
-  );
+  if (opts.safety === "malformed") {
+    await writeFile(join(draftPath, "safety-report.json"), "{not json");
+  } else if (opts.safety !== "missing") {
+    await writeFile(
+      join(draftPath, "safety-report.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        status: opts.safety ?? "safe",
+        message: "check",
+        risks: [],
+        redactionsApplied: []
+      })
+    );
+  }
   const png = await instagramPng();
   for (let i = 1; i <= 3; i++) {
     await writeFile(join(draftPath, "carousel", `0${i}.png`), png);
@@ -211,6 +219,8 @@ describe("runScheduledPublish", () => {
   it.each([
     ["warning", { safety: "warning" as const }, "safety-warning"],
     ["blocked", { safety: "blocked" as const }, "safety-blocked"],
+    ["missing safety report", { safety: "missing" as const }, "no-safety-report"],
+    ["unreadable safety report", { safety: "malformed" as const }, "no-safety-report"],
     ["incomplete", { metadataStatus: "incomplete" as const }, "incomplete-draft"],
     ["already published", { published: true }, "already-published"]
   ])("skips a %s draft without calling the Graph API", async (_label, draft, reason) => {
@@ -224,6 +234,17 @@ describe("runScheduledPublish", () => {
     expect(outcome).toMatchObject({ kind: "skipped", reason, date: DATE });
     expect(env.graph.calls).toEqual([]);
     expect(env.s3.count("PUT")).toBe(0);
+  });
+
+  it("leaves manual publish unchanged: a missing safety report still publishes with --yes", async () => {
+    const env = await setup({ safety: "missing" });
+    const exitCode = await runPublishInstagram(
+      ["instagram", "--yes", "--date", DATE],
+      env.deps,
+      env.io
+    );
+    expect(exitCode).toBe(0);
+    expect(env.out.join("\n")).toContain(`게시됨: ${PERMALINK}`);
   });
 
   it("skips a day the user skipped, even with no delay", async () => {
@@ -334,6 +355,9 @@ describe("describePublishOutcome", () => {
     expect(describePublishOutcome({ kind: "skipped", reason: "safety-warning", date: DATE })).toBe(
       "건너뜀: safety warning"
     );
+    expect(
+      describePublishOutcome({ kind: "skipped", reason: "no-safety-report", date: DATE })
+    ).toBe("건너뜀: safety 리포트 없음");
     expect(describePublishOutcome({ kind: "skipped", reason: "user-skip", date: DATE })).toBe(
       "건너뜀: 사용자 skip"
     );

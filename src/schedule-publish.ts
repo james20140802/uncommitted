@@ -37,6 +37,7 @@ export type SchedulePublishLogEntry = { at: string; outcome: PublishOutcome };
 const SKIP_REASON_LABELS: Record<PublishSkipReason, string> = {
   "safety-warning": "safety warning",
   "safety-blocked": "safety blocked",
+  "no-safety-report": "safety 리포트 없음",
   "incomplete-draft": "미완성 드래프트",
   "already-published": "이미 게시됨",
   "user-skip": "사용자 skip",
