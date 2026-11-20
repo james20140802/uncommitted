@@ -192,7 +192,7 @@ export function checkSafetyPolicy(
  * metadata.json이 없거나 읽을 수 없으면 여기서 판단하지 않는다 —
  * 뒤따르는 캡션·PNG 수집 단계가 자기 방식으로 실패한다.
  */
-async function assertDraftIsComplete(sourceDraftPath: string): Promise<void> {
+export async function assertDraftIsComplete(sourceDraftPath: string): Promise<void> {
   let metadata: Record<string, unknown>;
 
   try {
@@ -217,6 +217,23 @@ async function assertDraftIsComplete(sourceDraftPath: string): Promise<void> {
     `Export blocked: draft is incomplete (failed at the ${stage} stage). Regenerate before exporting.`,
     "incomplete-draft"
   );
+}
+
+/**
+ * export 계열 에러를 CLI exit code로 바꾼다. `export instagram`과 게시 준비
+ * (UNC-294)가 같은 표를 써야 safety `blocked`가 어디서든 6으로 끝난다.
+ */
+export function exportErrorExitCode(error: ExportCommandError): number {
+  switch (error.code) {
+    case "invalid-config":
+      return 2;
+    case "missing-carousel":
+      return 5;
+    case "safety-blocked":
+      return 6;
+    default:
+      return 1;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -256,13 +273,13 @@ async function resolveLatestPointer(draftRoot: string) {
   }
 }
 
-type SafetyInfo = {
+export type SafetyInfo = {
   status: SafetyStatus;
   /** The human-readable reason from safety-report.json (used as warning reason) */
   reason?: string;
 };
 
-async function readSafetyInfo(sourceDraftPath: string): Promise<SafetyInfo> {
+export async function readSafetyInfo(sourceDraftPath: string): Promise<SafetyInfo> {
   let raw: string;
   try {
     raw = await readFile(join(sourceDraftPath, "safety-report.json"), "utf8");
@@ -303,7 +320,7 @@ async function readSafetyInfo(sourceDraftPath: string): Promise<SafetyInfo> {
   );
 }
 
-async function collectCarouselPngs(sourceDraftPath: string): Promise<string[]> {
+export async function collectCarouselPngs(sourceDraftPath: string): Promise<string[]> {
   const carouselDir = join(sourceDraftPath, "carousel");
 
   let entries: string[];
