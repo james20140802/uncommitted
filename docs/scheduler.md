@@ -108,10 +108,58 @@ This runs, in order:
 2. `uncommitted generate --date <today>` — generates a text draft
 3. `uncommitted render latest` — renders carousel PNGs
 
-The draft is written to `~/Uncommitted/drafts/YYYY-MM-DD/rev-NNN/` and
-**never posted to Instagram automatically**.
+The draft is written to `~/Uncommitted/drafts/YYYY-MM-DD/rev-NNN/`. It is
+**not posted to Instagram** unless the schedule was installed with
+`--publish instagram` (see below).
 
 If any step fails its exit code propagates and subsequent steps are skipped.
+
+---
+
+## Auto-publish to Instagram (opt-in)
+
+Requires a connected account and image hosting (`docs/instagram-setup.md`
+sections 7 and 8).
+
+```sh
+uncommitted schedule install --time 23:30 --publish instagram
+uncommitted schedule install --time 23:30 --publish instagram --publish-delay 30m
+```
+
+With `--publish instagram`, `run-now` adds a fourth step: it publishes the
+latest revision of the day as a carousel without asking (`publish instagram
+--yes`). Installing again without `--publish` turns auto-publish off, and
+`schedule remove` deletes the setting too.
+
+- **Setting**: stored in `~/.uncommitted/schedule.json`. The plist only runs
+  `schedule run-now`; Instagram tokens, the App Secret and storage keys are
+  never written to it. They are read from the keychain (or 0600 config) at
+  publish time.
+- **Delay**: `--publish-delay <Nm|Nh>` (max `12h`) waits after rendering so you
+  can check the draft or make a new revision; the latest revision of the day is
+  published when the delay ends. The wait checks the wall clock every 30
+  seconds, so a laptop that sleeps past the deadline publishes on wake.
+- **Skip a day**: `uncommitted publish skip [--date YYYY-MM-DD]` writes
+  `publish-skip.json` into the day's draft folder. The run checks it while
+  waiting and right before publishing. It only affects auto-publish; manual
+  `publish instagram` still works.
+- **Skipped, not failed** (exit 0): safety `warning` or `blocked`, an
+  incomplete draft, a revision that already has `publish-record.json`, a
+  skipped day, or no draft. (A `blocked` day still exits 6 from the draft step,
+  as before.)
+- **Failure** (exit 7): the draft stays as is, and the launchd job is not
+  touched, so the next day runs normally.
+- **Results**: every attempt is appended to
+  `~/.uncommitted/logs/schedule-publish.jsonl`. `schedule status` shows whether
+  auto-publish is on and the last result:
+
+```
+자동 게시: 켜짐 (instagram, 지연 30분)
+마지막 게시 결과: 2026-11-20 게시됨: https://www.instagram.com/p/…/
+```
+
+The last result reads `건너뜀: <reason>` for a skip or `실패 [<stage>]: <message>`
+for a failure.
 
 ---
 

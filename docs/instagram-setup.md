@@ -177,6 +177,15 @@ uncommitted publish instagram --date 2026-11-20 --revision rev-002
 - 게시 중에는 리비전 폴더에 `publish.lock`을 만들어 같은 리비전의 동시 게시를 막고, 끝나면 지웁니다. 강제 종료 등으로 남았다면 Instagram에서 게시 여부를 확인한 뒤 지우세요. `media_publish`가 성공하면 정리·permalink 조회 전에 `publish-record.json`을 먼저 씁니다.
 - 실패하면 `게시 실패 [단계]: 메시지` 한 줄과 exit 7로 끝납니다. 업로드한 임시 이미지는 성공·실패와 관계없이 지웁니다. 토큰과 presigned URL 서명은 출력하지 않습니다.
 
+## 10. 스케줄 자동 게시 (opt-in)
+
+```sh
+uncommitted schedule install --time 23:30 --publish instagram --publish-delay 30m
+uncommitted publish skip                   # 오늘 자동 게시를 막기
+```
+
+매일 `schedule run-now`가 드래프트를 만든 뒤 safe 드래프트만 게시합니다. 지연, 건너뛰는 조건, 결과 확인은 `docs/scheduler.md`의 "Auto-publish to Instagram"을 보세요.
+
 ## 문제 해결
 
 | 메시지 | 원인과 조치 |
