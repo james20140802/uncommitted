@@ -45,6 +45,11 @@ export const commands: Command[] = [
     subcommands: ["connect", "status", "disconnect", "host"]
   },
   {
+    name: "publish",
+    summary: "Publish a draft to a connected account (asks first).",
+    subcommands: ["instagram"]
+  },
+  {
     name: "persona",
     summary: "Select or customize the AI persona.",
     subcommands: ["set"]

@@ -25,8 +25,14 @@ export const DEFAULT_APP_SECRET_SERVICE = "meta-app-secret";
 const ACCESS_TOKEN_CONFIG_KEY = "instagramAccessToken";
 const APP_SECRET_CONFIG_KEY = "metaAppSecret";
 
+export type GraphRequestInit = {
+  method?: string;
+  headers?: Record<string, string>;
+  body?: string;
+};
+
 /** Minimal fetch shape so tests can inject a fake Graph API. */
-export type GraphFetch = (url: string) => Promise<Response>;
+export type GraphFetch = (url: string, init?: GraphRequestInit) => Promise<Response>;
 
 export type InstagramDeps = {
   homeDir?: string;
@@ -258,6 +264,36 @@ export async function disconnectInstagram(
       stderr: []
     };
   });
+}
+
+export type PublishAccount =
+  | { ok: true; igUserId: string; accessToken: string }
+  | { ok: false; message: string; exitCode: number };
+
+/**
+ * UNC-296: the connected IG user ID and its access token for publishing.
+ * Same lookup as `instagram status` (keychain → config secret); never logs.
+ */
+export async function resolvePublishAccount(deps: InstagramDeps): Promise<PublishAccount> {
+  const config = await loadConfigRecord(deps.homeDir);
+  const current = selectInstagramConfig(config ?? {});
+  if (!current.igUserId) {
+    return {
+      ok: false,
+      message:
+        "Instagram 계정이 연결되지 않았습니다. `uncommitted instagram connect --ig-user-id <ID>`를 먼저 실행하세요.",
+      exitCode: 2
+    };
+  }
+  try {
+    const token = await requireSecret(tokenSpec(current), "access-token", deps);
+    return { ok: true, igUserId: current.igUserId, accessToken: token.value };
+  } catch (error) {
+    if (error instanceof InstagramStop) {
+      return { ok: false, message: error.message, exitCode: error.exitCode };
+    }
+    throw error;
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -119,6 +119,7 @@ import {
   setImageHosting,
   testImageHosting
 } from "./instagram-hosting.js";
+import { runPublishInstagram } from "./instagram-publish.js";
 
 /**
  * Thrown by readPreviewDraftRoot when config.json is unreadable, malformed,
@@ -198,6 +199,12 @@ export type CliOptions = {
   hostingFetch?: HostingFetch;
   /** Injectable stdin reader for `--*-from-stdin` options (tests). */
   readStdin?: () => Promise<string>;
+  /** Injectable yes/no prompt for `publish instagram` (tests). */
+  confirm?: (question: string) => Promise<boolean>;
+  /** Injectable sleep for container polling in `publish instagram` (tests). */
+  sleep?: (ms: number) => Promise<void>;
+  /** Injectable millisecond clock for the polling deadline (tests). */
+  clock?: () => number;
 };
 
 const defaultIo: CliIo = {
@@ -346,6 +353,10 @@ export async function runCli(
 
     if (command === "instagram") {
       return await runInstagram(commandArgs, io, options);
+    }
+
+    if (command === "publish") {
+      return await runPublish(commandArgs, io, options);
     }
 
     io.stderr(`Command not implemented yet: ${command}`);
@@ -745,6 +756,42 @@ async function runInstagramHost(
   for (const line of result.stdout) io.stdout(line);
   for (const line of result.stderr) io.stderr(line);
   return result.exitCode;
+}
+
+async function runPublish(
+  args: string[],
+  io: CliIo,
+  options: CliOptions
+): Promise<number> {
+  const paths = resolveConfigPaths({ homeDir: options.homeDir });
+  const draftRoot =
+    options.draftRoot ?? (await readPreviewDraftRoot(paths.configFile, options.homeDir));
+  return runPublishInstagram(
+    args,
+    {
+      draftRoot,
+      homeDir: options.homeDir,
+      keychainRunner: options.keychainRunner,
+      graphFetch: options.graphFetch,
+      hostingFetch: options.hostingFetch,
+      now: options.now,
+      sleep: options.sleep,
+      clock: options.clock,
+      confirm: options.confirm ?? (process.stdin.isTTY ? confirmOnTerminal : undefined)
+    },
+    io
+  );
+}
+
+async function confirmOnTerminal(question: string): Promise<boolean> {
+  const { createInterface } = await import("node:readline/promises");
+  const rl = createInterface({ input: process.stdin, output: process.stderr });
+  try {
+    const answer = await rl.question(`${question} `);
+    return /^(y|yes|예|네)$/i.test(answer.trim());
+  } finally {
+    rl.close();
+  }
 }
 
 async function readProcessStdin(): Promise<string> {
