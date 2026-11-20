@@ -433,3 +433,40 @@ describe("AC7: secrets never reach the launchd plist", () => {
     expect(plist.xml).not.toContain(APP_SECRET);
   });
 });
+
+describe("instagram config preserves image hosting (UNC-295)", () => {
+  beforeEach(() => clearGlobalConfigCache());
+
+  const hosting = {
+    provider: "s3",
+    endpoint: "https://acct123.r2.cloudflarestorage.com",
+    bucket: "uncommitted-publish",
+    region: "auto"
+  };
+
+  it("connect keeps config.instagram.hosting", async () => {
+    const homeDir = await makeHome({ instagram: { hosting } });
+
+    const result = await run(["instagram", "connect", "--ig-user-id", IG_ID], {
+      homeDir,
+      keychainRunner: keychain(FULL_KEYCHAIN),
+      graphFetch: graphFetch().fetch
+    });
+
+    expect(result.exitCode).toBe(0);
+    const config = await readConfig(homeDir);
+    expect(config.instagram).toMatchObject({ igUserId: IG_ID, hosting });
+  });
+
+  it("disconnect keeps config.instagram.hosting", async () => {
+    const homeDir = await makeHome({
+      instagram: { igUserId: IG_ID, username: "uncommitted.story", appId: APP_ID, hosting }
+    });
+
+    const result = await run(["instagram", "disconnect"], { homeDir });
+
+    expect(result.exitCode).toBe(0);
+    const config = await readConfig(homeDir);
+    expect(config.instagram).toEqual({ hosting });
+  });
+});

@@ -145,7 +145,8 @@ export async function connectInstagram(
     await updateGlobalConfig(deps.homeDir, (latest) => ({
       ...latest,
       instagram: {
-        ...selectInstagramConfig(latest),
+        // Spread the raw object so sibling settings (e.g. `hosting`) survive.
+        ...(isRecord(latest.instagram) ? latest.instagram : {}),
         igUserId,
         username,
         appId
