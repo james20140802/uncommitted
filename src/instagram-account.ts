@@ -297,10 +297,123 @@ export async function resolvePublishAccount(deps: InstagramDeps): Promise<Publis
 }
 
 // ---------------------------------------------------------------------------
+// Health checks (UNC-298)
+// ---------------------------------------------------------------------------
+
+/** Days before expiry at which a token turns into a warning. */
+export const TOKEN_EXPIRY_WARNING_DAYS = 7;
+
+export type ConnectionInspection =
+  | { state: "not-connected" }
+  /** Connected, but a secret is missing or the Graph API could not be reached. */
+  | { state: "error"; username?: string; message: string; exitCode: number }
+  | {
+      state: "connected";
+      igUserId: string;
+      username: string;
+      accessToken: string;
+      /** `null` when the app secret is missing, so debug_token cannot run. */
+      token: DebugTokenResult | null;
+    };
+
+/**
+ * Read-only look at the connection for `doctor` and `schedule status`:
+ * config → token → (app secret →) debug_token. Never throws for expected
+ * failures and never puts a secret in a message.
+ */
+export async function inspectInstagramConnection(
+  deps: InstagramDeps
+): Promise<ConnectionInspection> {
+  const config = await loadConfigRecord(deps.homeDir);
+  const current = selectInstagramConfig(config ?? {});
+  if (!current.igUserId) {
+    return { state: "not-connected" };
+  }
+  const username = current.username ?? "(알 수 없음)";
+  try {
+    const token = await requireSecret(tokenSpec(current), "access-token", deps);
+    const appSecret = await readSecret(appSecretSpec(current), deps);
+    let debug: DebugTokenResult | null = null;
+    if (appSecret.found && current.appId) {
+      debug = await debugToken(deps, token.value, current.appId, appSecret.value);
+    }
+    return {
+      state: "connected",
+      igUserId: current.igUserId,
+      username,
+      accessToken: token.value,
+      token: debug
+    };
+  } catch (error) {
+    if (error instanceof InstagramStop) {
+      return { state: "error", username, message: error.message, exitCode: error.exitCode };
+    }
+    throw error;
+  }
+}
+
+export type TokenHealth = { status: "pass" | "warn" | "fail"; message: string };
+
+const RECONNECT_HINT =
+  "Meta 비즈니스 설정에서 시스템 사용자 토큰을 다시 발급해 저장한 뒤 `uncommitted instagram connect`를 다시 실행하세요.";
+
+/** Token validity and days left; there is no automatic refresh for System User tokens. */
+export function describeTokenHealth(token: DebugTokenResult | null, nowMs: number): TokenHealth {
+  if (!token) {
+    return {
+      status: "warn",
+      message:
+        "앱 시크릿이나 앱 ID가 없어 토큰 만료를 확인하지 못했습니다. `uncommitted instagram status`로 확인하세요."
+    };
+  }
+  const secondsLeft = token.expiresAt === 0 ? Infinity : token.expiresAt - nowMs / 1000;
+  if (!token.isValid || secondsLeft <= 0) {
+    return { status: "fail", message: `토큰이 만료됐거나 무효입니다. ${RECONNECT_HINT}` };
+  }
+  if (secondsLeft === Infinity) {
+    return { status: "pass", message: "유효 (만료 없음)" };
+  }
+  const daysLeft = Math.ceil(secondsLeft / 86_400);
+  if (daysLeft <= TOKEN_EXPIRY_WARNING_DAYS) {
+    return {
+      status: "warn",
+      message: `${daysLeft}일 뒤 만료됩니다. 자동 갱신은 없습니다. ${RECONNECT_HINT}`
+    };
+  }
+  return { status: "pass", message: `유효 (${daysLeft}일 남음)` };
+}
+
+/** `content_publishing_limit` usage over the last 24 hours. */
+export async function readPublishingLimit(
+  deps: InstagramDeps,
+  igUserId: string,
+  accessToken: string
+): Promise<{ usage: number; total: number }> {
+  const body = await graphGet(
+    deps,
+    `/${igUserId}/content_publishing_limit`,
+    { fields: "quota_usage,config", access_token: accessToken },
+    "account"
+  );
+  const entry = Array.isArray(body.data) && isRecord(body.data[0]) ? body.data[0] : undefined;
+  if (!entry || typeof entry.quota_usage !== "number") {
+    throw new Error("게시 한도 응답을 읽지 못했습니다.");
+  }
+  const config = isRecord(entry.config) ? entry.config : {};
+  return {
+    usage: entry.quota_usage,
+    total: typeof config.quota_total === "number" ? config.quota_total : DEFAULT_QUOTA_TOTAL
+  };
+}
+
+/** Fallback when Meta omits `config.quota_total` (documented 24-hour limit). */
+export const DEFAULT_QUOTA_TOTAL = 100;
+
+// ---------------------------------------------------------------------------
 // Internals
 // ---------------------------------------------------------------------------
 
-type DebugTokenResult = { isValid: boolean; expiresAt: number; scopes: string[] };
+export type DebugTokenResult = { isValid: boolean; expiresAt: number; scopes: string[] };
 
 async function debugToken(
   deps: InstagramDeps,
