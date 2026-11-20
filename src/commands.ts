@@ -47,7 +47,7 @@ export const commands: Command[] = [
   {
     name: "publish",
     summary: "Publish a draft to a connected account (asks first).",
-    subcommands: ["instagram"]
+    subcommands: ["instagram", "skip"]
   },
   {
     name: "persona",

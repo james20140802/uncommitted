@@ -320,8 +320,19 @@ describe("object keys", () => {
       hostingFetch: s3.fetch
     });
 
+    const before = new Date();
     const first = await host.upload(jpeg());
     const second = await host.upload(jpeg());
+    const after = new Date();
+    // Upload-day strings in YYYY-MM-DD and YYYYMMDD, local and UTC, for both
+    // ends of the upload window (a run can cross midnight). Matching a date
+    // regex instead would flake whenever the random hex contains "20dddddd".
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const uploadDays = [before, after].flatMap((d) => [
+      [d.getFullYear(), pad(d.getMonth() + 1), pad(d.getDate())],
+      [d.getUTCFullYear(), pad(d.getUTCMonth() + 1), pad(d.getUTCDate())]
+    ]);
+    const dateStrings = uploadDays.flatMap((parts) => [parts.join("-"), parts.join("")]);
 
     const keys = s3.requests
       .filter((r) => r.method === "PUT")
@@ -329,7 +340,9 @@ describe("object keys", () => {
     expect(keys).toHaveLength(2);
     for (const key of keys) {
       expect(key).toMatch(/^uncommitted\/[0-9a-f]{32}\/\d{2}\.jpg$/);
-      expect(key).not.toMatch(/20\d{2}-?\d{2}-?\d{2}/);
+      for (const date of dateStrings) {
+        expect(key).not.toContain(date);
+      }
       expect(key).not.toContain("alice");
       expect(key).not.toContain("myproject");
       expect(key).not.toContain(homeDir);
