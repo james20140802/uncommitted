@@ -7,16 +7,17 @@ Uncommitted is a local-first TypeScript/Node.js CLI that turns your Git activity
 
 ## Status
 
-Uncommitted is published on npm as [`@sangchu04/uncommitted`](https://www.npmjs.com/package/@sangchu04/uncommitted). The MVP is macOS-first: it collects local activity, generates diary drafts, and renders Instagram-ready carousels. It never auto-publishes — every draft stays local until you decide to share it.
+Uncommitted is published on npm as [`@sangchu04/uncommitted`](https://www.npmjs.com/package/@sangchu04/uncommitted). The MVP is macOS-first: it collects local activity, generates diary drafts, and renders Instagram-ready carousels. By default every draft stays local; publishing to Instagram is opt-in and needs your own Meta app and image hosting (see [Publishing to Instagram](#publishing-to-instagram)).
 
 ## Features
 
-- **Local-first by design.** Activity collection and card rendering run on your machine, and drafts, config, and history live under your home directory — nothing is posted automatically. AI text generation uses a provider you configure, which may call a remote API.
+- **Local-first by design.** Activity collection and card rendering run on your machine, and drafts, config, and history live under your home directory — nothing is posted unless you set up publishing. AI text generation uses a provider you configure, which may call a remote API.
 - **Git-aware diary drafts.** Point Uncommitted at your projects and it summarizes the day's Git activity (commits, changed files, dirty state) into an honest draft — quiet days included.
 - **Manual notes.** Capture context the commits don't show, and fold it into the same daily draft.
 - **AI coworker voice.** Drafts read like a coworker's diary. The tone can lightly roast tools, TODOs, and recurring patterns — never you.
 - **Safety-checked output.** Every draft is scanned for secrets, tokens, private paths, and other sensitive data before it can be exported.
 - **Instagram carousels.** Generates 4:5 carousel PNGs plus a ready-to-paste caption, exported to a dedicated folder.
+- **Instagram publishing (opt-in).** Publish a draft as a carousel through the official Graph API, by hand or after each scheduled run. Only safety-`safe` drafts are auto-published, and secrets stay in the macOS keychain.
 
 ## Prerequisites
 
@@ -110,9 +111,17 @@ All commands are run as `uncommitted <command> [subcommand]`. Run `uncommitted -
 | `uncommitted render latest` | Render carousel cards for the latest draft. |
 | `uncommitted preview latest` | Preview the latest draft. |
 | `uncommitted export instagram` | Export the latest draft as Instagram-ready assets. |
+| `uncommitted instagram connect --ig-user-id <ID>` | Connect an Instagram professional account (token read from the keychain). |
+| `uncommitted instagram status` | Show the connected account, token state, and publish permission. |
+| `uncommitted instagram disconnect` | Remove the connection from config. |
+| `uncommitted instagram host set --endpoint <url> --bucket <name>` | Configure S3-compatible temporary image hosting (e.g. Cloudflare R2). |
+| `uncommitted instagram host status` | Show the hosting settings and where its keys come from. |
+| `uncommitted instagram host test` | Upload, fetch, and delete a test image. |
+| `uncommitted publish instagram` | Publish the latest draft as a carousel (`--dry-run`, `--yes`, `--retry`, `--date`, `--revision`). |
+| `uncommitted publish skip [--date YYYY-MM-DD]` | Keep the scheduled run from auto-publishing that day. |
 | `uncommitted feedback latest` | Record feedback on the latest draft. |
 | `uncommitted feedback report` | Show a feedback report. |
-| `uncommitted schedule install --time 23:30` | Install the macOS scheduled run at a given time. |
+| `uncommitted schedule install --time 23:30` | Install the macOS scheduled run at a given time. Add `--publish instagram [--publish-delay 30m]` to auto-publish. |
 | `uncommitted schedule status` | Show the macOS schedule status. |
 | `uncommitted schedule remove` | Remove the macOS schedule. |
 | `uncommitted schedule run-now` | Run the scheduled job immediately. |
@@ -139,6 +148,66 @@ If you use GitHub-sourced collection, prefer setting the `GITHUB_TOKEN` environm
 Both modes output 1080x1350 (Instagram's recommended 4:5 frame).
 
 Existing configs are left alone: a config that already says `photo-first`, or that has no `carouselVisualStyle` key at all, keeps running photo-first. Only a fresh `uncommitted init` writes `story-card`.
+
+## Publishing to Instagram
+
+Publishing is opt-in. Without the setup below, Uncommitted only writes local drafts. The full step-by-step guide (in Korean, including where each Meta setting lives) is [`docs/instagram-setup.md`](docs/instagram-setup.md).
+
+### What you need
+
+- An Instagram **professional** account (Business or Creator).
+- A Meta **business portfolio** (free) with that account added.
+- Your own **Meta app** set up with *API setup with Unified login*, and a **System User token** with `instagram_basic` and `instagram_content_publish`. System User tokens can be issued without expiry.
+- An **S3-compatible bucket** (Cloudflare R2 works well). The Graph API only accepts public image URLs, so images are uploaded there for a moment and deleted after each publish.
+
+### Setup
+
+```sh
+# 1. Store secrets in the macOS keychain. Copy each value first, then:
+security add-generic-password -a uncommitted -s instagram-access-token -w "$(pbpaste)"
+security add-generic-password -a uncommitted -s meta-app-secret -w "$(pbpaste)"
+security add-generic-password -a uncommitted -s r2-access-key-id -w "$(pbpaste)"
+security add-generic-password -a uncommitted -s r2-secret-access-key -w "$(pbpaste)"
+
+# 2. Connect the account and check the token
+uncommitted instagram connect --ig-user-id <IG user ID>
+uncommitted instagram status
+
+# 3. Configure and test image hosting
+uncommitted instagram host set --endpoint https://<account-id>.r2.cloudflarestorage.com --bucket <bucket>
+uncommitted instagram host test
+
+# 4. Check everything at once
+uncommitted doctor
+```
+
+> **Watch out:** always store secrets with `-w "$(pbpaste)"`. Typing the value at the interactive `security` prompt truncates it at 128 characters, and System User tokens are longer than that.
+
+If you don't use the keychain, `instagram connect --token-from-stdin`, `--app-secret-from-stdin`, and `host set --keys-from-stdin` store the values in `~/.uncommitted/config.json` (mode 0600) instead.
+
+### Publishing
+
+```sh
+uncommitted publish instagram --dry-run   # validate and preview; no upload, no post
+uncommitted publish instagram             # preview → confirm (y) → publish → permalink
+```
+
+- Carousels need 2–10 slides. Drafts with safety `blocked` are refused (exit 6); `warning` drafts ask again before posting.
+- A published revision gets `publish-record.json` and is never posted twice.
+- A failure prints `게시 실패 [stage]: message` and exits 7. The revision folder keeps `publish-attempt.json`, and `uncommitted publish instagram --retry` publishes the already-created container within 24 hours instead of uploading again.
+- Short Graph API outages (5xx, dropped connections) are retried twice in each step; 4xx errors fail at once.
+
+### Auto-publish after the scheduled run
+
+```sh
+uncommitted schedule install --time 23:30 --publish instagram --publish-delay 30m
+uncommitted publish skip      # don't auto-publish today
+uncommitted schedule status   # setting, last result, and token warnings
+```
+
+The scheduled run publishes only drafts whose safety status is `safe`; `warning`, `blocked`, missing safety reports, and incomplete drafts are skipped. The delay gives you time to look at the draft and run `publish skip`. Results are logged to `~/.uncommitted/logs/schedule-publish.jsonl`. See [`docs/scheduler.md`](docs/scheduler.md) for details.
+
+Tokens, app secrets, storage keys, and presigned URL signatures are never printed, logged, or written into the launchd plist.
 
 ## Output
 
@@ -185,7 +254,7 @@ Future exports always write to the new sibling location; there is no silent fall
 
 ## MVP direction
 
-The MVP is macOS-first and outputs local drafts, metadata, captions, safety reports, and 4:5 Instagram carousel PNGs. It does not auto-publish.
+The MVP is macOS-first and outputs local drafts, metadata, captions, safety reports, and 4:5 Instagram carousel PNGs. Instagram publishing is opt-in and off by default.
 
 ## Contributing
 
