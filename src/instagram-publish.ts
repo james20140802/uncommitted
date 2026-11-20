@@ -552,5 +552,8 @@ function scrubOutput(line: string, secrets: string[]): string {
     (text, secret) => (secret.length >= 8 ? text.split(secret).join("[redacted]") : text),
     line
   );
-  return withoutSecrets.replace(/\?[^\s"'<>]*X-Amz-[^\s"'<>]*/g, "?[redacted]");
+  // One greedy pass per query string (linear), then check for a signature.
+  return withoutSecrets.replace(/\?[^\s"'<>]*/g, (query) =>
+    query.includes("X-Amz-") ? "?[redacted]" : query
+  );
 }

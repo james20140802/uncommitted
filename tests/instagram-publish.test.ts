@@ -74,6 +74,8 @@ type FakeGraphOptions = {
   /** status_code for a container on its n-th status check (0-based). */
   status?: (id: string, check: number) => { status_code: string; status?: string };
   childCreateError?: boolean;
+  /** Overrides the Meta error message returned for a child container. */
+  childErrorMessage?: string;
   publishError?: boolean;
   permalinkError?: boolean;
 };
@@ -113,7 +115,9 @@ function fakeGraph(options: FakeGraphOptions = {}) {
         return json(
           {
             error: {
-              message: `Invalid parameter: could not fetch ${params.get("image_url")}`,
+              message:
+                options.childErrorMessage ??
+                `Invalid parameter: could not fetch ${params.get("image_url")}`,
               code: 9004
             }
           },
@@ -553,6 +557,17 @@ describe("publish instagram", () => {
     expect(sent).toContain("X-Amz-Signature=");
     expectNoSecrets(result.stdout, result.stderr);
     expect(env.s3.objects.size).toBe(0);
+  });
+
+  it("AC7: masking stays linear on a Meta message made of many '?' characters", async () => {
+    const env = await setup({
+      graph: { childCreateError: true, childErrorMessage: "?".repeat(200_000) }
+    });
+    const started = Date.now();
+    const result = await run(["publish", "instagram", "--yes"], env.options);
+
+    expect(result.exitCode).toBe(7);
+    expect(Date.now() - started).toBeLessThan(2_000);
   });
 
   it("a single-image draft is refused before upload", async () => {
