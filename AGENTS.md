@@ -144,7 +144,7 @@ Manual notes are JSONL at `project-root/.uncommitted/events/manual/YYYY-MM-DD.js
 - Error messages must be short and actionable.
 - Preserve partial output when possible.
 - Scheduled failures must not prevent future scheduled runs.
-- Exit codes: `0` success, `1` general failure, `2` config error, `3` collection error, `4` AI generation error, `5` rendering error, `6` safety blocked.
+- Exit codes: `0` success, `1` general failure, `2` config error, `3` collection error, `4` AI generation error, `5` rendering error, `6` safety blocked, `7` publish failed.
 
 ## Do Not Touch Without Explicit Request
 

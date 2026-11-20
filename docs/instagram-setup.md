@@ -157,6 +157,25 @@ uncommitted instagram host test     # 업로드 → 익명 GET → 삭제 → �
 
 `host test`는 성공하면 `호스팅 OK` 한 줄을, 실패하면 실패한 단계와 HTTP 상태를 한 줄로 알려 줍니다.
 
+## 9. 드래프트 게시
+
+연결(7번)과 호스팅(8번)이 끝났으면 드래프트를 캐러셀로 게시할 수 있습니다.
+
+```sh
+uncommitted publish instagram --dry-run   # 업로드·게시 없이 검증과 미리보기만
+uncommitted publish instagram             # 미리보기 → 확인(y) → 게시 → permalink 출력
+uncommitted publish instagram --yes       # 확인 없이 게시 (스케줄 등 비대화형)
+uncommitted publish instagram --date 2026-11-20 --revision rev-002
+```
+
+- 기본 대상은 latest 드래프트입니다. `--date`만 주면 그 날짜의 최신 리비전, `--revision`은 `--date`와 함께 씁니다.
+- 게시 전에 장수, 캡션 앞부분, safety 상태, 24시간 게시 한도 사용량을 보여 줍니다.
+- 캐러셀은 2~10장이어야 합니다. 1장짜리 드래프트는 게시하지 않습니다.
+- safety `blocked`면 업로드 전에 거절합니다(exit 6). `warning`이면 확인 프롬프트에 경고를 함께 보여 주고, `--yes`면 경고를 출력한 뒤 진행합니다.
+- 게시가 끝나면 리비전 폴더에 `publish-record.json`(`platform`, `mediaId`, `permalink`, `publishedAt`, `safetyStatus`)을 남깁니다. 이 파일이 있는 리비전은 다시 게시하지 않고 `이미 게시됨: <permalink>`를 출력합니다.
+- 컨테이너 처리는 1분 간격으로 최대 5분 기다립니다.
+- 실패하면 `게시 실패 [단계]: 메시지` 한 줄과 exit 7로 끝납니다. 업로드한 임시 이미지는 성공·실패와 관계없이 지웁니다. 토큰과 presigned URL 서명은 출력하지 않습니다.
+
 ## 문제 해결
 
 | 메시지 | 원인과 조치 |
@@ -165,3 +184,5 @@ uncommitted instagram host test     # 업로드 → 익명 GET → 삭제 → �
 | `instagram_content_publish` 권한이 없습니다 | 4-3에서 권한을 빠뜨렸습니다. 권한을 넣어 다시 발급하세요. |
 | Instagram 계정을 찾을 수 없습니다 | IG 사용자 ID가 틀렸거나, 계정이 프로페셔널 계정이 아니거나, 시스템 사용자에 계정이 할당되지 않았습니다. |
 | 토큰을 검사하지 못했습니다 | 앱 시크릿이 다른 앱의 값이거나 틀렸습니다. 3-4의 값을 다시 저장하세요. |
+| 24시간 게시 한도에 도달했습니다 | Instagram API 게시 한도(24시간)를 다 썼습니다. 한도가 풀린 뒤 다시 실행하세요. |
+| 게시 실패 [하위 컨테이너 처리] | Meta가 이미지를 가져오지 못했거나 거절했습니다. 함께 나온 Meta 메시지를 보고, `uncommitted instagram host test`로 호스팅부터 확인하세요. |
