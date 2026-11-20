@@ -19,7 +19,7 @@ import {
   CarouselPngRenderError,
   type CarouselHtmlToPngRenderer
 } from "../src/carousel-renderer.js";
-import { isDirectRun, runCli } from "../src/cli.js";
+import { isDirectRun, runCli, type CliOptions } from "../src/cli.js";
 import type {
   AiProvider,
   AiProviderRawResponse,
@@ -31,6 +31,18 @@ import {
 } from "../src/draft-storage.js";
 import { addProject } from "../src/project-add.js";
 import { buildLaunchAgentPlist } from "../src/scheduler.js";
+import {
+  fakeGraph,
+  fakeKeychain,
+  fakeS3,
+  IG_APP_SECRET,
+  IG_TOKEN,
+  INSTAGRAM_CONFIG,
+  InstagramSizedPngRenderer,
+  PERMALINK,
+  R2_ACCESS_KEY,
+  R2_SECRET_KEY
+} from "./instagram-fakes.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -2912,3 +2924,346 @@ class ThrowingPngRenderer implements CarouselHtmlToPngRenderer {
     throw this.error;
   }
 }
+
+// ─── UNC-297: scheduled Instagram auto-publish (opt-in) ───────────────────
+// Every Graph API / S3 / keychain / launchctl call goes to an in-memory fake.
+
+const STABLE_CLI_PATH = "/usr/local/lib/node_modules/uncommitted/dist/cli.js";
+
+async function createAutoPublishFixture(
+  graphOptions: Parameters<typeof fakeGraph>[0] = {}
+) {
+  const fixture = await createScheduleRunNowFixture();
+  const configPath = join(fixture.homeDir, ".uncommitted", "config.json");
+  const config = JSON.parse(await readFile(configPath, "utf8")) as Record<string, unknown>;
+  await writeJson(configPath, { ...config, instagram: INSTAGRAM_CONFIG });
+
+  const graph = fakeGraph(graphOptions);
+  const s3 = fakeS3();
+  const keychain = fakeKeychain();
+  const launchctlCalls: string[][] = [];
+  const sleepHooks: Array<() => Promise<void>> = [];
+  let clock = 0;
+  const options: CliOptions = {
+    homeDir: fixture.homeDir,
+    now: () => "2026-05-31T23:30:00.000Z",
+    aiProvider: new ScheduleAiProvider(),
+    carouselRenderer: new InstagramSizedPngRenderer(),
+    collectInvokers: nonGitStubInvokers(),
+    keychainRunner: keychain.runner,
+    graphFetch: graph.fetch,
+    hostingFetch: s3.fetch,
+    sleep: async (ms) => {
+      clock += ms;
+      for (const hook of sleepHooks) await hook();
+    },
+    clock: () => clock,
+    schedulerExecutablePath: STABLE_CLI_PATH,
+    schedulerExecutor: async (args) => {
+      launchctlCalls.push(args);
+      return { stdout: "", stderr: "" };
+    },
+    schedulerRunner: async (args) => {
+      launchctlCalls.push(args);
+      return { exitCode: 0, stdout: "123\t0\tcom.uncommitted.schedule\n", stderr: "" };
+    }
+  };
+  const plistPath = join(
+    fixture.homeDir,
+    "Library",
+    "LaunchAgents",
+    "com.uncommitted.schedule.plist"
+  );
+  return { ...fixture, graph, s3, keychain, launchctlCalls, sleepHooks, options, plistPath };
+}
+
+async function statusLines(options: CliOptions): Promise<string> {
+  const { io, stdout } = createIo();
+  expect(await runCli(["schedule", "status"], io, options)).toBe(0);
+  return stdout.join("\n");
+}
+
+describe("schedule auto-publish (UNC-297)", () => {
+  it("publishes a safe draft at the end of run-now and shows the permalink in status (AC1)", async () => {
+    vi.stubGlobal("process", { ...process, platform: "darwin" });
+    try {
+      const env = await createAutoPublishFixture();
+      const install = createIo();
+      expect(
+        await runCli(
+          ["schedule", "install", "--time", "23:30", "--publish", "instagram"],
+          install.io,
+          env.options
+        )
+      ).toBe(0);
+      expect(install.stdout.join("\n")).toContain("자동 게시: 켜짐 (instagram, 지연 없음)");
+
+      const run = createIo();
+      const exitCode = await runCli(["schedule", "run-now"], run.io, env.options);
+
+      expect(exitCode).toBe(0);
+      expect(run.stdout.join("\n")).toContain("Rendered carousel for 2026-05-31");
+      expect(run.stdout.join("\n")).toContain(`게시됨: ${PERMALINK}`);
+      expect(env.graph.writes().some((c) => c.path.endsWith("/media_publish"))).toBe(true);
+      await access(join(env.draftRoot, "2026-05-31", "rev-001", "publish-record.json"));
+
+      const status = await statusLines(env.options);
+      expect(status).toContain("자동 게시: 켜짐 (instagram, 지연 없음)");
+      expect(status).toContain(`마지막 게시 결과: 2026-05-31 게시됨: ${PERMALINK}`);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("never calls the publish path when installed without --publish (AC2)", async () => {
+    vi.stubGlobal("process", { ...process, platform: "darwin" });
+    try {
+      const env = await createAutoPublishFixture();
+      expect(
+        await runCli(["schedule", "install", "--time", "23:30"], createIo().io, env.options)
+      ).toBe(0);
+
+      const run = createIo();
+      expect(await runCli(["schedule", "run-now"], run.io, env.options)).toBe(0);
+
+      expect(env.graph.calls).toEqual([]);
+      expect(env.s3.count("PUT")).toBe(0);
+      expect(env.keychain.calls).toEqual([]);
+      expect(run.stdout.join("\n")).not.toContain("게시");
+      await expect(
+        access(join(env.draftRoot, "2026-05-31", "rev-001", "publish-record.json"))
+      ).rejects.toMatchObject({ code: "ENOENT" });
+      expect(await statusLines(env.options)).toContain("자동 게시: 꺼짐");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("skips a warning-day draft, records the reason, and exits 0 (AC3)", async () => {
+    vi.stubGlobal("process", { ...process, platform: "darwin" });
+    try {
+      const env = await createAutoPublishFixture();
+      expect(
+        await runCli(
+          ["schedule", "install", "--publish", "instagram", "--publish-delay", "1m", "--time", "23:30"],
+          createIo().io,
+          env.options
+        )
+      ).toBe(0);
+      // During the delay the day's draft turns out to carry a safety warning.
+      env.sleepHooks.push(async () => {
+        await writeJson(
+          join(env.draftRoot, "2026-05-31", "rev-001", "safety-report.json"),
+          { schemaVersion: 1, status: "warning", message: "warn", risks: [], redactionsApplied: [] }
+        );
+      });
+
+      const run = createIo();
+      expect(await runCli(["schedule", "run-now"], run.io, env.options)).toBe(0);
+
+      expect(env.graph.calls).toEqual([]);
+      expect(run.stdout.join("\n")).toContain("건너뜀: safety warning");
+      expect(await statusLines(env.options)).toContain(
+        "마지막 게시 결과: 2026-05-31 건너뜀: safety warning"
+      );
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("records a safety-blocked day as skipped without touching the publish path", async () => {
+    vi.stubGlobal("process", { ...process, platform: "darwin" });
+    try {
+      const env = await createAutoPublishFixture();
+      expect(
+        await runCli(
+          ["schedule", "install", "--time", "23:30", "--publish", "instagram"],
+          createIo().io,
+          env.options
+        )
+      ).toBe(0);
+
+      const run = createIo();
+      const exitCode = await runCli(["schedule", "run-now"], run.io, {
+        ...env.options,
+        aiProvider: new ScheduleAiProvider({ model: "TOKEN=abc123" })
+      });
+
+      // The draft step itself is blocked (existing exit 6); publishing is skipped.
+      expect(exitCode).toBe(6);
+      expect(env.graph.calls).toEqual([]);
+      expect(await statusLines(env.options)).toContain(
+        "마지막 게시 결과: 2026-05-31 건너뜀: safety blocked"
+      );
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("keeps the draft, logs the failure, and leaves launchd alone on a network error (AC4)", async () => {
+    vi.stubGlobal("process", { ...process, platform: "darwin" });
+    try {
+      const env = await createAutoPublishFixture({ networkErrorOn: "media" });
+      expect(
+        await runCli(
+          ["schedule", "install", "--time", "23:30", "--publish", "instagram"],
+          createIo().io,
+          env.options
+        )
+      ).toBe(0);
+      const launchctlCallsAfterInstall = env.launchctlCalls.length;
+
+      const run = createIo();
+      const exitCode = await runCli(["schedule", "run-now"], run.io, env.options);
+
+      expect(exitCode).toBe(7);
+      const draftPath = join(env.draftRoot, "2026-05-31", "rev-001");
+      await access(join(draftPath, "caption.txt"));
+      await access(join(draftPath, "carousel", "01.png"));
+      await access(env.plistPath);
+      // run-now never unloads or rewrites the launchd job.
+      expect(env.launchctlCalls).toHaveLength(launchctlCallsAfterInstall);
+
+      const log = await readFile(
+        join(env.homeDir, ".uncommitted", "logs", "schedule-publish.jsonl"),
+        "utf8"
+      );
+      expect(log).toContain("\"kind\":\"failed\"");
+      expect(log).toContain("하위 컨테이너 생성");
+      expect(log).not.toContain(IG_TOKEN);
+      expect(await statusLines(env.options)).toContain(
+        "마지막 게시 결과: 2026-05-31 실패 [하위 컨테이너 생성]"
+      );
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("does not publish when `publish skip` runs during the delay (AC5)", async () => {
+    vi.stubGlobal("process", { ...process, platform: "darwin" });
+    try {
+      const env = await createAutoPublishFixture();
+      expect(
+        await runCli(
+          ["schedule", "install", "--time", "23:30", "--publish", "instagram", "--publish-delay", "30m"],
+          createIo().io,
+          env.options
+        )
+      ).toBe(0);
+      let skipped = false;
+      env.sleepHooks.push(async () => {
+        if (skipped) return;
+        skipped = true;
+        const skip = createIo();
+        expect(await runCli(["publish", "skip"], skip.io, env.options)).toBe(0);
+        expect(skip.stdout.join("\n")).toContain("2026-05-31");
+      });
+
+      const run = createIo();
+      expect(await runCli(["schedule", "run-now"], run.io, env.options)).toBe(0);
+
+      expect(skipped).toBe(true);
+      expect(env.graph.calls).toEqual([]);
+      expect(run.stdout.join("\n")).toContain("건너뜀: 사용자 skip");
+      expect(await statusLines(env.options)).toContain(
+        "마지막 게시 결과: 2026-05-31 건너뜀: 사용자 skip"
+      );
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("keeps Instagram and storage secrets out of the installed plist (AC6)", async () => {
+    vi.stubGlobal("process", {
+      ...process,
+      platform: "darwin",
+      env: { ...process.env, OPENAI_API_KEY: "sk-test-never-in-plist" }
+    });
+    try {
+      const env = await createAutoPublishFixture();
+      expect(
+        await runCli(
+          ["schedule", "install", "--time", "23:30", "--publish", "instagram", "--publish-delay", "30m"],
+          createIo().io,
+          env.options
+        )
+      ).toBe(0);
+
+      const plist = await readFile(env.plistPath, "utf8");
+      const settings = await readFile(
+        join(env.homeDir, ".uncommitted", "schedule.json"),
+        "utf8"
+      );
+      for (const secret of [IG_TOKEN, IG_APP_SECRET, R2_ACCESS_KEY, R2_SECRET_KEY, "sk-test-never-in-plist"]) {
+        expect(plist).not.toContain(secret);
+        expect(settings).not.toContain(secret);
+      }
+      expect(plist).not.toMatch(/instagram|r2-|access-token/i);
+      // Installing never reads the keychain.
+      expect(env.keychain.calls).toEqual([]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("rejects --publish-delay without --publish and unknown platforms", async () => {
+    vi.stubGlobal("process", { ...process, platform: "darwin" });
+    try {
+      const env = await createAutoPublishFixture();
+      const delayOnly = createIo();
+      expect(
+        await runCli(
+          ["schedule", "install", "--time", "23:30", "--publish-delay", "30m"],
+          delayOnly.io,
+          env.options
+        )
+      ).toBe(1);
+      expect(delayOnly.stderr.join("\n")).toContain("--publish-delay");
+
+      const badPlatform = createIo();
+      expect(
+        await runCli(
+          ["schedule", "install", "--time", "23:30", "--publish", "tiktok"],
+          badPlatform.io,
+          env.options
+        )
+      ).toBe(1);
+      await expect(access(env.plistPath)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("schedule remove also turns auto-publish off", async () => {
+    vi.stubGlobal("process", { ...process, platform: "darwin" });
+    try {
+      const env = await createAutoPublishFixture();
+      expect(
+        await runCli(
+          ["schedule", "install", "--time", "23:30", "--publish", "instagram"],
+          createIo().io,
+          env.options
+        )
+      ).toBe(0);
+
+      const remove = createIo();
+      expect(await runCli(["schedule", "remove"], remove.io, env.options)).toBe(0);
+      expect(remove.stdout.join("\n")).toContain("자동 게시 설정도 지웠습니다.");
+      await expect(
+        access(join(env.homeDir, ".uncommitted", "schedule.json"))
+      ).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("publish skip --date writes the marker for that day and validates the date", async () => {
+    const env = await createAutoPublishFixture();
+    const skip = createIo();
+    expect(await runCli(["publish", "skip", "--date", "2026-06-02"], skip.io, env.options)).toBe(0);
+    await access(join(env.draftRoot, "2026-06-02", "publish-skip.json"));
+
+    const bad = createIo();
+    expect(await runCli(["publish", "skip", "--date", "June 2"], bad.io, env.options)).toBe(1);
+  });
+});

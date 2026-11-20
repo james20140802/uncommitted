@@ -119,7 +119,24 @@ import {
   setImageHosting,
   testImageHosting
 } from "./instagram-hosting.js";
-import { runPublishInstagram } from "./instagram-publish.js";
+import {
+  PUBLISH_FAILED_EXIT_CODE,
+  type PublishOutcome,
+  runPublishInstagram
+} from "./instagram-publish.js";
+import {
+  appendSchedulePublishLog,
+  describePublishOutcome,
+  describePublishSetting,
+  parsePublishDelay,
+  readLastSchedulePublishLog,
+  readSchedulePublishSetting,
+  removeScheduleSettings,
+  runScheduledPublish,
+  type SchedulePublishSetting,
+  writePublishSkip,
+  writeScheduleSettings
+} from "./schedule-publish.js";
 
 /**
  * Thrown by readPreviewDraftRoot when config.json is unreadable, malformed,
@@ -379,19 +396,54 @@ async function runSchedule(
 
   if (subcommand === "install") {
     let scheduleTime: string | undefined;
+    let publishPlatform: string | undefined;
+    let publishDelay: string | undefined;
 
     for (let i = 0; i < subcommandArgs.length; i++) {
-      if (subcommandArgs[i] === "--time" && i + 1 < subcommandArgs.length) {
-        scheduleTime = subcommandArgs[i + 1];
+      const arg = subcommandArgs[i];
+      const value = subcommandArgs[i + 1];
+      const hasValue = value !== undefined && !value.startsWith("--");
+      if (arg === "--time" && hasValue) {
+        scheduleTime = value;
+        i++;
+      } else if (arg === "--publish" && hasValue) {
+        publishPlatform = value;
+        i++;
+      } else if (arg === "--publish-delay" && hasValue) {
+        publishDelay = value;
         i++;
       } else {
         // Reject malformed/unknown arguments outright: only a genuinely
         // argument-free invocation may fall back to config.scheduleTime,
         // otherwise a typo would silently reschedule with the stored time.
-        if (subcommandArgs[i] !== "--time") {
-          io.stderr(`Unknown argument: ${subcommandArgs[i]}`);
+        if (arg !== "--time" && arg !== "--publish" && arg !== "--publish-delay") {
+          io.stderr(`Unknown argument: ${arg}`);
         }
-        io.stderr("Usage: uncommitted schedule install --time HH:mm");
+        io.stderr(SCHEDULE_INSTALL_USAGE);
+        return 1;
+      }
+    }
+
+    // UNC-297: opt-in auto-publish. Validate before touching launchd.
+    let publishSetting: SchedulePublishSetting | null = null;
+    if (publishPlatform !== undefined && publishPlatform !== "instagram") {
+      io.stderr(`--publish는 instagram만 지원합니다: ${publishPlatform}`);
+      io.stderr(SCHEDULE_INSTALL_USAGE);
+      return 1;
+    }
+    if (publishDelay !== undefined && publishPlatform === undefined) {
+      io.stderr("--publish-delay는 --publish instagram과 함께 써야 합니다.");
+      io.stderr(SCHEDULE_INSTALL_USAGE);
+      return 1;
+    }
+    if (publishPlatform === "instagram") {
+      try {
+        publishSetting = {
+          platform: "instagram",
+          delayMinutes: publishDelay === undefined ? 0 : parsePublishDelay(publishDelay)
+        };
+      } catch (error) {
+        io.stderr(error instanceof Error ? error.message : String(error));
         return 1;
       }
     }
@@ -409,7 +461,7 @@ async function runSchedule(
     }
 
     if (!scheduleTime) {
-      io.stderr("Usage: uncommitted schedule install --time HH:mm");
+      io.stderr(SCHEDULE_INSTALL_USAGE);
       return 1;
     }
 
@@ -435,6 +487,23 @@ async function runSchedule(
 
       io.stdout(`Installed macOS schedule for ${scheduleTime}.`);
       io.stdout(`Plist path: ${plist.plistPath}`);
+
+      // The auto-publish setting goes to ~/.uncommitted/schedule.json, never the
+      // plist. Reinstalling without --publish turns auto-publish off by
+      // deleting the file (a no-op when it never existed).
+      try {
+        if (publishSetting) {
+          await writeScheduleSettings(options.homeDir, publishSetting);
+        } else {
+          await removeScheduleSettings(options.homeDir);
+        }
+      } catch {
+        io.stderr(
+          "Schedule installed, but the auto-publish setting could not be saved. Run `uncommitted schedule install` again."
+        );
+        return 1;
+      }
+      io.stdout(describePublishSetting(publishSetting));
 
       // Token persistence is best-effort and must never fail an install that
       // already succeeded: the scheduler is installed at this point, so a
@@ -539,6 +608,14 @@ async function runSchedule(
       io.stdout(`Schedule time: ${configScheduleTime} (from config)`);
     }
 
+    io.stdout(describePublishSetting(await readSchedulePublishSetting(options.homeDir)));
+    const lastPublish = await readLastSchedulePublishLog(options.homeDir);
+    if (lastPublish) {
+      io.stdout(
+        `마지막 게시 결과: ${lastPublish.outcome.date} ${describePublishOutcome(lastPublish.outcome)}`
+      );
+    }
+
     if (result.launchctlError) {
       io.stderr(`launchctl: ${result.launchctlError}`);
     }
@@ -587,11 +664,50 @@ async function runSchedule(
       workflowOptions
     );
 
+    const publishSetting = await readSchedulePublishSetting(options.homeDir);
+
     if (generateExitCode !== 0) {
+      if (publishSetting && generateExitCode === 6) {
+        // Safety-blocked day: nothing to publish. Record it as a skip so
+        // `schedule status` explains why there is no post today.
+        await recordScheduledPublish(
+          options,
+          { kind: "skipped", reason: "safety-blocked", date: targetDate },
+          scheduledAt,
+          io
+        );
+      }
       return generateExitCode;
     }
 
-    return await runRender(["latest"], io, workflowOptions);
+    const renderExitCode = await runRender(["latest"], io, workflowOptions);
+    if (renderExitCode !== 0 || !publishSetting) {
+      return renderExitCode;
+    }
+
+    // UNC-297: the last step publishes with `--yes` semantics. Skips exit 0;
+    // a failure keeps the draft, is logged, and exits 7 — the launchd job is
+    // untouched, so tomorrow's run happens as usual.
+    const paths = resolveConfigPaths({ homeDir: options.homeDir });
+    const draftRoot =
+      options.draftRoot ?? (await readPreviewDraftRoot(paths.configFile, options.homeDir));
+    const outcome = await runScheduledPublish({
+      targetDate,
+      setting: publishSetting,
+      deps: {
+        draftRoot,
+        homeDir: options.homeDir,
+        keychainRunner: options.keychainRunner,
+        graphFetch: options.graphFetch,
+        hostingFetch: options.hostingFetch,
+        now: options.now,
+        sleep: options.sleep,
+        clock: options.clock
+      },
+      io
+    });
+    await recordScheduledPublish(options, outcome, scheduledAt, io);
+    return outcome.kind === "failed" ? PUBLISH_FAILED_EXIT_CODE : 0;
   }
 
   if (subcommand === "remove") {
@@ -610,6 +726,11 @@ async function runSchedule(
       return 1;
     }
 
+    const removedPublish = await removeScheduleSettings(options.homeDir);
+    if (removedPublish) {
+      io.stdout("자동 게시 설정도 지웠습니다.");
+    }
+
     if (!result.wasInstalled) {
       io.stdout("Scheduler: not installed (nothing to remove).");
       return 0;
@@ -626,6 +747,29 @@ async function runSchedule(
 
   io.stderr("Usage: uncommitted schedule <install|status|remove|run-now> [options]");
   return 1;
+}
+
+const SCHEDULE_INSTALL_USAGE =
+  "Usage: uncommitted schedule install --time HH:mm [--publish instagram [--publish-delay <Nm|Nh>]]";
+
+/** Print the outcome and append it to ~/.uncommitted/logs/schedule-publish.jsonl. */
+async function recordScheduledPublish(
+  options: CliOptions,
+  outcome: PublishOutcome,
+  at: string,
+  io: CliIo
+): Promise<void> {
+  const line = describePublishOutcome(outcome);
+  if (outcome.kind === "failed") {
+    io.stderr(`${line} 드래프트는 그대로 남아 있고, 다음 스케줄은 예정대로 실행됩니다.`);
+  } else {
+    io.stdout(line);
+  }
+  try {
+    await appendSchedulePublishLog(options.homeDir, outcome, at);
+  } catch {
+    io.stderr("게시 결과를 로그에 기록하지 못했습니다 (~/.uncommitted/logs).");
+  }
 }
 
 const INSTAGRAM_USAGE = [
@@ -766,6 +910,11 @@ async function runPublish(
   const paths = resolveConfigPaths({ homeDir: options.homeDir });
   const draftRoot =
     options.draftRoot ?? (await readPreviewDraftRoot(paths.configFile, options.homeDir));
+
+  if (args[0] === "skip") {
+    return runPublishSkip(args.slice(1), draftRoot, io, options);
+  }
+
   return runPublishInstagram(
     args,
     {
@@ -781,6 +930,33 @@ async function runPublish(
     },
     io
   );
+}
+
+const PUBLISH_SKIP_USAGE = "Usage: uncommitted publish skip [--date YYYY-MM-DD]";
+
+/** UNC-297: keep the scheduled run from auto-publishing `date` (default today). */
+async function runPublishSkip(
+  args: string[],
+  draftRoot: string,
+  io: CliIo,
+  options: CliOptions
+): Promise<number> {
+  let date: string | undefined;
+  if (args.length === 2 && args[0] === "--date") {
+    date = args[1];
+  } else if (args.length !== 0) {
+    io.stderr(PUBLISH_SKIP_USAGE);
+    return 1;
+  }
+  if (date !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    io.stderr(`--date는 YYYY-MM-DD 형식이어야 합니다. ${PUBLISH_SKIP_USAGE}`);
+    return 1;
+  }
+  const now = options.now ? options.now() : new Date().toISOString();
+  const target = date ?? todayLocal(now);
+  await writePublishSkip(draftRoot, target, now);
+  io.stdout(`${target} 자동 게시를 건너뜁니다. 예약된 게시가 이 날짜는 올리지 않습니다.`);
+  return 0;
 }
 
 async function confirmOnTerminal(question: string): Promise<boolean> {
