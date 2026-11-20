@@ -62,6 +62,7 @@ import {
 } from "./collect-all.js";
 import {
   ExportCommandError,
+  exportErrorExitCode,
   runExportCommand
 } from "./export-command.js";
 import {
@@ -946,28 +947,7 @@ async function runExport(
   } catch (error) {
     if (error instanceof ExportCommandError) {
       io.stderr(error.message);
-
-      if (error.code === "invalid-arguments") {
-        return 1;
-      }
-
-      if (error.code === "invalid-config") {
-        return 2;
-      }
-
-      if (error.code === "missing-draft") {
-        return 1;
-      }
-
-      if (error.code === "missing-carousel") {
-        return 5;
-      }
-
-      if (error.code === "safety-blocked") {
-        return 6;
-      }
-
-      return 1;
+      return exportErrorExitCode(error);
     }
 
     throw error;
