@@ -139,6 +139,24 @@ describe("prepareInstagramMedia (UNC-294 AC1: JPEG package)", () => {
     }
   });
 
+  it.each([
+    ["an ancestor of the draft", (draftPath: string) => join(draftPath, "..")],
+    ["the draft itself", (draftPath: string) => draftPath],
+    ["inside the draft", (draftPath: string) => join(draftPath, "publish")]
+  ])("refuses an outputDir that is %s and leaves the draft untouched", async (_label, pick) => {
+    const root = await createTempDir();
+    const draftPath = await scaffoldDraft(root, { carouselCount: 2 });
+    const before = await snapshotCarousel(draftPath);
+
+    await expect(
+      prepareInstagramMedia({ draftPath, outputDir: pick(draftPath) })
+    ).rejects.toThrow(/overlap/i);
+
+    expect(await exists(join(draftPath, "caption.txt"))).toBe(true);
+    const after = await snapshotCarousel(draftPath);
+    expect([...after.keys()]).toEqual([...before.keys()]);
+  });
+
   it("flattens transparent PNGs instead of failing", async () => {
     const root = await createTempDir();
     const draftPath = await scaffoldDraft(root, { carouselCount: 2 });

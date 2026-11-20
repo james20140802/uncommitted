@@ -1,5 +1,5 @@
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import sharp from "sharp";
 import { CAROUSEL_HEIGHT, CAROUSEL_WIDTH } from "./carousel-dimensions.js";
 import {
@@ -67,7 +67,10 @@ export type InstagramMediaPackage = {
 export type PrepareInstagramMediaOptions = {
   /** 드래프트 revision 폴더 (예: ~/Uncommitted/drafts/2026-11-20/rev-001) */
   draftPath: string;
-  /** JPEG를 쓸 폴더. 매번 비우고 다시 만든다. 드래프트 밖이어야 한다. */
+  /**
+   * JPEG를 쓸 폴더. 매번 비우고 다시 만든다. 드래프트와 겹치면(드래프트
+   * 자신·하위·상위 폴더) 원본이 지워지므로 아무것도 하기 전에 거절한다.
+   */
   outputDir: string;
 };
 
@@ -80,6 +83,7 @@ export async function prepareInstagramMedia(
   options: PrepareInstagramMediaOptions
 ): Promise<InstagramMediaPackage> {
   const { draftPath, outputDir } = options;
+  assertOutputDirIsSeparate(draftPath, outputDir);
 
   // export와 같은 게이트를 같은 함수로 쓴다 (정책 복제 금지).
   const safetyInfo = await readSafetyInfo(draftPath);
@@ -226,6 +230,22 @@ function encodeJpeg(png: Buffer): Promise<Buffer> {
     .toColourspace("srgb")
     .jpeg({ quality: INSTAGRAM_LIMITS.jpegQuality, chromaSubsampling: "4:4:4" })
     .toBuffer();
+}
+
+function assertOutputDirIsSeparate(draftPath: string, outputDir: string): void {
+  const source = resolve(draftPath);
+  const output = resolve(outputDir);
+  if (isWithin(output, source) || isWithin(source, output)) {
+    throw new Error(
+      "Instagram media outputDir must not overlap the draft folder (it is wiped before writing)."
+    );
+  }
+}
+
+/** child가 parent 자신이거나 그 아래에 있으면 true. */
+function isWithin(child: string, parent: string): boolean {
+  const rel = relative(parent, child);
+  return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
 }
 
 async function writePackage(outputDir: string, jpegs: Buffer[]): Promise<InstagramMediaImage[]> {
