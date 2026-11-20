@@ -78,6 +78,10 @@ type FakeGraphOptions = {
   childErrorMessage?: string;
   publishError?: boolean;
   permalinkError?: boolean;
+  /** HTTP statuses media_publish returns before succeeding (UNC-298). */
+  publishFailures?: number[];
+  /** Container status lookups answer 500 (UNC-298). */
+  containerStatusError?: boolean;
 };
 
 function fakeGraph(options: FakeGraphOptions = {}) {
@@ -131,6 +135,10 @@ function fakeGraph(options: FakeGraphOptions = {}) {
       if (options.publishError) {
         return json({ error: { message: "Fatal publish error", code: 2 } }, 500);
       }
+      const failure = options.publishFailures?.shift();
+      if (failure !== undefined) {
+        return json({ error: { message: `Publish failed with ${failure}`, code: 2 } }, failure);
+      }
       return json({ id: "media-1" });
     }
     if (method === "GET" && path === "/media-1") {
@@ -140,6 +148,9 @@ function fakeGraph(options: FakeGraphOptions = {}) {
       return json({ id: "media-1", permalink: PERMALINK });
     }
     if (method === "GET" && /^\/(child-\d+|carousel-1)$/.test(path)) {
+      if (options.containerStatusError) {
+        return json({ error: { message: "Service unavailable", code: 2 } }, 500);
+      }
       const id = path.slice(1);
       const check = checks.get(id) ?? 0;
       checks.set(id, check + 1);
@@ -632,5 +643,169 @@ describe("publish instagram", () => {
     ).toBe(1);
     expect((await run(["publish"], env.options)).exitCode).toBe(1);
     expectNothingUploaded(env);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// UNC-298: failure record, --retry and transient retries
+// ---------------------------------------------------------------------------
+
+async function readAttempt(draftPath: string): Promise<Record<string, unknown> | null> {
+  return readFile(join(draftPath, "publish-attempt.json"), "utf8").then(
+    (raw) => JSON.parse(raw) as Record<string, unknown>,
+    () => null
+  );
+}
+
+describe("publish instagram failure record and --retry (UNC-298)", () => {
+  beforeEach(() => clearGlobalConfigCache());
+
+  it("AC5: a media_publish failure leaves publish-attempt.json with stage, container ID and time, but no secrets", async () => {
+    const env = await setup({ graph: { publishError: true } });
+    const result = await run(["publish", "instagram", "--yes"], env.options);
+
+    expect(result.exitCode).toBe(7);
+    const raw = await readFile(join(env.draftPath, "publish-attempt.json"), "utf8");
+    const attempt = JSON.parse(raw) as Record<string, unknown>;
+    expect(attempt).toMatchObject({
+      platform: "instagram",
+      stage: "게시",
+      carouselContainerId: "carousel-1",
+      failedAt: "2026-11-20T23:31:00.000Z"
+    });
+    expect(typeof attempt.containerCreatedAt).toBe("string");
+    for (const secret of [TOKEN, ACCESS_KEY, SECRET_KEY]) {
+      expect(raw).not.toContain(secret);
+    }
+    expect(raw).not.toMatch(/X-Amz-|r2\.cloudflarestorage\.com/);
+  });
+
+  it("AC3: --retry within 24 hours publishes the existing container without uploading again", async () => {
+    const env = await setup({ graph: { publishError: true } });
+    await run(["publish", "instagram", "--yes"], env.options);
+    const putsBefore = env.s3.count("PUT");
+
+    const graph = fakeGraph();
+    const result = await run(["publish", "instagram", "--retry", "--yes"], {
+      ...env.options,
+      graphFetch: graph.fetch,
+      now: () => "2026-11-21T10:00:00.000Z"
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain(PERMALINK);
+    expect(env.s3.count("PUT")).toBe(putsBefore);
+    expect(graph.writes().map((w) => w.path)).toEqual([`/${IG_USER_ID}/media_publish`]);
+    expect(graph.writes()[0].params.get("creation_id")).toBe("carousel-1");
+    expect(await readRecord(env.draftPath)).toMatchObject({ mediaId: "media-1" });
+    expect(await readAttempt(env.draftPath)).toBeNull();
+  });
+
+  it("--retry after 24 hours starts over with a new upload", async () => {
+    const env = await setup({ graph: { publishError: true } });
+    await run(["publish", "instagram", "--yes"], env.options);
+    const putsBefore = env.s3.count("PUT");
+
+    const graph = fakeGraph();
+    const result = await run(["publish", "instagram", "--retry", "--yes"], {
+      ...env.options,
+      graphFetch: graph.fetch,
+      now: () => "2026-11-22T00:00:00.000Z"
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(env.s3.count("PUT")).toBeGreaterThan(putsBefore);
+    expect(graph.writes().filter((w) => w.path.endsWith("/media")).length).toBe(4);
+  });
+
+  it("--retry without a failure record runs the normal publish", async () => {
+    const env = await setup();
+    const result = await run(["publish", "instagram", "--retry", "--yes"], env.options);
+
+    expect(result.exitCode).toBe(0);
+    expect(env.s3.count("PUT")).toBe(3);
+    expect(await readRecord(env.draftPath)).toMatchObject({ mediaId: "media-1" });
+  });
+
+  it("--retry refuses when the stored container was already published", async () => {
+    const env = await setup({ graph: { publishError: true } });
+    await run(["publish", "instagram", "--yes"], env.options);
+
+    const graph = fakeGraph({ status: () => ({ status_code: "PUBLISHED" }) });
+    const result = await run(["publish", "instagram", "--retry", "--yes"], {
+      ...env.options,
+      graphFetch: graph.fetch,
+      now: () => "2026-11-21T10:00:00.000Z"
+    });
+
+    expect(result.exitCode).toBe(7);
+    expect(result.stderr).toContain("Instagram에서");
+    expect(graph.writes()).toEqual([]);
+    expect(await recordExists(env.draftPath)).toBe(false);
+  });
+
+  it("AC4: two 503s from media_publish are retried with backoff and the post succeeds", async () => {
+    const env = await setup({ graph: { publishFailures: [503, 503] } });
+    const result = await run(["publish", "instagram", "--yes"], env.options);
+
+    expect(result.exitCode).toBe(0);
+    expect(env.graph.writes().filter((w) => w.path.endsWith("/media_publish")).length).toBe(3);
+    expect(env.sleeps.filter((ms) => ms < 60_000).length).toBe(2);
+    expect(await readRecord(env.draftPath)).toMatchObject({ mediaId: "media-1" });
+  });
+
+  it("AC4: a 4xx error is reported at once without retrying", async () => {
+    const env = await setup({ graph: { childCreateError: true } });
+    const result = await run(["publish", "instagram", "--yes"], env.options);
+
+    expect(result.exitCode).toBe(7);
+    expect(env.graph.writes().filter((w) => w.path.endsWith("/media")).length).toBe(1);
+    expect(env.sleeps).toEqual([]);
+  });
+
+  it("AC4: a third transient failure gives up and reports the stage", async () => {
+    const env = await setup({ graph: { publishFailures: [503, 503, 503] } });
+    const result = await run(["publish", "instagram", "--yes"], env.options);
+
+    expect(result.exitCode).toBe(7);
+    expect(result.stderr).toContain("게시 실패 [게시]");
+    expect(env.graph.writes().filter((w) => w.path.endsWith("/media_publish")).length).toBe(3);
+  });
+
+  it("--retry stops without uploading when the stored container's status cannot be read", async () => {
+    const env = await setup({ graph: { publishError: true } });
+    await run(["publish", "instagram", "--yes"], env.options);
+    const putsBefore = env.s3.count("PUT");
+
+    const graph = fakeGraph({ containerStatusError: true });
+    const result = await run(["publish", "instagram", "--retry", "--yes"], {
+      ...env.options,
+      graphFetch: graph.fetch,
+      now: () => "2026-11-21T10:00:00.000Z"
+    });
+
+    expect(result.exitCode).toBe(7);
+    expect(result.stderr).toContain("컨테이너 재사용 확인");
+    expect(env.s3.count("PUT")).toBe(putsBefore);
+    expect(graph.writes()).toEqual([]);
+    expect(await readAttempt(env.draftPath)).toMatchObject({ carouselContainerId: "carousel-1" });
+  });
+
+  it("--retry starts over when the stored container has EXPIRED", async () => {
+    const env = await setup({ graph: { publishError: true } });
+    await run(["publish", "instagram", "--yes"], env.options);
+    const putsBefore = env.s3.count("PUT");
+
+    const graph = fakeGraph({
+      status: (id) => ({ status_code: id === "carousel-1" ? "EXPIRED" : "FINISHED" })
+    });
+    const result = await run(["publish", "instagram", "--retry", "--yes"], {
+      ...env.options,
+      graphFetch: graph.fetch,
+      now: () => "2026-11-21T10:00:00.000Z"
+    });
+
+    expect(result.stdout).toContain("EXPIRED");
+    expect(env.s3.count("PUT")).toBeGreaterThan(putsBefore);
   });
 });

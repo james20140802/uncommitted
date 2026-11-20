@@ -14,6 +14,7 @@ import {
   readSafetyInfo
 } from "./export-command.js";
 import {
+  DEFAULT_QUOTA_TOTAL,
   GRAPH_API_BASE,
   type GraphFetch,
   type InstagramDeps,
@@ -45,12 +46,16 @@ export const PUBLISH_RECORD_FILE = "publish-record.json";
 export const PUBLISH_LOCK_FILE = "publish.lock";
 export const CONTAINER_POLL_INTERVAL_MS = 60_000;
 export const CONTAINER_POLL_TIMEOUT_MS = 5 * 60_000;
-/** Fallback when Meta omits `config.quota_total` (documented 24-hour limit). */
-const DEFAULT_QUOTA_TOTAL = 100;
 const CAPTION_PREVIEW_CHARS = 80;
+/** UNC-298: failure record in the revision folder, read by `--retry`. */
+export const PUBLISH_ATTEMPT_FILE = "publish-attempt.json";
+/** Meta keeps an unpublished container for 24 hours. */
+export const CONTAINER_REUSE_WINDOW_MS = 24 * 60 * 60_000;
+/** Backoff before each retry of a 5xx or network failure (so at most 2 retries). */
+export const TRANSIENT_RETRY_DELAYS_MS = [2_000, 5_000];
 
 export const PUBLISH_USAGE =
-  "Usage: uncommitted publish instagram [--yes] [--dry-run] [--date YYYY-MM-DD [--revision rev-NNN]]";
+  "Usage: uncommitted publish instagram [--yes] [--dry-run] [--retry] [--date YYYY-MM-DD [--revision rev-NNN]]";
 
 export type PublishRecord = {
   platform: "instagram";
@@ -77,7 +82,23 @@ export type PublishDeps = InstagramDeps &
     clock?: () => number;
   };
 
-type PublishArgs = { yes: boolean; dryRun: boolean; date?: string; revision?: string };
+type PublishArgs = {
+  yes: boolean;
+  dryRun: boolean;
+  retry: boolean;
+  date?: string;
+  revision?: string;
+};
+
+/** What `publish-attempt.json` holds. No token, secret or hosted URL. */
+export type PublishAttempt = {
+  platform: "instagram";
+  stage: string;
+  message: string;
+  failedAt: string;
+  carouselContainerId?: string;
+  containerCreatedAt?: string;
+};
 
 /** A failure with the stage it happened in; printed as one line. */
 class PublishStop extends Error {
@@ -193,7 +214,7 @@ export async function autoPublishInstagram(
 
     const result = await executePublish(
       draft,
-      { yes: true, dryRun: false },
+      { yes: true, dryRun: false, retry: false },
       deps,
       io,
       secrets
@@ -264,19 +285,24 @@ type ExecuteResult =
   | { kind: "published"; mediaId: string; permalink: string | null };
 
 /**
- * Record check → lock → safety → account → hosting → media prep → quota →
- * preview → confirm → carousel publish → record. Throws {@link PublishStop}
- * with the stage on failure; callers decide how to report it.
+ * Record check → lock → safety → account → (`--retry`: reusable container?) →
+ * hosting → media prep → quota → preview → confirm → carousel publish →
+ * record. Throws {@link PublishStop} with the stage on failure; a failure
+ * after the account step also leaves `publish-attempt.json` (UNC-298).
  */
 async function executePublish(
   draft: ResolvedDraft,
-  parsed: Pick<PublishArgs, "yes" | "dryRun">,
+  parsed: Pick<PublishArgs, "yes" | "dryRun" | "retry">,
   deps: PublishDeps,
   io: PublishIo,
   secrets: string[]
 ): Promise<ExecuteResult> {
   let workDir: string | undefined;
   let lockPath: string | undefined;
+  const now = deps.now ?? (() => new Date().toISOString());
+  /** Carousel container this run created or reused; goes into the failure record. */
+  let container: { id: string; createdAt: string } | undefined;
+  let recordFailure = false;
   try {
     const existing = await readPublishRecord(draft.path);
     if (existing) {
@@ -307,13 +333,24 @@ async function executePublish(
       throw new PublishStop(account.message, account.exitCode);
     }
     secrets.push(account.accessToken);
-    const graph = createGraphClient(deps.graphFetch, account.accessToken);
+    const poll = {
+      sleep: deps.sleep ?? ((ms: number) => new Promise<void>((done) => setTimeout(done, ms))),
+      clock: deps.clock ?? (() => Date.now())
+    };
+    const graph = createGraphClient(deps.graphFetch, account.accessToken, poll.sleep);
+    recordFailure = !parsed.dryRun;
 
-    const host = await resolveImageHost({
-      homeDir: deps.homeDir,
-      keychainRunner: deps.keychainRunner,
-      hostingFetch: deps.hostingFetch
-    });
+    if (parsed.retry && !parsed.dryRun) {
+      container = await findReusableContainer(draft.path, graph, Date.parse(now()), io);
+    }
+
+    const host = container
+      ? undefined
+      : await resolveImageHost({
+          homeDir: deps.homeDir,
+          keychainRunner: deps.keychainRunner,
+          hostingFetch: deps.hostingFetch
+        });
 
     workDir = await mkdtemp(join(tmpdir(), "uncommitted-publish-"));
     const media = await prepareInstagramMedia({ draftPath: draft.path, outputDir: workDir }).catch(
@@ -340,6 +377,9 @@ async function executePublish(
     io.stdout(`캡션: ${captionPreview(media.caption)}`);
     io.stdout(`safety: ${media.safetyStatus}`);
     io.stdout(`게시 한도: ${quota.usage}/${quota.total} (24시간)`);
+    if (container) {
+      io.stdout("재시도: 기존 컨테이너로 게시합니다. 이미지를 다시 올리지 않습니다.");
+    }
 
     if (parsed.dryRun) {
       if (warning) io.stderr(warning);
@@ -351,6 +391,7 @@ async function executePublish(
       if (warning) io.stderr(warning);
     } else {
       if (!deps.confirm) {
+        recordFailure = false;
         throw new PublishStop(
           "확인할 대화형 터미널이 없습니다. 확인 없이 게시하려면 --yes를 붙이세요.",
           1
@@ -365,71 +406,84 @@ async function executePublish(
       }
     }
 
-    const files = await Promise.all(
-      media.images.map(async (image) => ({
-        bytes: new Uint8Array(await readFile(image.path)),
-        contentType: "image/jpeg"
-      }))
-    );
-
-    const poll = {
-      sleep: deps.sleep ?? ((ms: number) => new Promise<void>((done) => setTimeout(done, ms))),
-      clock: deps.clock ?? (() => Date.now())
-    };
-
-    const publishedAt = (deps.now ?? (() => new Date().toISOString()))();
+    const publishedAt = now();
     const baseRecord = { platform: "instagram" as const, publishedAt, safetyStatus: media.safetyStatus };
 
     let stage = "이미지 업로드";
-    const mediaId = await withHostedImages(
-      host,
-      files,
-      async (urls) => {
-        secrets.push(...urls);
-        stage = "하위 컨테이너 생성";
-        const children: string[] = [];
-        for (const url of urls) {
-          const child = await graph.post(`/${account.igUserId}/media`, {
-            image_url: url,
-            is_carousel_item: "true"
-          }, stage);
-          children.push(requireId(child, stage));
+    const publishCarousel = async (carousel: string): Promise<string> => {
+      stage = "캐러셀 컨테이너 처리";
+      await waitUntilFinished(graph, [carousel], stage, poll);
+
+      stage = "게시";
+      const published = requireId(
+        await graph.post(`/${account.igUserId}/media_publish`, { creation_id: carousel }, stage, {
+          // A dropped response may hide a successful publish: never post twice.
+          beforeRetry: async () => {
+            const body = await graph.get(`/${carousel}`, { fields: "status_code" }, stage);
+            if (body.status_code === "PUBLISHED") {
+              throw new PublishStop(ALREADY_PUBLISHED_CONTAINER_MESSAGE, PUBLISH_FAILED_EXIT_CODE, stage);
+            }
+          }
+        }),
+        stage
+      );
+      // The post is live: persist it before cleanup or permalink lookup, so
+      // an interrupted run can never publish this revision again.
+      recordFailure = false;
+      stage = "게시 기록 저장";
+      await writePublishRecord(draft.path, { ...baseRecord, mediaId: published, permalink: null });
+      return published;
+    };
+
+    let mediaId: string;
+    if (container) {
+      mediaId = await publishCarousel(container.id);
+    } else {
+      const files = await Promise.all(
+        media.images.map(async (image) => ({
+          bytes: new Uint8Array(await readFile(image.path)),
+          contentType: "image/jpeg"
+        }))
+      );
+      mediaId = await withHostedImages(
+        host!,
+        files,
+        async (urls) => {
+          secrets.push(...urls);
+          stage = "하위 컨테이너 생성";
+          const children: string[] = [];
+          for (const url of urls) {
+            const child = await graph.post(`/${account.igUserId}/media`, {
+              image_url: url,
+              is_carousel_item: "true"
+            }, stage);
+            children.push(requireId(child, stage));
+          }
+
+          stage = "하위 컨테이너 처리";
+          await waitUntilFinished(graph, children, stage, poll);
+
+          stage = "캐러셀 컨테이너 생성";
+          const carousel = requireId(
+            await graph.post(`/${account.igUserId}/media`, {
+              media_type: "CAROUSEL",
+              children: children.join(","),
+              caption: media.caption
+            }, stage),
+            stage
+          );
+          container = { id: carousel, createdAt: now() };
+          return publishCarousel(carousel);
+        },
+        { onWarning: (message) => io.stderr(message) }
+      ).catch((error: unknown) => {
+        if (error instanceof HostingError) {
+          throw new PublishStop(error.message, PUBLISH_FAILED_EXIT_CODE, stage);
         }
-
-        stage = "하위 컨테이너 처리";
-        await waitUntilFinished(graph, children, stage, poll);
-
-        stage = "캐러셀 컨테이너 생성";
-        const carousel = requireId(
-          await graph.post(`/${account.igUserId}/media`, {
-            media_type: "CAROUSEL",
-            children: children.join(","),
-            caption: media.caption
-          }, stage),
-          stage
-        );
-
-        stage = "캐러셀 컨테이너 처리";
-        await waitUntilFinished(graph, [carousel], stage, poll);
-
-        stage = "게시";
-        const published = requireId(
-          await graph.post(`/${account.igUserId}/media_publish`, { creation_id: carousel }, stage),
-          stage
-        );
-        // The post is live: persist it before cleanup or permalink lookup, so
-        // an interrupted run can never publish this revision again.
-        stage = "게시 기록 저장";
-        await writePublishRecord(draft.path, { ...baseRecord, mediaId: published, permalink: null });
-        return published;
-      },
-      { onWarning: (message) => io.stderr(message) }
-    ).catch((error: unknown) => {
-      if (error instanceof HostingError) {
-        throw new PublishStop(error.message, PUBLISH_FAILED_EXIT_CODE, stage);
-      }
-      throw error;
-    });
+        throw error;
+      });
+    }
+    await rm(join(draft.path, PUBLISH_ATTEMPT_FILE), { force: true });
 
     let permalink: string | null = null;
     try {
@@ -445,6 +499,26 @@ async function executePublish(
     }
 
     return { kind: "published", mediaId, permalink };
+  } catch (error) {
+    if (recordFailure) {
+      const stop = error instanceof PublishStop ? error : undefined;
+      // Keep the last container when this run made none, so a refused or
+      // pre-upload failure never hides a container that may already be live.
+      const previous = container ? null : await readPublishAttempt(draft.path);
+      if (previous?.carouselContainerId && previous.containerCreatedAt) {
+        container = { id: previous.carouselContainerId, createdAt: previous.containerCreatedAt };
+      }
+      await writePublishAttempt(draft.path, {
+        platform: "instagram",
+        stage: stop?.stage ?? PUBLISH_PREPARE_STAGE,
+        message: scrubOutput(error instanceof Error ? error.message : String(error), secrets),
+        failedAt: now(),
+        ...(container
+          ? { carouselContainerId: container.id, containerCreatedAt: container.createdAt }
+          : {})
+      });
+    }
+    throw error;
   } finally {
     if (lockPath) {
       await rm(lockPath, { force: true });
@@ -453,6 +527,83 @@ async function executePublish(
       await rm(workDir, { recursive: true, force: true });
     }
   }
+}
+
+const ALREADY_PUBLISHED_CONTAINER_MESSAGE =
+  "이 컨테이너는 이미 게시됐습니다. 중복 게시를 막으려고 멈춥니다. Instagram에서 게시물을 확인하고, 맞다면 publish-record.json을 직접 남기세요.";
+
+/**
+ * `--retry`: the carousel container from the last failure, if it is younger
+ * than 24 hours and still publishable. PUBLISHED stops the run (never post
+ * twice); anything else unusable falls back to a fresh upload.
+ */
+async function findReusableContainer(
+  draftPath: string,
+  graph: GraphClient,
+  nowMs: number,
+  io: PublishIo
+): Promise<{ id: string; createdAt: string } | undefined> {
+  const attempt = await readPublishAttempt(draftPath);
+  const id = attempt?.carouselContainerId;
+  const createdAt = attempt?.containerCreatedAt;
+  const age = createdAt ? nowMs - Date.parse(createdAt) : NaN;
+  if (!id || !createdAt || !(age >= 0 && age < CONTAINER_REUSE_WINDOW_MS)) {
+    io.stdout("재시도: 다시 쓸 컨테이너가 없어 처음부터 게시합니다.");
+    return undefined;
+  }
+
+  // The saved container may already be live if a publish response was lost:
+  // start over only once Meta positively says it can no longer be published.
+  const stage = "컨테이너 재사용 확인";
+  const body = await graph.get(`/${id}`, { fields: "status_code" }, stage);
+  const code = typeof body.status_code === "string" ? body.status_code : "";
+  if (code === "PUBLISHED") {
+    throw new PublishStop(ALREADY_PUBLISHED_CONTAINER_MESSAGE, PUBLISH_FAILED_EXIT_CODE, stage);
+  }
+  if (code === "FINISHED" || code === "IN_PROGRESS") {
+    return { id, createdAt };
+  }
+  if (code === "ERROR" || code === "EXPIRED") {
+    io.stdout(`재시도: 기존 컨테이너가 ${code} 상태라 처음부터 게시합니다.`);
+    return undefined;
+  }
+  throw new PublishStop(
+    `기존 컨테이너 상태를 확인하지 못했습니다 (${code || "응답에 상태 없음"}). 중복 게시를 막으려고 멈춥니다. 잠시 뒤 다시 --retry 하세요.`,
+    PUBLISH_FAILED_EXIT_CODE,
+    stage
+  );
+}
+
+async function readPublishAttempt(draftPath: string): Promise<PublishAttempt | null> {
+  try {
+    const parsed: unknown = JSON.parse(
+      await readFile(join(draftPath, PUBLISH_ATTEMPT_FILE), "utf8")
+    );
+    if (!isRecord(parsed)) return null;
+    return {
+      platform: "instagram",
+      stage: typeof parsed.stage === "string" ? parsed.stage : "",
+      message: typeof parsed.message === "string" ? parsed.message : "",
+      failedAt: typeof parsed.failedAt === "string" ? parsed.failedAt : "",
+      ...(typeof parsed.carouselContainerId === "string"
+        ? { carouselContainerId: parsed.carouselContainerId }
+        : {}),
+      ...(typeof parsed.containerCreatedAt === "string"
+        ? { containerCreatedAt: parsed.containerCreatedAt }
+        : {})
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Best effort: a failed write must not hide the original publish error. */
+async function writePublishAttempt(draftPath: string, attempt: PublishAttempt): Promise<void> {
+  await writeFile(
+    join(draftPath, PUBLISH_ATTEMPT_FILE),
+    `${JSON.stringify(attempt, null, 2)}\n`,
+    "utf8"
+  ).catch(() => undefined);
 }
 
 function scrubbedIo(rawIo: PublishIo, secrets: string[]): PublishIo {
@@ -471,13 +622,15 @@ function parseArgs(args: string[]): PublishArgs {
   if (platform !== "instagram") {
     throw new PublishStop(PUBLISH_USAGE, 1);
   }
-  const parsed: PublishArgs = { yes: false, dryRun: false };
+  const parsed: PublishArgs = { yes: false, dryRun: false, retry: false };
   for (let i = 0; i < rest.length; i++) {
     const arg = rest[i];
     if (arg === "--yes" || arg === "-y") {
       parsed.yes = true;
     } else if (arg === "--dry-run") {
       parsed.dryRun = true;
+    } else if (arg === "--retry") {
+      parsed.retry = true;
     } else if ((arg === "--date" || arg === "--revision") && rest[i + 1] && !rest[i + 1].startsWith("-")) {
       if (arg === "--date") parsed.date = rest[++i];
       else parsed.revision = rest[++i];
@@ -602,23 +755,39 @@ async function readPublishRecord(draftPath: string): Promise<PublishRecord | nul
 // Graph API
 // ---------------------------------------------------------------------------
 
-type GraphClient = {
-  get(path: string, params: Record<string, string>, stage: string): Promise<Record<string, unknown>>;
-  post(path: string, params: Record<string, string>, stage: string): Promise<Record<string, unknown>>;
+type CallOptions = {
+  /** Runs before each transient retry; may throw to stop retrying. */
+  beforeRetry?: () => Promise<void>;
 };
 
+type GraphClient = {
+  get(path: string, params: Record<string, string>, stage: string): Promise<Record<string, unknown>>;
+  post(
+    path: string,
+    params: Record<string, string>,
+    stage: string,
+    options?: CallOptions
+  ): Promise<Record<string, unknown>>;
+};
+
+/**
+ * Graph API calls with short retries (UNC-298): a network error or 5xx is
+ * retried after each {@link TRANSIENT_RETRY_DELAYS_MS} delay; a 4xx or a
+ * Meta error on a 2xx fails at once.
+ */
 function createGraphClient(
   graphFetch: GraphFetch | undefined,
-  accessToken: string
+  accessToken: string,
+  sleep: (ms: number) => Promise<void>
 ): GraphClient {
   const fetchImpl: GraphFetch = graphFetch ?? ((url, init) => fetch(url, init));
 
-  const call = async (
+  const once = async (
     method: "GET" | "POST",
     path: string,
     params: Record<string, string>,
     stage: string
-  ) => {
+  ): Promise<{ ok: true; body: Record<string, unknown> } | { ok: false; transient: boolean; stop: PublishStop }> => {
     const url = new URL(`${GRAPH_API_BASE}${path}`);
     const form = new URLSearchParams({ ...params, access_token: accessToken });
     let response: Response;
@@ -638,22 +807,47 @@ function createGraphClient(
       body = await response.json().catch(() => ({}));
     } catch {
       // The underlying error may carry the request URL; never surface it.
-      throw new PublishStop(
-        "Meta Graph API에 연결하지 못했습니다. 네트워크를 확인하고 다시 시도하세요.",
-        PUBLISH_FAILED_EXIT_CODE,
-        stage
-      );
+      return {
+        ok: false,
+        transient: true,
+        stop: new PublishStop(
+          "Meta Graph API에 연결하지 못했습니다. 네트워크를 확인하고 다시 시도하세요.",
+          PUBLISH_FAILED_EXIT_CODE,
+          stage
+        )
+      };
     }
     const record = isRecord(body) ? body : {};
     if (response.ok && !isRecord(record.error)) {
-      return record;
+      return { ok: true, body: record };
     }
-    throw new PublishStop(metaErrorMessage(record), PUBLISH_FAILED_EXIT_CODE, stage);
+    return {
+      ok: false,
+      transient: response.status >= 500,
+      stop: new PublishStop(metaErrorMessage(record), PUBLISH_FAILED_EXIT_CODE, stage)
+    };
+  };
+
+  const call = async (
+    method: "GET" | "POST",
+    path: string,
+    params: Record<string, string>,
+    stage: string,
+    options: CallOptions = {}
+  ) => {
+    for (let attempt = 0; ; attempt++) {
+      const result = await once(method, path, params, stage);
+      if (result.ok) return result.body;
+      const delay = TRANSIENT_RETRY_DELAYS_MS[attempt];
+      if (!result.transient || delay === undefined) throw result.stop;
+      await options.beforeRetry?.();
+      await sleep(delay);
+    }
   };
 
   return {
     get: (path, params, stage) => call("GET", path, params, stage),
-    post: (path, params, stage) => call("POST", path, params, stage)
+    post: (path, params, stage, options) => call("POST", path, params, stage, options)
   };
 }
 

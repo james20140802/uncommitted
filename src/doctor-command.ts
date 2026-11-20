@@ -17,6 +17,7 @@ import {
   type ProviderEnvKey
 } from "./global-config.js";
 import { describeGitHubTokenStatus } from "./github-token-safety.js";
+import { createInstagramDoctorChecks, type InstagramDoctorDeps } from "./instagram-doctor.js";
 import { isRecord } from "./type-guards.js";
 
 const execFileAsync = promisify(execFile);
@@ -48,7 +49,7 @@ export type DoctorOptions = {
   nodeVersion?: string;
   checkCommand?: (command: string, args: string[]) => Promise<CommandCheckResult>;
   checkAccess?: (path: string, mode: number) => Promise<boolean>;
-};
+} & Pick<InstagramDoctorDeps, "keychainRunner" | "graphFetch" | "hostingFetch" | "now">;
 
 type DoctorConfig = Pick<
   GlobalConfig,
@@ -135,6 +136,15 @@ export async function createDoctorReport(
       checks.push(aiModelCheck);
     }
     checks.push(createGitHubTokenCheck(config, env));
+    checks.push(
+      ...(await createInstagramDoctorChecks({
+        homeDir: options.homeDir,
+        keychainRunner: options.keychainRunner,
+        graphFetch: options.graphFetch,
+        hostingFetch: options.hostingFetch,
+        now: options.now
+      }))
+    );
   }
 
   return { checks };

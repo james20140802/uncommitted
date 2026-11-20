@@ -128,6 +128,7 @@ import {
   appendSchedulePublishLog,
   describePublishOutcome,
   describePublishSetting,
+  describeScheduleTokenWarning,
   parsePublishDelay,
   readLastSchedulePublishLog,
   readSchedulePublishSetting,
@@ -608,7 +609,19 @@ async function runSchedule(
       io.stdout(`Schedule time: ${configScheduleTime} (from config)`);
     }
 
-    io.stdout(describePublishSetting(await readSchedulePublishSetting(options.homeDir)));
+    const publishSetting = await readSchedulePublishSetting(options.homeDir);
+    io.stdout(describePublishSetting(publishSetting));
+    if (publishSetting) {
+      const tokenWarning = await describeScheduleTokenWarning(
+        {
+          homeDir: options.homeDir,
+          keychainRunner: options.keychainRunner,
+          graphFetch: options.graphFetch
+        },
+        options.now ? options.now() : new Date().toISOString()
+      );
+      if (tokenWarning) io.stdout(tokenWarning);
+    }
     const lastPublish = await readLastSchedulePublishLog(options.homeDir);
     if (lastPublish) {
       io.stdout(

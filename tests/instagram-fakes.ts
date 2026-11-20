@@ -31,6 +31,7 @@ export function fakeKeychain(): { runner: KeychainRunner; calls: string[][] } {
   const entries: Record<string, string> = {
     "instagram-access-token": IG_TOKEN,
     "instagram-app-secret": IG_APP_SECRET,
+    "meta-app-secret": IG_APP_SECRET,
     "r2-access-key-id": R2_ACCESS_KEY,
     "r2-secret-access-key": R2_SECRET_KEY
   };
@@ -64,8 +65,16 @@ export type FakeGraph = {
   writes: () => { method: string; path: string }[];
 };
 
-/** A happy-path Graph API; `networkErrorOn` makes that POST path throw like a dropped connection. */
-export function fakeGraph(options: { networkErrorOn?: "media" | "media_publish" } = {}): FakeGraph {
+/**
+ * A happy-path Graph API; `networkErrorOn` makes that POST path throw like a
+ * dropped connection. `token` shapes the debug_token answer (UNC-298).
+ */
+export function fakeGraph(
+  options: {
+    networkErrorOn?: "media" | "media_publish";
+    token?: { isValid?: boolean; expiresAt?: number; scopes?: string[] };
+  } = {}
+): FakeGraph {
   const calls: { method: string; path: string }[] = [];
   let children = 0;
   const json = (body: unknown, status = 200) =>
@@ -77,6 +86,18 @@ export function fakeGraph(options: { networkErrorOn?: "media" | "media_publish" 
     const path = url.pathname.replace(/^\/v\d+\.\d+/, "");
     calls.push({ method, path });
     const params = method === "GET" ? url.searchParams : new URLSearchParams(init.body ?? "");
+    if (method === "GET" && path === "/debug_token") {
+      if (params.get("access_token") !== `${INSTAGRAM_CONFIG.appId}|${IG_APP_SECRET}`) {
+        return json({ error: { message: "Invalid app token", code: 190 } }, 400);
+      }
+      return json({
+        data: {
+          is_valid: options.token?.isValid ?? true,
+          expires_at: options.token?.expiresAt ?? 0,
+          scopes: options.token?.scopes ?? ["instagram_basic", "instagram_content_publish"]
+        }
+      });
+    }
     if (params.get("access_token") !== IG_TOKEN) {
       return json({ error: { message: "Invalid OAuth access token.", code: 190 } }, 400);
     }
