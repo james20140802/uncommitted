@@ -3266,4 +3266,45 @@ describe("schedule auto-publish (UNC-297)", () => {
     const bad = createIo();
     expect(await runCli(["publish", "skip", "--date", "June 2"], bad.io, env.options)).toBe(1);
   });
+
+  it("warns in status when the Instagram token expires within 7 days (UNC-298)", async () => {
+    vi.stubGlobal("process", { ...process, platform: "darwin" });
+    try {
+      const env = await createAutoPublishFixture({
+        token: { expiresAt: Date.parse("2026-06-03T00:00:00.000Z") / 1000 }
+      });
+      expect(
+        await runCli(
+          ["schedule", "install", "--time", "23:30", "--publish", "instagram"],
+          createIo().io,
+          env.options
+        )
+      ).toBe(0);
+
+      const status = await statusLines(env.options);
+      expect(status).toContain("경고: Instagram 토큰");
+      expect(status).toContain("instagram connect");
+      expect(status).not.toContain(IG_TOKEN);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("shows no token warning in status when the token never expires (UNC-298)", async () => {
+    vi.stubGlobal("process", { ...process, platform: "darwin" });
+    try {
+      const env = await createAutoPublishFixture();
+      expect(
+        await runCli(
+          ["schedule", "install", "--time", "23:30", "--publish", "instagram"],
+          createIo().io,
+          env.options
+        )
+      ).toBe(0);
+
+      expect(await statusLines(env.options)).not.toContain("경고: Instagram 토큰");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });

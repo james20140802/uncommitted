@@ -2,6 +2,11 @@ import { access, appendFile, mkdir, readFile, rm, writeFile } from "node:fs/prom
 import { dirname, join } from "node:path";
 import { resolveConfigPaths } from "./config-paths.js";
 import {
+  describeTokenHealth,
+  inspectInstagramConnection,
+  type InstagramDeps
+} from "./instagram-account.js";
+import {
   autoPublishInstagram,
   type PublishDeps,
   type PublishIo,
@@ -261,4 +266,30 @@ export async function readLastSchedulePublishLog(
     }
   }
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// Token warning for `schedule status` (UNC-298)
+// ---------------------------------------------------------------------------
+
+/**
+ * One warning line when auto-publish would fail on the token (missing,
+ * invalid, expiring within 7 days); `null` when the token is fine.
+ */
+export async function describeScheduleTokenWarning(
+  deps: InstagramDeps,
+  nowIso: string
+): Promise<string | null> {
+  const inspection = await inspectInstagramConnection(deps).catch(() => null);
+  if (!inspection) {
+    return "경고: Instagram 토큰 상태를 확인하지 못했습니다. `uncommitted doctor`로 확인하세요.";
+  }
+  if (inspection.state === "not-connected") {
+    return "경고: Instagram 토큰 — 계정이 연결되지 않아 자동 게시가 실패합니다. `uncommitted instagram connect`를 실행하세요.";
+  }
+  if (inspection.state === "error") {
+    return `경고: Instagram 토큰 — ${inspection.message}`;
+  }
+  const health = describeTokenHealth(inspection.token, Date.parse(nowIso));
+  return health.status === "pass" ? null : `경고: Instagram 토큰 — ${health.message}`;
 }
